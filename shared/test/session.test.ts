@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientMetrics, RunView, TimedEvent } from '../src/chat';
-import { bestOf, compareRuns } from '../src/compare';
+import type { TimedEvent } from '../src/chat';
 import type { ModelStatus } from '../src/models';
 import {
   compactEvents,
   expandEvents,
+  migrateSession,
   publicSession,
   raceWarnings,
   sessionRequestSchema,
   speculativeOn,
   summarizeSession,
-  type StoredSession,
 } from '../src/session';
+import { makeRun, makeSession, type StoredSession } from './make';
 
 const config = { prompt: 'Hi', maxTokens: 64, thinking: true, reasoningEffort: null };
 
@@ -105,81 +105,6 @@ describe('raceWarnings', () => {
   });
 });
 
-describe('bestOf', () => {
-  it('marks the lowest or highest value of the finished runs', () => {
-    expect(bestOf([300, 200, 250], 'lower', [true, true, true])).toEqual([false, true, false]);
-    expect(bestOf([30, 40, 45], 'higher', [true, true, false])).toEqual([false, true, false]);
-  });
-
-  it('marks nothing without a comparison: one value, equal values, or no direction', () => {
-    expect(bestOf([300, null], 'lower', [true, true])).toEqual([false, false]);
-    expect(bestOf([5, 5], 'higher', [true, true])).toEqual([false, false]);
-    expect(bestOf([1, 2], null, [true, true])).toEqual([false, false]);
-    expect(bestOf(['stop', 'length'], 'lower', [true, true])).toEqual([false, false]);
-  });
-
-  it('marks ties at the top together', () => {
-    expect(bestOf([10, 10, 20], 'lower', [true, true, true])).toEqual([true, true, false]);
-  });
-});
-
-function run(
-  machineId: string,
-  over: Partial<ClientMetrics>,
-  state: RunView['state'] = 'done',
-): RunView {
-  const client = {
-    ttftMs: 300,
-    firstAnswerMs: 900,
-    thinkingMs: 600,
-    decodeTokPerSec: 30,
-    endToEndTokPerSec: 25,
-    charsPerSec: 120,
-    totalMs: 5000,
-    outputTokens: 150,
-    chunks: 150,
-    finishReason: 'stop',
-    ...over,
-  } as ClientMetrics;
-  return {
-    id: `run-${machineId}`,
-    machineId,
-    machineName: machineId,
-    prompt: 'Hi',
-    maxTokens: 64,
-    thinking: true,
-    reasoningEffort: null,
-    state,
-    startedAt: '2026-09-25T00:00:00.000Z',
-    finishedAt: '2026-09-25T00:00:05.000Z',
-    modelBefore: 'm',
-    modelAfter: 'm',
-    reasoning: '',
-    answer: '',
-    live: { elapsedMs: 0, ttftMs: null, firstAnswerMs: null, chunks: 0, decodeTokPerSec: null },
-    client,
-    server: null,
-    error: null,
-    loopLagMs: null,
-    sendOffsetMs: 0,
-  };
-}
-
-describe('compareRuns', () => {
-  it('highlights the faster machine, and leaves a failed machine out of the contest', () => {
-    const rows = compareRuns([
-      run('fast', { firstAnswerMs: 600, decodeTokPerSec: 45 }),
-      run('slow', { firstAnswerMs: 900, decodeTokPerSec: 28 }),
-      run('broken', { firstAnswerMs: 100, decodeTokPerSec: 90 }, 'failed'),
-    ]);
-    const row = (key: string) => rows.find((r) => r.key === key);
-    expect(row('firstAnswer')?.best).toEqual([true, false, false]);
-    expect(row('decode')?.best).toEqual([true, false, false]);
-    expect(row('output')?.best).toEqual([false, false, false]);
-    expect(row('finish')?.values).toEqual(['stop', 'stop', 'stop']);
-  });
-});
-
 describe('raw events', () => {
   it('round-trip through the compact form, with times from the request', () => {
     const events: TimedEvent[] = [
@@ -195,40 +120,66 @@ describe('raw events', () => {
 });
 
 describe('stored sessions', () => {
-  it('lose their raw events on the way out, and summarise per machine', () => {
-    const stored = {
-      schemaVersion: 1,
-      id: '11111111-1111-4111-8111-111111111111',
-      workload: 'text',
-      createdAt: '2026-09-25T00:00:00.000Z',
-      finishedAt: '2026-09-25T00:00:05.000Z',
-      state: 'done',
-      error: null,
-      config: { ...config, sampling: {} },
-      machines: [{ id: 'fast', name: 'Fast', color: '#fff', baseUrl: 'http://x', notes: '' }],
-      rounds: [
-        {
-          index: 0,
-          startedAt: null,
-          sendSkewMs: 0,
-          runs: [{ ...run('fast', {}), raw: { headersAtMs: 1, endAtMs: 2, events: [] } }],
-        },
+  it('lose their raw events on the way out, and summarise medians per machine', () => {
+    const base = makeSession(
+      ['fast', 'slow'],
+      [
+        [makeRun('fast', { decodeTokPerSec: 40 }), makeRun('slow', { decodeTokPerSec: 20 })],
+        [makeRun('fast', { decodeTokPerSec: 44 }), makeRun('slow', {}, 'failed')],
+        [makeRun('fast', { decodeTokPerSec: 42 }), makeRun('slow', { decodeTokPerSec: 22 })],
       ],
-      provenance: [],
-      loopLagMs: null,
+    );
+    const stored = {
+      ...base,
+      warmup: null,
+      rounds: base.rounds.map((round) => ({
+        ...round,
+        runs: round.runs.map((run) => ({
+          ...run,
+          raw: { headersAtMs: 1, endAtMs: 2, events: [] },
+        })),
+      })),
     } satisfies StoredSession;
     const view = publicSession(stored);
     expect('raw' in (view.rounds[0]?.runs[0] ?? {})).toBe(false);
     expect('raw' in (stored.rounds[0]?.runs[0] ?? {})).toBe(true);
-    expect(summarizeSession(stored).machines).toEqual([
-      {
-        id: 'fast',
-        name: 'Fast',
-        color: '#fff',
-        state: 'done',
-        firstAnswerMs: 900,
-        decodeTokPerSec: 30,
-      },
+    const summary = summarizeSession(stored);
+    expect(summary.rounds).toBe(3);
+    expect(summary.machines.map((m) => [m.id, m.state, m.decodeTokPerSec])).toEqual([
+      ['fast', 'done', 42],
+      ['slow', 'done', 21],
     ]);
+  });
+
+  it('migrate from version 1: one round, no plan, no warm-up, no RTT', () => {
+    const v1 = {
+      ...makeSession(['a'], [[makeRun('a')]]),
+      schemaVersion: 1,
+    } as Record<string, unknown>;
+    delete v1.plan;
+    delete v1.warmup;
+    delete v1.progress;
+    const oldRound = {
+      index: 0,
+      startedAt: null,
+      sendSkewMs: 0,
+      runs: [{ ...makeRun('a'), raw: null }],
+    } as Record<string, unknown>;
+    delete (oldRound.runs as Array<Record<string, unknown>>)[0]?.rtt;
+    v1.rounds = [oldRound];
+    const migrated = migrateSession(v1 as unknown as StoredSession);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.plan).toEqual({
+      rounds: 1,
+      warmup: false,
+      settleMs: 0,
+      sequencing: 'concurrent',
+    });
+    expect(migrated.warmup).toBeNull();
+    expect(migrated.progress).toEqual({ phase: 'finished', round: null });
+    expect(migrated.rounds[0]).toMatchObject({ order: ['a'], flags: [], finishedAt: null });
+    expect(migrated.rounds[0]?.runs[0]?.rtt).toBeNull();
+    // A current file passes through untouched.
+    expect(migrateSession(migrated)).toBe(migrated);
   });
 });

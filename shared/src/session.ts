@@ -11,11 +11,33 @@ import {
 import type { ModelStatus } from './models';
 
 /**
- * A session is one benchmark: the same request on one or more machines, sent together. Phase 4
- * runs one round; the shape already holds many rounds and many machines.
+ * A session is one benchmark: the same request on one or more machines, over one or more rounds.
+ * Version 2 added the run plan, the warm-up and per-round RTT; version 1 files are migrated.
  */
-export const SESSION_SCHEMA_VERSION = 1;
+export const SESSION_SCHEMA_VERSION = 2;
 export const MAX_RACE_MACHINES = 8;
+export const MAX_ROUNDS = 10;
+
+/** How a session runs: rounds, warm-up, pause between rounds, and whether machines take turns. */
+export const runPlanSchema = z.object({
+  rounds: z
+    .number()
+    .int('Use a whole number of rounds.')
+    .min(1, 'Run at least 1 round.')
+    .max(MAX_ROUNDS, `Run at most ${MAX_ROUNDS} rounds.`)
+    .default(3),
+  warmup: z.boolean().default(true),
+  settleMs: z
+    .number()
+    .int()
+    .min(0, 'The pause cannot be negative.')
+    .max(60_000, 'Pause at most 60 seconds between rounds.')
+    .default(2000),
+  /** `sequential` runs one machine at a time, in ABBA order. */
+  sequencing: z.enum(['concurrent', 'sequential']).default('concurrent'),
+});
+export type RunPlan = z.infer<typeof runPlanSchema>;
+export const DEFAULT_PLAN: RunPlan = runPlanSchema.parse({});
 
 export const sessionRequestSchema = z.object({
   workload: z.literal('text'),
@@ -25,6 +47,7 @@ export const sessionRequestSchema = z.object({
     .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
     .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.'),
   config: textConfigSchema,
+  plan: runPlanSchema.prefault({}),
 });
 export type SessionRequest = z.infer<typeof sessionRequestSchema>;
 
@@ -52,14 +75,35 @@ export interface MachineProvenance {
   request: Record<string, unknown> | null;
 }
 
+export interface RoundFlag {
+  /** The machine it concerns, or null for the whole round. */
+  machineId: string | null;
+  kind: 'lag' | 'coalesced' | 'failed';
+  text: string;
+}
+
 export interface RoundView {
   index: number;
   /** When the requests went out. */
   startedAt: string | null;
-  /** Time between the first and the last request leaving the controller. */
+  finishedAt: string | null;
+  /** Time between the first and the last request leaving the controller; null when sequential. */
   sendSkewMs: number | null;
+  /** Machine ids in the order their requests went out. */
+  order: string[];
   /** One run per machine, in the order of `machines`. */
   runs: RunView[];
+  /** Controller event-loop delay during the round. */
+  loopLagMs: { max: number; p99: number } | null;
+  flags: RoundFlag[];
+}
+
+export type SessionPhase = 'preparing' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
+
+export interface SessionProgress {
+  phase: SessionPhase;
+  /** Index of the round the phase belongs to. */
+  round: number | null;
 }
 
 export interface SessionView {
@@ -71,8 +115,12 @@ export interface SessionView {
   state: SessionState;
   error: string | null;
   config: TextConfig & { sampling: Record<string, number> };
+  plan: RunPlan;
   machines: SessionMachine[];
+  /** The discarded warm-up round, if the plan has one. */
+  warmup: RoundView | null;
   rounds: RoundView[];
+  progress: SessionProgress;
   provenance: MachineProvenance[];
   loopLagMs: { max: number; p99: number } | null;
 }
@@ -92,7 +140,10 @@ export interface RawRun {
 export type StoredRun = RunView & { raw: RawRun | null };
 export type StoredRound = Omit<RoundView, 'runs'> & { runs: StoredRun[] };
 /** The file `data/sessions/<id>.json`: the view plus every run's raw events. */
-export type StoredSession = Omit<SessionView, 'rounds'> & { rounds: StoredRound[] };
+export type StoredSession = Omit<SessionView, 'rounds' | 'warmup'> & {
+  rounds: StoredRound[];
+  warmup: StoredRound | null;
+};
 
 export interface SessionSummary {
   id: string;
@@ -100,6 +151,7 @@ export interface SessionSummary {
   finishedAt: string | null;
   state: SessionState;
   prompt: string;
+  rounds: number;
   machines: Array<{
     id: string;
     name: string;
@@ -121,8 +173,10 @@ export interface RunDelta {
 /** Messages on the controller-to-browser event stream of a session. */
 export type SessionStreamMessage =
   | { type: 'snapshot'; session: SessionView }
-  | { type: 'delta'; round: number; runs: RunDelta[] }
-  | { type: 'run'; round: number; run: RunView }
+  | { type: 'progress'; progress: SessionProgress }
+  | { type: 'round'; warmup: boolean; round: RoundView }
+  | { type: 'delta'; warmup: boolean; round: number; runs: RunDelta[] }
+  | { type: 'run'; warmup: boolean; round: number; run: RunView }
   | { type: 'finished'; session: SessionView };
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
@@ -151,13 +205,39 @@ export function expandEvents(events: readonly CompactEvent[]): TimedEvent[] {
   });
 }
 
+function publicRound(round: StoredRound | RoundView): RoundView {
+  return { ...round, runs: round.runs.map((run) => publicRun(run)) };
+}
+
 /** The view without raw events, as the API sends it. */
 export function publicSession(session: StoredSession | SessionView): SessionView {
   return {
     ...session,
-    rounds: session.rounds.map((round) => ({
+    warmup: session.warmup ? publicRound(session.warmup) : null,
+    rounds: session.rounds.map((round) => publicRound(round)),
+  };
+}
+
+/**
+ * Brings a stored session of any earlier schema up to the current one. Version 1 had one round,
+ * no plan, no warm-up and no RTT.
+ */
+export function migrateSession(value: StoredSession): StoredSession {
+  if (value.schemaVersion >= SESSION_SCHEMA_VERSION) return value;
+  const old = value as Partial<StoredSession>;
+  return {
+    ...value,
+    schemaVersion: SESSION_SCHEMA_VERSION,
+    plan: old.plan ?? { rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' },
+    warmup: old.warmup ?? null,
+    progress: old.progress ?? { phase: 'finished', round: null },
+    rounds: (old.rounds ?? []).map((round) => ({
       ...round,
-      runs: round.runs.map((run) => publicRun(run)),
+      finishedAt: round.finishedAt ?? null,
+      order: round.order ?? round.runs.map((run) => run.machineId),
+      loopLagMs: round.loopLagMs ?? value.loopLagMs ?? null,
+      flags: round.flags ?? [],
+      runs: round.runs.map((run) => ({ ...run, rtt: run.rtt ?? null })),
     })),
   };
 }
@@ -168,23 +248,39 @@ export function publicRun(run: RunView | StoredRun): RunView {
   return view;
 }
 
+function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? (sorted[mid] ?? null)
+    : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+/** One line per machine for the results log: medians over the rounds that finished. */
 export function summarizeSession(session: StoredSession | SessionView): SessionSummary {
-  const runs = session.rounds[0]?.runs ?? [];
   return {
     id: session.id,
     createdAt: session.createdAt,
     finishedAt: session.finishedAt,
     state: session.state,
     prompt: session.config.prompt.slice(0, 160),
+    rounds: session.rounds.length,
     machines: session.machines.map((machine) => {
-      const run = runs.find((r) => r.machineId === machine.id);
+      const runs = session.rounds
+        .map((round) => round.runs.find((r) => r.machineId === machine.id))
+        .filter((run): run is RunView => !!run);
+      const done = runs.filter((run) => run.state === 'done');
+      const pick = (get: (run: RunView) => number | null | undefined) =>
+        medianOf(done.map(get).filter((v): v is number => typeof v === 'number'));
+      const last = runs[runs.length - 1];
       return {
         id: machine.id,
         name: machine.name,
         color: machine.color,
-        state: run?.state ?? 'failed',
-        firstAnswerMs: run?.client?.firstAnswerMs ?? null,
-        decodeTokPerSec: run?.client?.decodeTokPerSec ?? null,
+        state: done.length > 0 ? 'done' : (last?.state ?? 'failed'),
+        firstAnswerMs: pick((run) => run.client?.firstAnswerMs),
+        decodeTokPerSec: pick((run) => run.client?.decodeTokPerSec),
       };
     }),
   };

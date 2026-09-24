@@ -4,10 +4,11 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 4 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
-supports, loads models, and races a text prompt on several machines at once, side by side, with
-a comparison table and a history of past races. Several rounds with statistics arrive in phase 5,
-and the transcription and image benchmarks later. [PLAN.md](PLAN.md) is the full specification.
+**Status: phase 5 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+supports, loads models, and races a text prompt on several machines at once, side by side, over
+several rounds, with medians, spread and an honest tie when the difference is within noise.
+Presets and cache control arrive in phase 6, and the transcription and image benchmarks later.
+[PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -87,6 +88,28 @@ them side by side. Pick one machine for a single run.
 4. Press **Start**. Every machine gets an identical request in the same instant, apart from its
    model name. **Cancel** stops all of them and tells Unsloth to stop generating.
 
+### Rounds
+
+One race is noisy, so a race runs several rounds and reports medians.
+
+- **Rounds** sets how many, 1 to 10. The default is 3.
+- **Warm-up** sends one short request to each machine first and does not count it. It wakes up a
+  machine that sat idle.
+- **Pause between rounds** lets the machines settle, 2 seconds by default.
+- **Order** is **Together**, all machines at once, or **Take turns**, one at a time in ABBA order
+  so that no machine always goes first. Machines on the same computer compete for it, so the
+  form suggests taking turns when two of them share one.
+- Before each round, Model Duel measures the round trip to each machine with three TCP
+  handshakes. HTTP is no good for this: Unsloth's answers on a reused connection stall for about
+  40 ms.
+
+The **Comparison** table shows medians, with the range and standard deviation under each. A
+machine wins a row only when its median is more than 10 percent better, or its range does not
+overlap the runner-up's; otherwise the row says **Tie**. Failed rounds and the warm-up never
+count. The **Rounds** table has a row per round with each machine's first word, speed and round
+trip, and flags a round when this computer was too busy, when many chunks arrived together, or when
+a machine failed. Pick a row to see that round in the panes.
+
 Each machine has a pane, two to four across, wrapping beyond that:
 
 - **First word** is the wait until the first word of the answer. The first token of any kind,
@@ -102,9 +125,10 @@ Each machine has a pane, two to four across, wrapping beyond that:
 
 When the race ends:
 
-- **Comparison** has a row per metric and a column per machine. The best value among the
-  machines that finished is starred. Total time and token counts are not starred, because they
-  depend on how much each model chose to write. A note gives how far apart the requests left.
+- **Comparison** has a row per metric and a column per machine, with a **Result** column that
+  names the winner and by how much, or says **Tie**. Total time and token counts have no winner,
+  because they depend on how much each model chose to write. A note gives how far apart the
+  requests left.
 - **Measurements for each machine** puts what Model Duel measured next to what Unsloth reported.
   Model Duel's times start when the request leaves this computer, so they include the network.
   The notes say how much the network added, how far the decode speeds differ, and whether this

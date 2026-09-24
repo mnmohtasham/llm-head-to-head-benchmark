@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  migrateSession,
   SESSION_SCHEMA_VERSION,
   summarizeSession,
   type SessionSummary,
@@ -67,7 +68,8 @@ export class SessionStore {
     session.state = 'interrupted';
     session.error = 'Model Duel stopped before this race finished.';
     session.finishedAt ??= stopped;
-    for (const round of session.rounds) {
+    session.progress = { phase: 'finished', round: null };
+    for (const round of [...(session.warmup ? [session.warmup] : []), ...session.rounds]) {
       for (const run of round.runs) {
         if (run.finishedAt !== null) continue;
         run.state = 'failed';
@@ -97,7 +99,7 @@ export class SessionStore {
       );
       return null;
     }
-    return parsed;
+    return migrateSession(parsed);
   }
 
   summaries(): SessionSummary[] {

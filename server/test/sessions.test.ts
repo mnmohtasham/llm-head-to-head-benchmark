@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { startMockServer, type RunningMock } from '@duel/mock';
@@ -7,6 +7,7 @@ import {
   expandEvents,
   SseParser,
   type MachineView,
+  type RunPlan,
   type RunView,
   type SessionStreamMessage,
   type SessionSummary,
@@ -42,9 +43,13 @@ async function addMachine(name: string, mock: RunningMock, apiKey: string): Prom
   return created.json<MachineView>().id;
 }
 
+/** One round, no warm-up, no pause: the phase 4 race, unless a test asks for more. */
+const ONE_ROUND: RunPlan = { rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' };
+
 async function startSession(
   machineIds: string[],
   config: Partial<TextConfig> = {},
+  plan: Partial<RunPlan> = {},
 ): Promise<SessionView> {
   const response = await ctx.app.inject({
     method: 'POST',
@@ -59,6 +64,7 @@ async function startSession(
         reasoningEffort: null,
         ...config,
       },
+      plan: { ...ONE_ROUND, ...plan },
     },
   });
   expect(response.statusCode, response.body).toBe(201);
@@ -70,7 +76,7 @@ async function getSession(id: string): Promise<SessionView> {
 }
 
 async function finished(id: string): Promise<SessionView> {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const view = await getSession(id);
     if (view.finishedAt) return view;
@@ -324,6 +330,7 @@ describe('a race between two machines', () => {
         workload: 'text',
         machineIds: [macId],
         config: { prompt: 'Hi', maxTokens: 10, thinking: true, reasoningEffort: null },
+        plan: ONE_ROUND,
       },
     });
     expect(second.statusCode).toBe(409);
@@ -369,7 +376,7 @@ describe('saved races', () => {
     expect(text).not.toContain(LINUX_KEY);
     expect(text).not.toContain(MAC_KEY);
     const stored = JSON.parse(text) as StoredSession;
-    expect(stored.schemaVersion).toBe(1);
+    expect(stored.schemaVersion).toBe(2);
     const run = stored.rounds[0]?.runs[0];
     const raw = run?.raw;
     expect(raw?.events.length).toBeGreaterThan(20);
@@ -481,5 +488,97 @@ describe('the event stream to the browser', () => {
 
     const replay = await collect(`${base}/api/sessions/${id}/stream`);
     expect(replay.map((m) => m.type)).toEqual(['snapshot', 'finished']);
+  });
+});
+
+describe('rounds', () => {
+  it('warms up, then runs three rounds with an RTT before each and a pause between them', async () => {
+    const session = await finished(
+      (await startSession([linuxId, macId], {}, { rounds: 3, warmup: true, settleMs: 150 })).id,
+    );
+    expect(session.state).toBe('done');
+    expect(session.warmup?.runs.map((r) => r.state)).toEqual(['done', 'done']);
+    expect(session.warmup?.runs[0]?.prompt).toBe('Reply with the single word: ready.');
+    expect(session.rounds.map((r) => r.index)).toEqual([0, 1, 2]);
+    for (const round of session.rounds) {
+      expect(round.runs.map((r) => r.state)).toEqual(['done', 'done']);
+      for (const run of round.runs) {
+        expect(run.rtt?.samplesMs).toHaveLength(3);
+        expect(run.rtt?.medianMs).toBeGreaterThanOrEqual(0);
+      }
+      expect(round.sendSkewMs).toBeLessThan(5);
+    }
+    const gaps = session.rounds
+      .slice(1)
+      .map(
+        (round, i) =>
+          Date.parse(round.startedAt ?? '') - Date.parse(session.rounds[i]?.finishedAt ?? ''),
+      );
+    for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(140);
+    expect(session.progress).toEqual({ phase: 'finished', round: null });
+
+    // The results log counts rounds and gives medians, never the warm-up.
+    const list = (await ctx.app.inject({ method: 'GET', url: '/api/sessions' })).json<{
+      sessions: SessionSummary[];
+    }>().sessions;
+    expect(list[0]?.rounds).toBe(3);
+    expect(list[0]?.machines.every((m) => m.decodeTokPerSec !== null)).toBe(true);
+  });
+
+  it('takes turns in ABBA order when sequential, one machine at a time', async () => {
+    const session = await finished(
+      (await startSession([linuxId, macId], {}, { rounds: 3, sequencing: 'sequential' })).id,
+    );
+    expect(session.rounds.map((r) => r.order)).toEqual([
+      [linuxId, macId],
+      [macId, linuxId],
+      [linuxId, macId],
+    ]);
+    expect(session.rounds.every((r) => r.sendSkewMs === null)).toBe(true);
+    // The second machine starts only after the first one finished, by Unsloth's own clocks.
+    const linuxRows = (await monitorOf(linux, LINUX_KEY)).entries.filter((e) =>
+      String(e.endpoint).includes('chat'),
+    );
+    const macRows = (await monitorOf(mac, MAC_KEY)).entries.filter((e) =>
+      String(e.endpoint).includes('chat'),
+    );
+    const firstLinux = linuxRows[linuxRows.length - 1];
+    const firstMac = macRows[macRows.length - 1];
+    expect(Number(firstMac?.started_at)).toBeGreaterThanOrEqual(Number(firstLinux?.finished_at));
+  });
+
+  it('stops during the pause between rounds when cancelled', async () => {
+    const { id } = await startSession([linuxId], {}, { rounds: 3, settleMs: 5000 });
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if ((await getSession(id)).progress.phase === 'settling') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const started = Date.now();
+    const cancelled = (
+      await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` })
+    ).json<SessionView>();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(cancelled.state).toBe('cancelled');
+    expect(cancelled.rounds).toHaveLength(1);
+    expect(cancelled.rounds[0]?.runs[0]?.state).toBe('done');
+  });
+
+  it('opens a race saved by phase 4, in the version 1 format', async () => {
+    const source = new URL('../../fixtures/sessions/phase4-race-v1.json', import.meta.url);
+    const original = JSON.parse(await readFile(source, 'utf8')) as StoredSession;
+    await copyFile(source, path.join(ctx.dataDir, 'sessions', `${original.id}.json`));
+    await ctx.app.close();
+    ctx = await testApp({ dataDir: ctx.dataDir });
+    const view = await getSession(original.id);
+    expect(view.schemaVersion).toBe(2);
+    expect(view.plan).toEqual({ rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' });
+    expect(view.warmup).toBeNull();
+    expect(view.rounds).toHaveLength(1);
+    expect(view.rounds[0]?.order).toEqual(original.machines.map((m) => m.id));
+    expect(view.rounds[0]?.runs.every((run) => run.rtt === null)).toBe(true);
+    expect(view.rounds[0]?.runs[0]?.client?.decodeTokPerSec).toBe(
+      original.rounds[0]?.runs[0]?.client?.decodeTokPerSec,
+    );
   });
 });

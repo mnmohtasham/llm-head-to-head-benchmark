@@ -290,7 +290,9 @@ Scope
   delay between rounds (default 2 s).
 - RTT before each round: three health requests on the keep-alive socket, per machine. A streamed run
   opens a new connection (PLAN.md 8), so its network share is about two RTTs plus Unsloth's own request
-  handling, which phase 3 measured at 20 ms.
+  handling, which phase 3 measured at 20 ms. (Changed during the phase: the RTT is three
+  TCP handshakes, because Unsloth's HTTP answers on a reused connection stall for about 40 ms. See PLAN.md
+  5.8.)
 - Per metric: median, min, max, mean and sample standard deviation. A per-round table; raw rounds kept.
 - Winner gate: a winner only when per-round ranges do not overlap or the median gap exceeds 10 percent;
   otherwise "tie".
@@ -308,7 +310,7 @@ Automated tests
 - End-to-end, also the manual demo script: three rounds on the mocks give a three-row round table with
   medians; two mocks set to equal speed give "tie".
 
-Real-machine script
+Real-machine script (run on the RTX machine alone while the Lenovo was offline and the Mac unreachable)
 1. Run five rounds, Mac against Linux.
 2. Record the RTT row and the spread as the baseline noise level of this setup.
 

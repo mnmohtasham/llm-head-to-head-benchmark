@@ -86,6 +86,7 @@ export const api = {
   listModels: (id: string, refresh = false) =>
     call<MachineModelsView>('GET', `${machineUrl(id)}/models${refresh ? '?refresh=1' : ''}`),
   machineStatus: (id: string) => call<MachineStatusView>('GET', `${machineUrl(id)}/status`),
+  machineHosts: () => call<{ hosts: Record<string, string> }>('GET', '/api/machines/hosts'),
   listLoads: () => call<{ jobs: LoadJob[]; serverTime: string }>('GET', '/api/loads'),
   startLoad: (request: LoadRequest) =>
     call<{ results: LoadStartResult[] }>('POST', '/api/models/load', request),

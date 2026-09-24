@@ -399,7 +399,14 @@ export type TextConfig = z.infer<typeof textConfigSchema>;
 /** Sampling sent on every run until phase 6 makes it adjustable. */
 export const DEFAULT_SAMPLING = { temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0 } as const;
 
-export type RunState = 'starting' | 'streaming' | 'done' | 'failed' | 'cancelled';
+/** `queued` waits for its turn when machines run one after another. */
+export type RunState = 'starting' | 'queued' | 'streaming' | 'done' | 'failed' | 'cancelled';
+
+/** Round trips to a machine's health route on an open connection, before a round. */
+export interface RttResult {
+  samplesMs: number[];
+  medianMs: number | null;
+}
 
 /** Numbers the pane shows while tokens arrive. */
 export interface LiveMetrics {
@@ -434,6 +441,8 @@ export interface RunView {
   loopLagMs: { max: number; p99: number } | null;
   /** How long after the first machine's request this machine's request left, in a race. */
   sendOffsetMs: number | null;
+  /** Measured just before the round; null when not measured. */
+  rtt: RttResult | null;
 }
 
 /** The request body for one run. The sampling is fixed and always sent. */

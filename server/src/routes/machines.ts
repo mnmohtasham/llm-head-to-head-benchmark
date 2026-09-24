@@ -14,6 +14,7 @@ import {
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
 import type { MachineStore, StoredMachine, StoredProbe } from '../store';
+import { hostKeys } from '../hosts';
 
 interface IdParams {
   Params: { id: string };
@@ -82,6 +83,9 @@ export function registerMachineRoutes(
   const view = (machine: StoredMachine) => toView(machine, store.lastProbe(machine.id));
 
   app.get('/api/machines', async () => store.list().map(view));
+
+  /** Which machines are the same computer, so a race can suggest that they take turns. */
+  app.get('/api/machines/hosts', async () => ({ hosts: await hostKeys(store.list()) }));
 
   app.get<IdParams>('/api/machines/:id', async (request, reply) => {
     const machine = store.get(request.params.id);
