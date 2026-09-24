@@ -1,13 +1,13 @@
 # Model Duel v2: build plan
 
-Status: draft v2.3, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.4, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
 v2.2 adds what phase 3 measured on two real machines: the streaming details in section 2.3, the
 client and server agreement in section 4.1, and the per-run connection in section 8.
 v2.3 records the session file, the stream messages and the measured send skew from phase 4, in
-sections 3, 5.9 and 6.
+sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5.
 
 ## 0. Decisions so far
 
@@ -341,7 +341,10 @@ on Apple.
 7. Output-length confound: ratio headlines only on TTFT, tok/s, characters per second and processing time.
    Totals are shown next to token counts. Optional fixed-length mode: `max_tokens = N` with a prompt that
    always overruns it; `stop_reason` must be `length` on both sides or the round is flagged.
-8. RTT: three `GET /api/health` round trips on the keep-alive socket before each round, shown per machine.
+8. RTT: three round trips before each round, shown per machine. As built in phase 5 they are TCP handshakes
+   to the Unsloth port, not `GET /api/health` on a keep-alive socket: Unsloth's HTTP answers on a reused
+   connection stall for about 40 ms (Nagle's algorithm meeting delayed ACKs), measured with curl and undici
+   alike, while a fresh connection answers in 2.5 ms and the handshake itself takes 0.15 ms on loopback.
    When the controller runs on one of the machines, that side has near-zero RTT; compare the
    server-reported columns first.
 9. Sequencing: concurrent across machines by default; sequential ABBA mode when two endpoints resolve to
@@ -359,7 +362,10 @@ on Apple.
 13. Self-checks: controller event-loop lag sampled during runs, coalesced-read ratio, admission queue state
     from the monitor. Rounds with lag over a threshold are flagged.
 14. Winner gate: a winner is highlighted only when the per-round ranges do not overlap or the median gap
-    exceeds ten percent; otherwise the scoreboard says tie.
+    exceeds ten percent; otherwise the scoreboard says tie. As built, the gap is the ratio of the two medians
+    (more than 1.10), the leader is compared with the runner-up only, and ranges count only when both
+    machines have at least two finished rounds. Phase 5 measured the noise floor on the RTX machine at a
+    decode-speed standard deviation of 1.6 percent of the median over five rounds, well inside the gate.
 15. Decoding path: `speculative_type` is sent explicitly and identically at load, `off` by default for
     benchmarks; `auto` can be tested as a labelled variant. Pre-flight compares the engaged speculative
     method, KV cache type, backend (GGUF or MLX) and GPU memory mode across machines, and a

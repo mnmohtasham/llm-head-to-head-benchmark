@@ -30,15 +30,34 @@ async function stream(request: APIRequestContext, mock: string, settings: Record
   await request.post(`${mock}/__mock/config`, { data: { stream: settings } });
 }
 
-/** Opens the Text tab and sets which machines race and whether they think. */
-async function setUp(page: Page, names: string[], options: { thinking?: boolean } = {}) {
+interface SetUp {
+  thinking?: boolean;
+  rounds?: number;
+  warmup?: boolean;
+  pause?: number;
+  turns?: boolean;
+}
+
+/**
+ * Opens the Text tab and sets which machines race, whether they think, and the run plan. Unless
+ * a test asks for more, that is one round, no warm-up and no pause.
+ */
+async function setUp(page: Page, names: string[], options: SetUp = {}) {
   await page.goto('/#/text');
   for (const machine of DEMO_MACHINES) {
     const box = page.getByRole('checkbox', { name: new RegExp(machine.name) });
     await expect(box).toBeEnabled();
     await box.setChecked(names.includes(machine.name));
   }
-  await page.getByRole('radio', { name: options.thinking === false ? 'Off' : 'On' }).click();
+  const choose = async (group: string, option: string) =>
+    page.getByRole('radiogroup', { name: group }).getByRole('radio', { name: option }).click();
+  await choose('Thinking', options.thinking === false ? 'Off' : 'On');
+  await choose('Warm-up', options.warmup ? 'On' : 'Off');
+  await choose('Order', options.turns ? 'Take turns' : 'Together');
+  await page
+    .getByRole('textbox', { name: 'Rounds', exact: true })
+    .fill(String(options.rounds ?? 1));
+  await page.getByLabel('Pause between rounds, seconds').fill(String(options.pause ?? 0));
   await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
 }
 
@@ -222,6 +241,87 @@ test.describe('racing two machines', () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+test.describe('rounds', () => {
+  test('three rounds after a warm-up give a round table and medians', async ({ page, request }) => {
+    await stream(request, LINUX_MOCK, {
+      startupMs: 150,
+      tokenMs: 8,
+      reasoningTokens: 10,
+      answerTokens: 20,
+    });
+    await stream(request, MAC_MOCK, {
+      startupMs: 300,
+      tokenMs: 20,
+      reasoningTokens: 10,
+      answerTokens: 20,
+    });
+    await setUp(page, [MAC.name, LINUX.name], { rounds: 3, warmup: true, pause: 0.2 });
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(page.getByTestId('race-progress')).toContainText(/Warm-up|round/);
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+
+    const rows = page.getByTestId('round-row');
+    await expect(rows).toHaveCount(4);
+    await expect(rows.first()).toContainText('Warm-up, not counted');
+    await expect(rows.nth(3)).toContainText('Round 3');
+    await expect(rows.nth(1).locator(`td[data-machine="${LINUX.name}"]`)).toContainText('RTT');
+
+    const compare = page.getByTestId('compare');
+    await expect(compare).toContainText('medians of 3 rounds');
+    const decode = compare.locator('tr[data-key="decode"]');
+    await expect(decode).toHaveAttribute('data-verdict', 'win');
+    await expect(decode.locator(`td[data-machine="${LINUX.name}"]`)).toHaveAttribute(
+      'data-best',
+      'true',
+    );
+    await expect(decode.getByTestId('verdict')).toContainText(LINUX.name);
+
+    // Picking a round shows it in the panes.
+    await rows.nth(1).getByRole('button', { name: 'Round 1' }).click();
+    await expect(page.getByTestId('race-progress')).toContainText('Showing round 1 of 3');
+    await expect(page.getByTestId('session-row').first()).toContainText('3 rounds, medians');
+  });
+
+  test('two machines at the same speed are a tie, not a win', async ({ page, request }) => {
+    for (const mock of MOCKS) {
+      await stream(request, mock, {
+        startupMs: 250,
+        tokenMs: 15,
+        reasoningTokens: 10,
+        answerTokens: 30,
+        speedFactors: [1, 1.15, 0.9],
+      });
+    }
+    await setUp(page, [MAC.name, LINUX.name], { rounds: 3 });
+    await startAndFinish(page, [MAC.name, LINUX.name]);
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    const compare = page.getByTestId('compare');
+    for (const key of ['decode', 'firstAnswer', 'ttft']) {
+      await expect(compare.locator(`tr[data-key="${key}"]`)).toHaveAttribute('data-verdict', 'tie');
+      await expect(compare.locator(`tr[data-key="${key}"]`).getByTestId('verdict')).toHaveText(
+        'Tie',
+      );
+    }
+    await expect(compare.locator('td[data-best]')).toHaveCount(0);
+  });
+
+  test('machines on one computer are asked to take turns, and then they do', async ({ page }) => {
+    await setUp(page, [MAC.name, LINUX.name], { rounds: 2 });
+    // Both fake machines listen on 127.0.0.1.
+    await expect(page.getByTestId('same-host')).toContainText('run on the same computer');
+    await page.getByRole('button', { name: 'Take turns instead' }).click();
+    await expect(
+      page.getByRole('radiogroup', { name: 'Order' }).getByRole('radio', { name: 'Take turns' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('same-host')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Waiting its turn');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('round-row')).toHaveCount(2);
+    await expect(page.getByTestId('compare')).toContainText('took turns, in ABBA order');
   });
 });
 

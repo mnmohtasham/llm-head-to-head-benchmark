@@ -6,4 +6,5 @@ export * from './probe';
 export * from './secrets';
 export * from './session';
 export * from './sse';
+export * from './stats';
 export * from './url';

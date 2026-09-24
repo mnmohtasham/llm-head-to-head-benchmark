@@ -5,6 +5,7 @@ import { formatRate, formatSeconds } from '../format';
 const STATE_LABEL: Record<string, string> = {
   idle: 'Ready',
   starting: 'Starting',
+  queued: 'Waiting its turn',
   waiting: 'Waiting',
   thinking: 'Thinking',
   answering: 'Answering',
@@ -67,8 +68,8 @@ export function RunPane({ machine, modelName, run }: Props) {
   const phase = !run
     ? 'idle'
     : running
-      ? run.state === 'starting'
-        ? 'starting'
+      ? run.state === 'starting' || run.state === 'queued'
+        ? run.state
         : run.answer
           ? 'answering'
           : run.reasoning

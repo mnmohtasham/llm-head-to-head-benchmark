@@ -49,6 +49,7 @@ export function SessionList({ sessions, currentId, onDelete }: Props) {
                 <p className="session-head">
                   <time dateTime={s.createdAt}>{when(s.createdAt)}</time>
                   <span className={`session-state session-${s.state}`}>{STATE_LABEL[s.state]}</span>
+                  {s.rounds > 1 ? <span>{s.rounds} rounds, medians</span> : null}
                 </p>
                 <p className="session-prompt">{s.prompt}</p>
                 <ul className="session-machines">

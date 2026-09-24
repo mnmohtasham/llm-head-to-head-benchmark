@@ -1,25 +1,30 @@
 import {
+  DEFAULT_PLAN,
   isActiveJob,
+  MAX_ROUNDS,
   raceWarnings,
   REASONING_EFFORTS,
   sessionRequestSchema,
   type MachineStatusView,
   type MachineView,
   type ModelStatus,
+  type RoundView,
   type RunView,
+  type SessionProgress,
   type SessionStreamMessage,
   type SessionSummary,
   type SessionView,
 } from '@duel/shared';
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { api, messageOf } from '../api';
-import { CompareTable } from '../components/CompareTable';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import { RunMetrics } from '../components/RunMetrics';
+import { RoundTable } from '../components/RoundTable';
 import { RunPane } from '../components/RunPane';
 import { SessionList } from '../components/SessionList';
 import { SetupTable } from '../components/SetupTable';
+import { StatsTable } from '../components/StatsTable';
 import { TopBar } from '../components/TopBar';
 import { formatMsValue, formatRate } from '../format';
 
@@ -45,9 +50,15 @@ function useRouteSessionId(): string | null {
 
 function withRound(
   session: SessionView,
+  warmup: boolean,
   index: number,
   update: (runs: RunView[]) => RunView[],
 ): SessionView {
+  if (warmup) {
+    return session.warmup
+      ? { ...session, warmup: { ...session.warmup, runs: update(session.warmup.runs) } }
+      : session;
+  }
   return {
     ...session,
     rounds: session.rounds.map((round) =>
@@ -56,14 +67,22 @@ function withRound(
   };
 }
 
+function putRound(session: SessionView, warmup: boolean, round: RoundView): SessionView {
+  if (warmup) return { ...session, warmup: round };
+  const others = session.rounds.filter((r) => r.index !== round.index);
+  return { ...session, rounds: [...others, round].sort((a, b) => a.index - b.index) };
+}
+
 function applyMessage(session: SessionView, message: SessionStreamMessage): SessionView {
   if (message.type === 'snapshot' || message.type === 'finished') return message.session;
+  if (message.type === 'progress') return { ...session, progress: message.progress };
+  if (message.type === 'round') return putRound(session, message.warmup, message.round);
   if (message.type === 'run') {
-    return withRound(session, message.round, (runs) =>
+    return withRound(session, message.warmup, message.round, (runs) =>
       runs.map((run) => (run.machineId === message.run.machineId ? message.run : run)),
     );
   }
-  return withRound(session, message.round, (runs) =>
+  return withRound(session, message.warmup, message.round, (runs) =>
     runs.map((run) => {
       const delta = message.runs.find((d) => d.machineId === run.machineId);
       if (!delta || run.finishedAt !== null) return run;
@@ -76,6 +95,25 @@ function applyMessage(session: SessionView, message: SessionStreamMessage): Sess
       };
     }),
   );
+}
+
+/** A line about where a running session is. */
+function progressText(progress: SessionProgress, rounds: number): string {
+  const round = progress.round === null ? '' : `round ${progress.round + 1} of ${rounds}`;
+  switch (progress.phase) {
+    case 'preparing':
+      return 'Reading each machine’s model…';
+    case 'warmup':
+      return 'Warm-up: one short request per machine, not counted.';
+    case 'rtt':
+      return `Measuring round trips before ${round}.`;
+    case 'settling':
+      return `Pausing before ${round}.`;
+    case 'running':
+      return rounds > 1 ? `Running ${round}.` : 'Running.';
+    default:
+      return '';
+  }
 }
 
 /** Effort levels every selected model accepts. */
@@ -111,6 +149,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [devMode, setDevMode] = useState(false);
   const [starting, setStarting] = useState(false);
   const [deleting, setDeleting] = useState<SessionSummary | null>(null);
+  const [rounds, setRounds] = useState(String(DEFAULT_PLAN.rounds));
+  const [warmup, setWarmup] = useState(DEFAULT_PLAN.warmup);
+  const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
+  const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
+  const [hosts, setHosts] = useState<Record<string, string>>({});
+  /** The round shown in the panes; null follows the newest. -1 is the warm-up. */
+  const [shownRound, setShownRound] = useState<number | null>(null);
 
   const refreshSummaries = useCallback(() => {
     api.listSessions().then(
@@ -126,6 +171,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     );
     refreshSummaries();
   }, [refreshSummaries]);
+
+  useEffect(() => {
+    api.machineHosts().then(
+      ({ hosts: keys }) => setHosts(keys),
+      () => undefined,
+    );
+  }, [machines]);
 
   const machineKey = (machines ?? []).map((m) => m.id).join(',');
   useEffect(() => {
@@ -161,6 +213,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       setMaxTokens(String(view.config.maxTokens));
       setThinking(view.config.thinking);
       setEffort(view.config.reasoningEffort ?? '');
+      setRounds(String(view.plan.rounds));
+      setWarmup(view.plan.warmup);
+      setSettleSeconds(String(view.plan.settleMs / 1000));
+      setSequencing(view.plan.sequencing);
       const known = new Set((machines ?? []).map((m) => m.id));
       const ids = view.machines.map((m) => m.id).filter((id) => known.has(id));
       if (ids.length > 0) setSelected(ids);
@@ -179,6 +235,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       (view) => {
         if (cancelled) return;
         setSession(view);
+        setShownRound(null);
         // Opening a race on purpose loads its settings, so Start runs it again.
         if (view.id === routeId) fillForm(view);
       },
@@ -253,6 +310,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const warnings = raceWarnings(
     chosen.map((m) => ({ name: m.name, status: statuses[m.id]?.status ?? null })),
   );
+  // Machines on one computer compete for it, so they should take turns.
+  const byHost = new Map<string, string[]>();
+  for (const m of chosen) {
+    const key = hosts[m.id];
+    if (key) byHost.set(key, [...(byHost.get(key) ?? []), m.name]);
+  }
+  const sharing = [...byHost.values()].find((names) => names.length > 1) ?? null;
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -273,6 +337,12 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         thinking: alwaysThinks || (canThink && thinking),
         reasoningEffort: effortValue && effortLevels.includes(effortValue) ? effortValue : null,
       },
+      plan: {
+        rounds: Number(rounds),
+        warmup,
+        settleMs: Math.round(Number(settleSeconds) * 1000),
+        sequencing,
+      },
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
@@ -282,6 +352,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     try {
       const created = await api.startSession(parsed.data);
       setSession(created);
+      setShownRound(null);
       window.location.hash = `#/text/${created.id}`;
       refreshSummaries();
       addLog({
@@ -289,9 +360,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         color: null,
         tone: 'info',
         text:
-          chosen.length === 1
-            ? `Run started on ${chosen[0]?.name ?? 'one machine'}.`
-            : `Race started: ${chosen.map((m) => m.name).join(', ')}.`,
+          (chosen.length === 1
+            ? `Run started on ${chosen[0]?.name ?? 'one machine'}`
+            : `Race started: ${chosen.map((m) => m.name).join(', ')}`) +
+          (parsed.data.plan.rounds > 1 ? `, ${parsed.data.plan.rounds} rounds.` : '.'),
       });
     } catch (error) {
       setFormError(messageOf(error));
@@ -320,8 +392,22 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     }
   };
 
-  // Panes: the race on screen, or the chosen machines waiting for one.
-  const round = session?.rounds[0] ?? null;
+  // Panes: a round of the race on screen, or the chosen machines waiting for one. While a race
+  // runs they follow it; afterwards they show the round picked in the round table.
+  const newest =
+    session === null
+      ? null
+      : session.progress.phase === 'warmup'
+        ? session.warmup
+        : (session.rounds[session.rounds.length - 1] ?? session.warmup);
+  const picked =
+    session === null || shownRound === null || running
+      ? null
+      : shownRound === -1
+        ? session.warmup
+        : (session.rounds.find((r) => r.index === shownRound) ?? null);
+  const round = picked ?? newest;
+  const roundIndex = round === null ? null : round === session?.warmup ? -1 : round.index;
   const panes = session
     ? session.machines.map((m, i) => ({
         key: m.id,
@@ -336,6 +422,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         model: statuses[m.id]?.status?.activeModel ?? null,
       }));
   const finishedRuns = round?.runs.filter((run) => run.finishedAt !== null && run.client) ?? [];
+  const counted = session?.rounds.some((r) => r.runs.some((run) => run.state === 'done')) ?? false;
+  const manyRounds = (session?.rounds.length ?? 0) > 1 || session?.warmup !== null;
   const columns = Math.min(Math.max(panes.length, 1), 4);
 
   return (
@@ -493,6 +581,86 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 </div>
               ) : null}
             </div>
+            <div className="run-options">
+              <div className="field">
+                <label htmlFor="run-rounds">Rounds</label>
+                <input
+                  id="run-rounds"
+                  inputMode="numeric"
+                  value={rounds}
+                  onChange={(event) => setRounds(event.target.value)}
+                  disabled={running}
+                  aria-describedby="rounds-hint"
+                />
+                <p className="field-hint" id="rounds-hint">
+                  1 to {MAX_ROUNDS}. Results are medians.
+                </p>
+              </div>
+              <div className="field">
+                <span className="field-label" id="warmup-label">
+                  Warm-up
+                </span>
+                <div className="toggle-chips" role="radiogroup" aria-labelledby="warmup-label">
+                  {[true, false].map((on) => (
+                    <button
+                      key={String(on)}
+                      type="button"
+                      role="radio"
+                      aria-checked={warmup === on}
+                      className={`toggle-chip${warmup === on ? ' toggle-chip-on' : ''}`}
+                      onClick={() => setWarmup(on)}
+                      disabled={running}
+                    >
+                      {on ? 'On' : 'Off'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="run-settle">Pause between rounds, seconds</label>
+                <input
+                  id="run-settle"
+                  inputMode="decimal"
+                  value={settleSeconds}
+                  onChange={(event) => setSettleSeconds(event.target.value)}
+                  disabled={running}
+                />
+              </div>
+              <div className="field">
+                <span className="field-label" id="order-label">
+                  Order
+                </span>
+                <div className="toggle-chips" role="radiogroup" aria-labelledby="order-label">
+                  {(['concurrent', 'sequential'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={sequencing === mode}
+                      className={`toggle-chip${sequencing === mode ? ' toggle-chip-on' : ''}`}
+                      onClick={() => setSequencing(mode)}
+                      disabled={running}
+                    >
+                      {mode === 'concurrent' ? 'Together' : 'Take turns'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {sharing && sequencing === 'concurrent' ? (
+              <p className="note-warn" data-testid="same-host">
+                {sharing.join(' and ')} run on the same computer, so racing them together makes them
+                compete for it.{' '}
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-inline"
+                  onClick={() => setSequencing('sequential')}
+                  disabled={running}
+                >
+                  Take turns instead
+                </button>
+              </p>
+            ) : null}
             {thinking && canThink ? (
               <p className="field-hint">
                 Max tokens includes the thinking. If a model thinks until the limit, it never
@@ -531,6 +699,19 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           </form>
         ) : null}
 
+        {session && running ? (
+          <p className="race-progress" role="status" data-testid="race-progress">
+            {progressText(session.progress, session.plan.rounds)}
+          </p>
+        ) : session && roundIndex !== null && manyRounds ? (
+          <p className="race-progress" data-testid="race-progress">
+            Showing{' '}
+            {roundIndex === -1
+              ? 'the warm-up'
+              : `round ${roundIndex + 1} of ${session.rounds.length}`}
+            . Pick another in the round table.
+          </p>
+        ) : null}
         {panes.length > 0 ? (
           <div
             className={`race-panes cols-${columns}`}
@@ -554,16 +735,33 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           </div>
         ) : null}
 
-        {session && session.machines.length > 1 && finishedRuns.length > 0 && !running ? (
-          <CompareTable session={session} />
+        {session &&
+        !running &&
+        counted &&
+        (session.machines.length > 1 || session.rounds.length > 1) ? (
+          <StatsTable session={session} />
+        ) : null}
+        {session && manyRounds ? (
+          <RoundTable
+            session={session}
+            shown={running ? -2 : (roundIndex ?? -2)}
+            onShow={(index) => setShownRound(index)}
+          />
         ) : null}
         {session && !running
           ? finishedRuns.map((run) =>
-              session.machines.length === 1 ? (
+              session.machines.length === 1 && !manyRounds ? (
                 <RunMetrics key={run.id} run={run} />
               ) : (
                 <details key={run.id} className="panel run-details">
-                  <summary>Measurements for {run.machineName}</summary>
+                  <summary>
+                    Measurements for {run.machineName}
+                    {manyRounds
+                      ? roundIndex === -1
+                        ? ', warm-up'
+                        : `, round ${(roundIndex ?? 0) + 1}`
+                      : ''}
+                  </summary>
                   <RunMetrics run={run} />
                 </details>
               ),

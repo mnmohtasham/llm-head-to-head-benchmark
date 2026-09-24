@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import {
+  abbaOrder,
   chatRequestBody,
   compactEvents,
   computeClientMetrics,
@@ -12,20 +13,25 @@ import {
   isTokenEvent,
   publicRun,
   publicSession,
+  roundFlags,
   SESSION_SCHEMA_VERSION,
   summarizeSession,
   type ClientMetrics,
   type LiveMetrics,
   type MachineProvenance,
+  type RoundView,
   type RunDelta,
   type RunView,
+  type SessionPhase,
   type SessionRequest,
   type SessionState,
   type SessionStreamMessage,
   type SessionSummary,
   type SessionView,
+  type StoredRound,
   type StoredRun,
   type StoredSession,
+  type TextConfig,
   type TimedEvent,
   type Timings,
 } from '@duel/shared';
@@ -33,6 +39,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { streamChatCompletion, type StreamOutcome } from './chat-stream';
 import { readModelStatus } from './models';
 import { cancelOnMachine, readMonitorRow } from './monitor';
+import { measureRtt } from './rtt';
 import type { SessionStore } from './session-store';
 import type { MachineStore, StoredMachine } from './store';
 
@@ -52,6 +59,14 @@ export const DEFAULT_RUN_TIMINGS: RunTimings = {
 /** Finished sessions kept in memory, so the page does not wait for the disk right after a race. */
 const KEEP_RECENT = 5;
 
+/** The warm-up asks for almost nothing: it only wakes each machine up. */
+const WARMUP: TextConfig = {
+  prompt: 'Reply with the single word: ready.',
+  maxTokens: 16,
+  thinking: false,
+  reasoningEffort: null,
+};
+
 type Listener = (message: SessionStreamMessage) => void;
 
 interface LiveRun {
@@ -65,9 +80,20 @@ interface LiveRun {
   lastTokenAt: number | null;
 }
 
+interface LiveRound {
+  view: StoredRound;
+  runs: LiveRun[];
+  warmup: boolean;
+  lag: IntervalHistogram;
+}
+
 interface ActiveSession {
   session: StoredSession;
-  runs: LiveRun[];
+  machines: StoredMachine[];
+  /** Why a machine cannot take part, found before the first round; null when it can. */
+  unready: Array<string | null>;
+  models: Array<string | null>;
+  current: LiveRound | null;
   controller: AbortController;
   listeners: Set<Listener>;
   lag: IntervalHistogram;
@@ -95,8 +121,24 @@ function lagOf(histogram: IntervalHistogram): { max: number; p99: number } {
   };
 }
 
-function newRun(machine: StoredMachine, request: SessionRequest): StoredRun {
-  const { config } = request;
+/** Waits, but gives up at once when the session is cancelled. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
   return {
     id: randomUUID(),
     machineId: machine.id,
@@ -118,13 +160,19 @@ function newRun(machine: StoredMachine, request: SessionRequest): StoredRun {
     error: null,
     loopLagMs: null,
     sendOffsetMs: null,
+    rtt: null,
     raw: null,
   };
 }
 
+function publicRound(round: StoredRound): RoundView {
+  return { ...round, runs: round.runs.map((run) => publicRun(run)) };
+}
+
 /**
- * Runs sessions: the same prompt on every chosen machine, sent in the same tick, each machine
- * streaming on its own so that one failure never stops the others. One session runs at a time.
+ * Runs sessions: the same prompt on every chosen machine for a number of rounds, after an
+ * optional warm-up. Machines go together in the same tick, or one at a time in ABBA order. Each
+ * machine streams on its own, so one failure never stops the others. One session runs at a time.
  */
 export class SessionManager {
   private readonly active = new Map<string, ActiveSession>();
@@ -186,16 +234,6 @@ export class SessionManager {
 
   start(machines: StoredMachine[], request: SessionRequest): SessionView {
     const id = randomUUID();
-    const runs: LiveRun[] = machines.map((machine) => ({
-      view: newRun(machine, request),
-      machine,
-      provenance: this.provenanceOf(machine),
-      unsentReasoning: '',
-      unsentAnswer: '',
-      requestAt: null,
-      firstTokenAt: null,
-      lastTokenAt: null,
-    }));
     const session: StoredSession = {
       schemaVersion: SESSION_SCHEMA_VERSION,
       id,
@@ -205,6 +243,7 @@ export class SessionManager {
       state: 'running',
       error: null,
       config: { ...request.config, sampling: { ...DEFAULT_SAMPLING } },
+      plan: { ...request.plan },
       machines: machines.map((m) => ({
         id: m.id,
         name: m.name,
@@ -212,13 +251,18 @@ export class SessionManager {
         baseUrl: m.baseUrl,
         notes: m.notes,
       })),
-      rounds: [{ index: 0, startedAt: null, sendSkewMs: null, runs: runs.map((r) => r.view) }],
-      provenance: runs.map((r) => r.provenance),
+      warmup: null,
+      rounds: [],
+      progress: { phase: 'preparing', round: null },
+      provenance: machines.map((m) => this.provenanceOf(m)),
       loopLagMs: null,
     };
     const entry: ActiveSession = {
       session,
-      runs,
+      machines,
+      unready: machines.map(() => null),
+      models: machines.map(() => null),
+      current: null,
       controller: new AbortController(),
       listeners: new Set(),
       lag: monitorEventLoopDelay({ resolution: 10 }),
@@ -242,7 +286,7 @@ export class SessionManager {
     entry.controller.abort();
     // Also ask Unsloth by id, in case a dropped connection is noticed late.
     await Promise.allSettled(
-      entry.runs
+      (entry.current?.runs ?? [])
         .filter((run) => run.requestAt !== null && run.view.finishedAt === null)
         .map((run) => cancelOnMachine(run.machine, run.view.id)),
     );
@@ -290,6 +334,11 @@ export class SessionManager {
     for (const listener of entry.listeners) listener(message);
   }
 
+  private setProgress(entry: ActiveSession, phase: SessionPhase, round: number | null) {
+    entry.session.progress = { phase, round };
+    this.broadcast(entry, { type: 'progress', progress: { phase, round } });
+  }
+
   private liveNow(run: LiveRun): LiveMetrics {
     const live = run.view.live;
     const decodeMs =
@@ -306,8 +355,10 @@ export class SessionManager {
 
   /** Sends the text and live numbers gathered since the last flush, for every machine at once. */
   private flush(entry: ActiveSession) {
+    const current = entry.current;
+    if (!current) return;
     const runs: RunDelta[] = [];
-    for (const run of entry.runs) {
+    for (const run of current.runs) {
       if (run.view.finishedAt !== null) continue;
       run.view.live = this.liveNow(run);
       runs.push({
@@ -320,7 +371,14 @@ export class SessionManager {
       run.unsentReasoning = '';
       run.unsentAnswer = '';
     }
-    if (runs.length > 0) this.broadcast(entry, { type: 'delta', round: 0, runs });
+    if (runs.length > 0) {
+      this.broadcast(entry, {
+        type: 'delta',
+        warmup: current.warmup,
+        round: current.view.index,
+        runs,
+      });
+    }
   }
 
   private onEvent(run: LiveRun, timed: TimedEvent) {
@@ -343,6 +401,7 @@ export class SessionManager {
 
   private finishRun(
     entry: ActiveSession,
+    round: LiveRound,
     run: LiveRun,
     state: RunView['state'],
     error: string | null,
@@ -356,119 +415,212 @@ export class SessionManager {
     run.view.state = state;
     run.view.error = error;
     run.view.finishedAt = new Date().toISOString();
-    this.broadcast(entry, { type: 'run', round: 0, run: publicRun(structuredClone(run.view)) });
+    this.broadcast(entry, {
+      type: 'run',
+      warmup: round.warmup,
+      round: round.view.index,
+      run: publicRun(structuredClone(run.view)),
+    });
   }
 
-  /** Reads the model on a machine before the race. Returns the model, or null when the run failed. */
-  private async prepare(entry: ActiveSession, run: LiveRun): Promise<string | null> {
-    const { machine } = run;
+  /** Reads each machine's model before the first round; a machine without one sits out. */
+  private async prepare(entry: ActiveSession, index: number): Promise<void> {
+    const machine = entry.machines[index];
+    const provenance = entry.session.provenance[index];
+    if (!machine || !provenance) return;
     if (this.deps.isLoading(machine.id)) {
-      this.finishRun(
-        entry,
-        run,
-        'failed',
-        `A model is loading on ${machine.name}. Wait for it to finish, then start again.`,
-      );
-      return null;
+      entry.unready[index] =
+        `A model is loading on ${machine.name}. Wait for it to finish, then start again.`;
+      return;
     }
     const before = await readModelStatus(machine);
-    run.provenance.statusBefore = before.status;
+    provenance.statusBefore = before.status;
     if (before.error !== null) {
-      this.finishRun(entry, run, 'failed', before.error);
-      return null;
+      entry.unready[index] = before.error;
+      return;
     }
     const model = before.status?.activeModel ?? null;
-    run.view.modelBefore = model;
     if (!model) {
-      this.finishRun(
-        entry,
-        run,
-        'failed',
-        `No model is loaded on ${machine.name}. Load one on the Models tab first.`,
-      );
-      return null;
+      entry.unready[index] =
+        `No model is loaded on ${machine.name}. Load one on the Models tab first.`;
+      return;
     }
-    return model;
+    entry.models[index] = model;
   }
 
   private async execute(entry: ActiveSession): Promise<void> {
-    const { session, runs, controller } = entry;
-    const round = session.rounds[0];
-    if (!round) throw new Error('A session needs a round.');
+    const { session, controller } = entry;
+    const { plan } = session;
+    const signal = controller.signal;
     // A record exists from the start, so a crash leaves an interrupted race instead of nothing.
     await this.deps.sessions.save(session);
     entry.lag.enable();
     const timer = setInterval(() => this.flush(entry), this.deps.timings.flushEveryMs);
     try {
-      // Every machine's status first, so the requests themselves can leave together.
-      const models = await Promise.all(runs.map((run) => this.prepare(entry, run)));
-      if (controller.signal.aborted) {
-        for (const run of runs) this.finishRun(entry, run, 'cancelled', null);
-      } else {
-        const bodies = runs.map((run, i) => {
-          const model = models[i];
-          return model ? chatRequestBody(session.config, model, run.view.id) : null;
-        });
-        round.startedAt = new Date().toISOString();
-        const pending: Array<Promise<void>> = [];
-        // Same tick: nothing in this loop waits.
-        for (const [i, run] of runs.entries()) {
-          const body = bodies[i];
-          if (!body) continue;
-          run.provenance.request = body;
-          run.view.state = 'streaming';
-          run.requestAt = performance.now();
-          const outcome = streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
-            signal: controller.signal,
-            idleTimeoutMs: this.deps.timings.idleTimeoutMs,
-            totalTimeoutMs: this.deps.timings.totalTimeoutMs,
-            onEvent: (timed) => this.onEvent(run, timed),
-          });
-          pending.push(
-            outcome
-              .then((result) => this.completeRun(entry, run, result))
-              .catch((error: unknown) =>
-                this.finishRun(
-                  entry,
-                  run,
-                  'failed',
-                  `Model Duel stopped this run: ${(error as Error).message}`,
-                ),
-              ),
-          );
+      await Promise.all(entry.machines.map((_machine, i) => this.prepare(entry, i)));
+      const anyReady = entry.models.some((model) => model !== null);
+      if (plan.warmup && anyReady && !signal.aborted) {
+        this.setProgress(entry, 'warmup', null);
+        await this.runRound(entry, -1, true);
+      }
+      for (let index = 0; index < plan.rounds && !signal.aborted; index += 1) {
+        const settle = anyReady && plan.settleMs > 0 && (index > 0 || plan.warmup);
+        if (settle) {
+          this.setProgress(entry, 'settling', index);
+          await pause(plan.settleMs, signal);
+          if (signal.aborted) break;
         }
-        const sent = runs.filter((run) => run.requestAt !== null);
-        if (sent.length > 0) {
-          const first = Math.min(...sent.map((run) => run.requestAt ?? 0));
-          const last = Math.max(...sent.map((run) => run.requestAt ?? 0));
-          round.sendSkewMs = round3(last - first);
-          for (const run of sent) run.view.sendOffsetMs = round3((run.requestAt ?? 0) - first);
-        }
-        await Promise.all(pending);
+        await this.runRound(entry, index, false);
       }
     } finally {
       clearInterval(timer);
       entry.lag.disable();
     }
     session.loopLagMs = lagOf(entry.lag);
-    const states = runs.map((run) => run.view.state);
-    const state: SessionState = controller.signal.aborted
+    const counted = session.rounds.flatMap((round) => round.runs);
+    const state: SessionState = signal.aborted
       ? 'cancelled'
-      : states.every((s) => s === 'failed')
+      : counted.length > 0 && counted.every((run) => run.state === 'failed')
         ? 'failed'
         : 'done';
     await this.finishSession(
       entry,
       state,
-      state === 'failed' ? 'Every machine in the race failed. Each pane says why.' : null,
+      state === 'failed' ? 'Every machine failed in every round. Each pane says why.' : null,
     );
   }
 
-  private async completeRun(entry: ActiveSession, run: LiveRun, outcome: StreamOutcome) {
-    const { machine } = run;
-    const { config } = entry.session;
+  private async runRound(entry: ActiveSession, index: number, warmup: boolean): Promise<void> {
+    const { session, controller } = entry;
+    const signal = controller.signal;
+    const config = warmup ? WARMUP : session.config;
+    const view: StoredRound = {
+      index,
+      startedAt: null,
+      finishedAt: null,
+      sendSkewMs: null,
+      order: [],
+      runs: entry.machines.map((machine) => newRun(machine, config)),
+      loopLagMs: null,
+      flags: [],
+    };
+    const round: LiveRound = {
+      view,
+      warmup,
+      lag: monitorEventLoopDelay({ resolution: 10 }),
+      runs: entry.machines.map((machine, i) => ({
+        view: view.runs[i] as StoredRun,
+        machine,
+        provenance: session.provenance[i] as MachineProvenance,
+        unsentReasoning: '',
+        unsentAnswer: '',
+        requestAt: null,
+        firstTokenAt: null,
+        lastTokenAt: null,
+      })),
+    };
+    for (const [i, run] of round.runs.entries()) run.view.modelBefore = entry.models[i] ?? null;
+    if (warmup) session.warmup = view;
+    else session.rounds.push(view);
+    entry.current = round;
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+
+    for (const [i, run] of round.runs.entries()) {
+      const why = entry.unready[i];
+      if (why) this.finishRun(entry, round, run, 'failed', why);
+    }
+    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+
+    if (!warmup && ready.length > 0) {
+      this.setProgress(entry, 'rtt', index);
+      const rtts = await Promise.all(
+        ready.map((run) => measureRtt(run.machine.baseUrl, { signal })),
+      );
+      ready.forEach((run, i) => {
+        run.view.rtt = rtts[i] ?? null;
+      });
+    }
+    if (!signal.aborted && ready.length > 0) {
+      this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
+      round.lag.enable();
+      view.startedAt = new Date().toISOString();
+      const bodyFor = (run: LiveRun) => {
+        const model = entry.models[round.runs.indexOf(run)] ?? '';
+        return chatRequestBody(config, model, run.view.id);
+      };
+      if (session.plan.sequencing === 'concurrent') {
+        const pending: Array<Promise<void>> = [];
+        // Same tick: nothing in this loop waits.
+        for (const run of ready) pending.push(this.stream(entry, round, run, bodyFor(run)));
+        view.order = ready.map((run) => run.machine.id);
+        const first = Math.min(...ready.map((run) => run.requestAt ?? 0));
+        const last = Math.max(...ready.map((run) => run.requestAt ?? 0));
+        view.sendSkewMs = round3(last - first);
+        for (const run of ready) run.view.sendOffsetMs = round3((run.requestAt ?? 0) - first);
+        await Promise.all(pending);
+      } else {
+        const order = abbaOrder(ready, warmup ? 0 : index);
+        view.order = order.map((run) => run.machine.id);
+        for (const run of order) run.view.state = 'queued';
+        for (const run of order) {
+          if (signal.aborted) break;
+          await this.stream(entry, round, run, bodyFor(run));
+        }
+      }
+      round.lag.disable();
+      view.loopLagMs = lagOf(round.lag);
+    }
+    for (const run of round.runs) {
+      if (signal.aborted) this.finishRun(entry, round, run, 'cancelled', null);
+    }
+    view.finishedAt = new Date().toISOString();
+    if (!warmup) {
+      const names = new Map(session.machines.map((m) => [m.id, m.name]));
+      view.flags = roundFlags(view.runs, names, view.loopLagMs);
+    }
     this.flush(entry);
-    run.view.loopLagMs = lagOf(entry.lag);
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    entry.current = null;
+    await this.deps.sessions.save(session);
+  }
+
+  /** Sends one machine's request; the moment it leaves is stamped before this returns. */
+  private stream(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    if (!round.warmup) run.provenance.request ??= body;
+    run.view.state = 'streaming';
+    run.requestAt = performance.now();
+    return streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
+      signal: entry.controller.signal,
+      idleTimeoutMs: this.deps.timings.idleTimeoutMs,
+      totalTimeoutMs: this.deps.timings.totalTimeoutMs,
+      onEvent: (timed) => this.onEvent(run, timed),
+    })
+      .then((outcome) => this.completeRun(entry, round, run, outcome))
+      .catch((error: unknown) =>
+        this.finishRun(
+          entry,
+          round,
+          run,
+          'failed',
+          `Model Duel stopped this run: ${(error as Error).message}`,
+        ),
+      );
+  }
+
+  private async completeRun(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    outcome: StreamOutcome,
+  ) {
+    const { machine } = run;
+    this.flush(entry);
+    run.view.loopLagMs = lagOf(round.lag);
     const client = computeClientMetrics(outcome.timeline);
     run.view.client = client;
     const { requestAt, headersAt, endAt, events } = outcome.timeline;
@@ -480,16 +632,20 @@ export class SessionManager {
     const usage = [...events].reverse().find((e) => e.event.type === 'usage')?.event;
     const timings: Timings | null = usage?.type === 'usage' ? usage.timings : null;
 
-    const [monitor, after] = await Promise.all([
-      readMonitorRow(machine, config.prompt),
-      readModelStatus(machine),
-    ]);
-    run.view.server = { timings, monitor };
-    run.view.modelAfter = after.status?.activeModel ?? null;
-    run.provenance.statusAfter = after.status;
+    if (round.warmup) {
+      run.view.server = { timings, monitor: null };
+    } else {
+      const [monitor, after] = await Promise.all([
+        readMonitorRow(machine, entry.session.config.prompt),
+        readModelStatus(machine),
+      ]);
+      run.view.server = { timings, monitor };
+      run.view.modelAfter = after.status?.activeModel ?? null;
+      run.provenance.statusAfter = after.status;
+    }
 
     const verdict = this.verdict(machine, outcome, client);
-    this.finishRun(entry, run, verdict.state, verdict.error);
+    this.finishRun(entry, round, run, verdict.state, verdict.error);
   }
 
   private verdict(
@@ -541,13 +697,17 @@ export class SessionManager {
     const { session } = entry;
     if (session.finishedAt !== null) return;
     // Normally every run has ended by now; this only closes runs an unexpected error left open.
-    for (const run of entry.runs) {
-      if (state === 'cancelled') this.finishRun(entry, run, 'cancelled', null);
-      else this.finishRun(entry, run, 'failed', error ?? 'The run did not finish.');
+    const current = entry.current;
+    if (current) {
+      for (const run of current.runs) {
+        if (state === 'cancelled') this.finishRun(entry, current, run, 'cancelled', null);
+        else this.finishRun(entry, current, run, 'failed', error ?? 'The run did not finish.');
+      }
     }
     session.state = state;
     session.error = error;
     session.finishedAt = new Date().toISOString();
+    session.progress = { phase: 'finished', round: null };
     try {
       await this.deps.sessions.save(session);
     } catch (failure) {

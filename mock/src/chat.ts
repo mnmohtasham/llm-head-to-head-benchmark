@@ -30,6 +30,11 @@ export interface StreamConfig {
   cachedPromptTokens: number;
   /** Report speculative decoding with this share of drafts accepted; null reports none. */
   draftAcceptRate: number | null;
+  /**
+   * Round-to-round variation: each chat request takes the next factor in turn and multiplies its
+   * startup and token times by it. Null or empty keeps every request at the same speed.
+   */
+  speedFactors: number[] | null;
 }
 
 export const DEFAULT_STREAM: StreamConfig = {
@@ -49,6 +54,7 @@ export const DEFAULT_STREAM: StreamConfig = {
   thinkingInAnswer: false,
   cachedPromptTokens: 0,
   draftAcceptRate: null,
+  speedFactors: null,
 };
 
 // Multibyte words on purpose, so clients meet split UTF-8 sequences.

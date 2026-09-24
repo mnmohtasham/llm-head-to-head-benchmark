@@ -118,6 +118,8 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     stream: { ...DEFAULT_STREAM },
   };
   let config: MockConfig = structuredClone(initial);
+  /** Chat requests served since the last reset, for `stream.speedFactors`. */
+  let chatRequests = 0;
   const state: ProfileState = {
     studioRootId: randomBytes(32).toString('hex'),
     port: 0,
@@ -375,11 +377,14 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     if (state.pending)
       return openAiError(reply, 409, 'A model is loading. Try again when it is ready.');
     if (!model) return openAiError(reply, 400, 'No model loaded. Call POST /inference/load first.');
+    const factors = config.stream.speedFactors ?? [];
+    const factor = factors.length > 0 ? (factors[chatRequests % factors.length] ?? 1) : 1;
+    chatRequests += 1;
     const deps = {
       model,
       stream: config.stream,
-      startupMs: config.stream.startupMs ?? profile().startupMs,
-      tokenMs: config.stream.tokenMs ?? profile().tokenMs,
+      startupMs: (config.stream.startupMs ?? profile().startupMs) * factor,
+      tokenMs: (config.stream.tokenMs ?? profile().tokenMs) * factor,
       monitor,
       onCancelId: (id: string, cancel: () => void) => {
         cancels.set(id, cancel);
@@ -452,6 +457,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   });
   app.post('/__mock/reset', async () => {
     config = structuredClone(initial);
+    chatRequests = 0;
     resetModels();
     log.length = 0;
     monitor.length = 0;

@@ -3,18 +3,7 @@ import type { RunView } from './chat';
 export type Better = 'lower' | 'higher' | null;
 export type MetricUnit = 'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text';
 
-export interface ComparisonRow {
-  key: string;
-  label: string;
-  unit: MetricUnit;
-  better: Better;
-  /** One value per run, in the order given. */
-  values: Array<number | string | null>;
-  /** True where the value is the best of the finished runs. */
-  best: boolean[];
-}
-
-interface RowSpec {
+export interface MetricSpec {
   key: string;
   label: string;
   unit: MetricUnit;
@@ -22,7 +11,8 @@ interface RowSpec {
   pick: (run: RunView) => number | string | null | undefined;
 }
 
-const ROWS: readonly RowSpec[] = [
+/** The metrics compared between machines, with which direction is better. */
+export const METRICS: readonly MetricSpec[] = [
   {
     key: 'firstAnswer',
     label: 'First answer word',
@@ -109,42 +99,3 @@ const ROWS: readonly RowSpec[] = [
     pick: (r) => r.client?.finishReason ?? (r.state === 'done' ? null : r.state),
   },
 ];
-
-/**
- * Marks the best value among runs that finished. Nothing is marked when fewer than two runs have
- * a value, or when every value is the same.
- */
-export function bestOf(
-  values: ReadonlyArray<number | string | null>,
-  better: Better,
-  eligible: readonly boolean[],
-): boolean[] {
-  const none = values.map(() => false);
-  if (better === null) return none;
-  const candidates = values.map((v, i) =>
-    eligible[i] && typeof v === 'number' && Number.isFinite(v) ? v : null,
-  );
-  const numbers = candidates.filter((v): v is number => v !== null);
-  if (numbers.length < 2) return none;
-  const low = Math.min(...numbers);
-  const high = Math.max(...numbers);
-  if (low === high) return none;
-  const target = better === 'lower' ? low : high;
-  return candidates.map((v) => v === target);
-}
-
-/** Metric rows by machine columns for the comparison table. */
-export function compareRuns(runs: readonly RunView[]): ComparisonRow[] {
-  const eligible = runs.map((run) => run.state === 'done');
-  return ROWS.map((row) => {
-    const values = runs.map((run) => row.pick(run) ?? null);
-    return {
-      key: row.key,
-      label: row.label,
-      unit: row.unit,
-      better: row.better,
-      values,
-      best: bestOf(values, row.better, eligible),
-    };
-  });
-}
