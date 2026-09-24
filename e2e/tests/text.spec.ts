@@ -36,6 +36,11 @@ interface SetUp {
   warmup?: boolean;
   pause?: number;
   turns?: boolean;
+  preset?: string;
+  prefill?: 'Cold' | 'Warm';
+  maxTokens?: number;
+  /** Set false when pre-flight is expected to hold the race back. */
+  ready?: boolean;
 }
 
 /**
@@ -58,7 +63,15 @@ async function setUp(page: Page, names: string[], options: SetUp = {}) {
     .getByRole('textbox', { name: 'Rounds', exact: true })
     .fill(String(options.rounds ?? 1));
   await page.getByLabel('Pause between rounds, seconds').fill(String(options.pause ?? 0));
-  await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+  await choose('Prompt', options.preset ?? 'Custom');
+  await choose('Prefill', options.prefill ?? 'Cold');
+  if (options.maxTokens !== undefined) {
+    await page.getByLabel('Max tokens').fill(String(options.maxTokens));
+  }
+  if (options.ready !== false) {
+    await expect(page.getByTestId('preflight-status')).toContainText('All clear');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+  }
 }
 
 const pane = (page: Page, name: string) =>
@@ -204,10 +217,13 @@ test.describe('racing two machines', () => {
       },
       timeout: 20_000,
     });
-    await setUp(page, [MAC.name, LINUX.name]);
+    await setUp(page, [MAC.name, LINUX.name], { ready: false });
     await expect(page.getByTestId('race-warnings')).toContainText(
       `The machines run different quants: ${MAC.name} has Q4_K_M, ${LINUX.name} has UD-IQ2_XXS.`,
     );
+    // Warnings hold the race until it is started on purpose.
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+    await page.getByRole('checkbox', { name: 'Race anyway' }).check();
     await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
   });
 
@@ -325,6 +341,68 @@ test.describe('rounds', () => {
   });
 });
 
+test.describe('presets, prefill and pre-flight', () => {
+  test('warm prefill shows cache hits from round two, cold shows none', async ({ page }) => {
+    for (const prefill of ['Warm', 'Cold'] as const) {
+      await setUp(page, [MAC.name, LINUX.name], {
+        rounds: 2,
+        preset: '8K',
+        prefill,
+        thinking: false,
+        maxTokens: 80,
+      });
+      await expect(page.getByTestId('preset-preview')).toContainText('On Liberty');
+      await page.getByRole('button', { name: 'Start' }).click();
+      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+      const rows = page.getByTestId('round-row');
+      await expect(rows).toHaveCount(2);
+      await expect(rows.first().locator('.round-flags')).not.toContainText('reused');
+      if (prefill === 'Warm') {
+        await expect(rows.nth(1).locator('.round-flags')).toContainText('reused');
+      } else {
+        await expect(rows.nth(1).locator('.round-flags')).not.toContainText('reused');
+      }
+    }
+  });
+
+  test('the 32K preset is stopped by pre-flight on a 16K context', async ({ page, request }) => {
+    await request.post(`${LINUX_MOCK}/api/inference/load`, {
+      headers: { authorization: `Bearer ${LINUX.apiKey}` },
+      data: {
+        model_path: 'unsloth/Qwen3.8-27B-GGUF',
+        gguf_variant: 'Q4_K_M',
+        max_seq_length: 16384,
+      },
+      timeout: 20_000,
+    });
+    await setUp(page, [LINUX.name], { preset: '32K', ready: false });
+    await expect(page.getByTestId('start-blockers')).toContainText(
+      `longer than ${LINUX.name}'s context of 16,384`,
+    );
+    await expect(page.getByTestId('preflight-status')).toContainText('This race cannot start.');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+
+  test('fixed length makes every machine stop on length', async ({ page }) => {
+    await setUp(page, [MAC.name, LINUX.name], {
+      preset: 'Fixed length',
+      thinking: false,
+      maxTokens: 20,
+      rounds: 2,
+    });
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    const finish = page.getByTestId('compare').locator('tr[data-key="finish"]');
+    await expect(finish.locator(`td[data-machine="${MAC.name}"]`)).toHaveText('length ×2');
+    await expect(finish.locator(`td[data-machine="${LINUX.name}"]`)).toHaveText('length ×2');
+    for (const row of await page.getByTestId('round-row').all()) {
+      await expect(row.locator('.round-flags')).toHaveText('');
+    }
+  });
+});
+
 test.describe('one machine', () => {
   test('streams thinking, folds it at the first answer word, and fills the measurements', async ({
     page,
@@ -426,7 +504,7 @@ test.describe('one machine', () => {
     const box = page.getByRole('checkbox', { name: new RegExp(MAC.name) });
     await box.setChecked(true);
     await expect(page.getByTestId('start-blockers')).toContainText(
-      `No model is loaded on ${MAC.name}.`,
+      `No model is loaded on ${MAC.name}. Load one on the Models tab.`,
     );
     await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
   });

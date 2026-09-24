@@ -1,3 +1,4 @@
+import type { PreflightIssue } from './preflight';
 import { z } from 'zod';
 import type { ProbeReport } from './probe';
 
@@ -77,4 +78,6 @@ export interface ApiErrorBody {
   error: string;
   message: string;
   fields?: Record<string, string>;
+  /** Pre-flight findings, when pre-flight refused a race. */
+  issues?: PreflightIssue[];
 }

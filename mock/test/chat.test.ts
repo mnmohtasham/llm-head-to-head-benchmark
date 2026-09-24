@@ -151,6 +151,63 @@ describe('streaming like Unsloth', () => {
   });
 });
 
+describe('prompt caching and token counts', () => {
+  const usageOf = (events: ChatEvent[]) => {
+    const usage = events.find((e) => e.type === 'usage');
+    return usage?.type === 'usage' ? usage : null;
+  };
+  const long = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' ');
+
+  it('counts tokens the way the chat route does', async () => {
+    const response = await fetch(`${mock.url}/v1/chat/count_tokens`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'one two three' }] }),
+    });
+    expect(await response.json()).toMatchObject({ input_tokens: 7 });
+  });
+
+  it('reuses a cached prompt start, except for seeded requests on llama.cpp', async () => {
+    const messages = [{ role: 'user', content: long }];
+    await chat({ messages });
+    expect(usageOf((await chat({ messages })).events)?.usage?.cachedTokens).toBe(200);
+    await fetch(`${mock.url}/__mock/reset`, { method: 'POST' });
+    await chat({ messages, seed: 42 });
+    expect(usageOf((await chat({ messages, seed: 42 })).events)?.usage?.cachedTokens).toBe(0);
+  });
+
+  it('keeps the cache for seeded requests on MLX, as Unsloth does', async () => {
+    const mlxKey = 'sk-unsloth-mockchat-mlx-0000000000000002';
+    const mlx = await startMockServer({ profile: 'mac-mlx', apiKey: mlxKey });
+    try {
+      await fetch(`${mlx.url}/__mock/config`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ latencyMs: 0, stream: { startupMs: 10, tokenMs: 1 } }),
+      });
+      const send = async () => {
+        const response = await fetch(`${mlx.url}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${mlxKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: 'x',
+            stream: true,
+            stream_options: { include_usage: true },
+            max_tokens: 4,
+            seed: 42,
+            messages: [{ role: 'user', content: long }],
+          }),
+        });
+        return response.text();
+      };
+      expect(await send()).toContain('"cached_tokens":0');
+      expect(await send()).toContain('"cached_tokens":200');
+    } finally {
+      await mlx.close();
+    }
+  });
+});
+
 describe('cancelling and the monitor', () => {
   it('stops generating on cancel by id, and records the row as cancelled', async () => {
     await control({ stream: { tokenMs: 30, answerTokens: 200 } });

@@ -1,10 +1,17 @@
 import {
   DEFAULT_PLAN,
-  isActiveJob,
+  DEFAULT_SAMPLING,
+  hasErrors,
+  hasWarnings,
   MAX_ROUNDS,
-  raceWarnings,
+  PRESETS,
   REASONING_EFFORTS,
   sessionRequestSchema,
+  textConfigSchema,
+  type PrefillMode,
+  type PreflightIssue,
+  type PreflightResult,
+  type PresetId,
   type MachineStatusView,
   type MachineView,
   type ModelStatus,
@@ -14,9 +21,17 @@ import {
   type SessionStreamMessage,
   type SessionSummary,
   type SessionView,
+  type TextConfig,
 } from '@duel/shared';
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
-import { api, messageOf } from '../api';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
+import { api, ApiError, messageOf, type PresetView } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import { RunMetrics } from '../components/RunMetrics';
@@ -154,6 +169,24 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
   const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
   const [hosts, setHosts] = useState<Record<string, string>>({});
+  const [preset, setPreset] = useState<PresetId>('custom');
+  const [presetViews, setPresetViews] = useState<PresetView[]>([]);
+  const [prefill, setPrefill] = useState<PrefillMode>('cold');
+  const [sampling, setSampling] = useState(() => ({
+    temperature: String(DEFAULT_SAMPLING.temperature),
+    topP: String(DEFAULT_SAMPLING.topP),
+    topK: String(DEFAULT_SAMPLING.topK),
+    minP: String(DEFAULT_SAMPLING.minP),
+    repetitionPenalty: String(DEFAULT_SAMPLING.repetitionPenalty),
+    seed: String(DEFAULT_SAMPLING.seed),
+  }));
+  const [preflight, setPreflight] = useState<{
+    key: string;
+    result: PreflightResult | null;
+    error: string | null;
+  } | null>(null);
+  const [raceAnyway, setRaceAnyway] = useState(false);
+  const preflightRequest = useRef(0);
   /** The round shown in the panes; null follows the newest. -1 is the warm-up. */
   const [shownRound, setShownRound] = useState<number | null>(null);
 
@@ -171,6 +204,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     );
     refreshSummaries();
   }, [refreshSummaries]);
+
+  useEffect(() => {
+    api.presets().then(
+      ({ presets }) => setPresetViews(presets),
+      () => undefined,
+    );
+  }, []);
 
   useEffect(() => {
     api.machineHosts().then(
@@ -209,10 +249,20 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
 
   const fillForm = useCallback(
     (view: SessionView) => {
-      setPrompt(view.config.prompt);
+      if (view.config.preset === 'custom') setPrompt(view.config.prompt);
       setMaxTokens(String(view.config.maxTokens));
       setThinking(view.config.thinking);
       setEffort(view.config.reasoningEffort ?? '');
+      setPreset(view.config.preset);
+      setPrefill(view.config.prefill);
+      setSampling({
+        temperature: String(view.config.sampling.temperature),
+        topP: String(view.config.sampling.topP),
+        topK: String(view.config.sampling.topK),
+        minP: String(view.config.sampling.minP),
+        repetitionPenalty: String(view.config.sampling.repetitionPenalty),
+        seed: String(view.config.sampling.seed),
+      });
       setRounds(String(view.plan.rounds));
       setWarmup(view.plan.warmup);
       setSettleSeconds(String(view.plan.settleMs / 1000));
@@ -299,17 +349,62 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const effortLevels = commonEfforts(loaded);
   const effortValue = effort ?? (effortLevels.includes('low') ? 'low' : '');
 
-  const blockers = chosen.flatMap((m) => {
-    const view = statuses[m.id];
-    if (!view) return [`Checking ${m.name}…`];
-    if (view.error) return [`${m.name} is not answering: ${view.error}`];
-    if (isActiveJob(view.job)) return [`A model is loading on ${m.name}. Wait for it to finish.`];
-    if (!view.status?.activeModel) return [`No model is loaded on ${m.name}.`];
-    return [];
+  // The config the form describes, or the reason it cannot be sent yet.
+  const draft = textConfigSchema.safeParse({
+    preset,
+    prompt: preset === 'custom' ? prompt : '',
+    maxTokens: Number(maxTokens),
+    thinking: alwaysThinks || (canThink && thinking),
+    reasoningEffort: effortValue && effortLevels.includes(effortValue) ? effortValue : null,
+    prefill,
+    sampling: {
+      temperature: Number(sampling.temperature),
+      topP: Number(sampling.topP),
+      topK: Number(sampling.topK),
+      minP: Number(sampling.minP),
+      repetitionPenalty: Number(sampling.repetitionPenalty),
+      seed: Number(sampling.seed),
+    },
   });
-  const warnings = raceWarnings(
-    chosen.map((m) => ({ name: m.name, status: statuses[m.id]?.status ?? null })),
-  );
+  const chosenIds = chosen.map((m) => m.id);
+  const preflightKey = draft.success ? JSON.stringify([chosenIds, draft.data]) : null;
+
+  // Pre-flight runs on the machines themselves, a moment after the form stops changing. The key
+  // holds everything it depends on.
+  useEffect(() => {
+    if (!preflightKey || running) return;
+    const [ids, config] = JSON.parse(preflightKey) as [string[], TextConfig];
+    if (ids.length === 0) return;
+    const ticket = ++preflightRequest.current;
+    const timer = setTimeout(() => {
+      api.preflight(ids, config).then(
+        (result) => {
+          if (ticket === preflightRequest.current) {
+            setPreflight({ key: preflightKey, result, error: null });
+          }
+        },
+        (error: unknown) => {
+          if (ticket === preflightRequest.current) {
+            setPreflight({ key: preflightKey, result: null, error: messageOf(error) });
+          }
+        },
+      );
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [preflightKey, running]);
+
+  const current = preflight && preflight.key === preflightKey ? preflight : null;
+  const issues: PreflightIssue[] = current?.result?.issues ?? [];
+  const errors = issues.filter((issue) => issue.level === 'error');
+  const warnings = issues.filter((issue) => issue.level === 'warning');
+  const blocked =
+    !draft.success ||
+    chosen.length === 0 ||
+    current === null ||
+    current.result === null ||
+    hasErrors(issues) ||
+    (hasWarnings(issues) && !raceAnyway);
+
   // Machines on one computer compete for it, so they should take turns.
   const byHost = new Map<string, string[]>();
   for (const m of chosen) {
@@ -328,15 +423,15 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
     setFormError(null);
+    if (!draft.success) {
+      setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      return;
+    }
     const parsed = sessionRequestSchema.safeParse({
       workload: 'text',
-      machineIds: chosen.map((m) => m.id),
-      config: {
-        prompt,
-        maxTokens: Number(maxTokens),
-        thinking: alwaysThinks || (canThink && thinking),
-        reasoningEffort: effortValue && effortLevels.includes(effortValue) ? effortValue : null,
-      },
+      machineIds: chosenIds,
+      config: draft.data,
+      acknowledgeWarnings: raceAnyway,
       plan: {
         rounds: Number(rounds),
         warmup,
@@ -367,6 +462,19 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       });
     } catch (error) {
       setFormError(messageOf(error));
+      // Pre-flight on the server found something the form had not seen yet.
+      if (error instanceof ApiError && error.issues && preflightKey) {
+        setPreflight({
+          key: preflightKey,
+          result: {
+            checkedAt: new Date().toISOString(),
+            issues: error.issues,
+            promptTokens: current?.result?.promptTokens ?? {},
+            promptWords: current?.result?.promptWords ?? 0,
+          },
+          error: null,
+        });
+      }
     } finally {
       setStarting(false);
     }
@@ -441,7 +549,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               type="submit"
               form="run-form"
               className="btn btn-primary"
-              disabled={starting || blockers.length > 0 || chosen.length === 0}
+              disabled={starting || blocked}
             >
               Start
             </button>
@@ -493,7 +601,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                       value={m.id}
                       checked={selected?.includes(m.id) ?? false}
                       onChange={() => toggle(m.id)}
-                      disabled={running}
+                      // Enabled once the default choice is made, so it cannot undo a click.
+                      disabled={running || selected === null}
                     />
                     <span className="chip-radio-body">
                       <span className="chip-radio-name">{m.name}</span>
@@ -513,14 +622,49 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
             </fieldset>
 
             <div className="field">
-              <label htmlFor="run-prompt">Prompt</label>
-              <textarea
-                id="run-prompt"
-                rows={3}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                disabled={running}
-              />
+              <span className="field-label" id="preset-label">
+                Prompt
+              </span>
+              <div className="toggle-chips" role="radiogroup" aria-labelledby="preset-label">
+                {PRESETS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={preset === option.id}
+                    className={`toggle-chip${preset === option.id ? ' toggle-chip-on' : ''}`}
+                    onClick={() => setPreset(option.id)}
+                    disabled={running}
+                    title={option.description}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {preset === 'custom' ? (
+                <textarea
+                  id="run-prompt"
+                  aria-label="Custom prompt"
+                  rows={3}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  disabled={running}
+                />
+              ) : (
+                <div className="preset-preview" data-testid="preset-preview">
+                  <p className="field-hint">
+                    {PRESETS.find((option) => option.id === preset)?.description}
+                    {presetViews.find((v) => v.id === preset)
+                      ? ` ${presetViews
+                          .find((v) => v.id === preset)
+                          ?.words.toLocaleString('en-US')} words.`
+                      : ''}
+                  </p>
+                  <pre className="preset-text">
+                    {presetViews.find((v) => v.id === preset)?.preview ?? 'Loading…'}
+                  </pre>
+                </div>
+              )}
             </div>
 
             <div className="run-options">
@@ -581,6 +725,67 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 </div>
               ) : null}
             </div>
+            <div className="run-options">
+              <div className="field">
+                <span className="field-label" id="prefill-label">
+                  Prefill
+                </span>
+                <div className="toggle-chips" role="radiogroup" aria-labelledby="prefill-label">
+                  {(['cold', 'warm'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={prefill === mode}
+                      className={`toggle-chip${prefill === mode ? ' toggle-chip-on' : ''}`}
+                      onClick={() => setPrefill(mode)}
+                      disabled={running}
+                    >
+                      {mode === 'cold' ? 'Cold' : 'Warm'}
+                    </button>
+                  ))}
+                </div>
+                <p className="field-hint">
+                  {prefill === 'cold'
+                    ? 'A fresh line starts each round’s prompt and a seed is sent, so no cached prompt helps.'
+                    : 'The same prompt every round and no seed: rounds after the first may reuse the cache.'}
+                </p>
+              </div>
+            </div>
+            <details className="sampling">
+              <summary>Sampling</summary>
+              <div className="run-options">
+                {(
+                  [
+                    ['temperature', 'Temperature'],
+                    ['topP', 'Top-p'],
+                    ['topK', 'Top-k'],
+                    ['minP', 'Min-p'],
+                    ['repetitionPenalty', 'Repetition penalty'],
+                    ['seed', 'Seed'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <div className="field" key={key}>
+                    <label htmlFor={`sampling-${key}`}>{label}</label>
+                    <input
+                      id={`sampling-${key}`}
+                      inputMode="decimal"
+                      value={sampling[key]}
+                      onChange={(event) =>
+                        setSampling((currentSampling) => ({
+                          ...currentSampling,
+                          [key]: event.target.value,
+                        }))
+                      }
+                      disabled={running || (key === 'seed' && prefill === 'warm')}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="field-hint">
+                Every field is sent to every machine. The seed goes out with cold prefill only.
+              </p>
+            </details>
             <div className="run-options">
               <div className="field">
                 <label htmlFor="run-rounds">Rounds</label>
@@ -667,30 +872,74 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 answers; lower the effort or raise the limit.
               </p>
             ) : null}
-            {blockers.length > 0 ? (
-              <ul className="start-check" data-testid="start-blockers">
-                {blockers.map((text) => (
-                  <li key={text} className="field-error">
-                    {text}
-                    {text.startsWith('No model') ? (
-                      <>
-                        {' '}
-                        Load one on the <a href="#/models">Models</a> tab.
-                      </>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {warnings.length > 0 ? (
-              <ul className="start-check" data-testid="race-warnings">
-                {warnings.map((text) => (
-                  <li key={text} className="note-warn">
-                    {text}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <section
+              className="preflight"
+              aria-labelledby="preflight-title"
+              data-testid="preflight"
+            >
+              <h3 id="preflight-title" className="hero-label">
+                Pre-flight
+              </h3>
+              {!draft.success ? (
+                <p className="field-error">{draft.error.issues[0]?.message}</p>
+              ) : chosen.length === 0 ? (
+                <p className="field-hint">Pick at least one machine.</p>
+              ) : current === null ? (
+                <p className="field-hint" data-testid="preflight-status">
+                  Checking the machines…
+                </p>
+              ) : current.error ? (
+                <p className="field-error">Pre-flight could not run: {current.error}</p>
+              ) : (
+                <>
+                  <p className="field-hint" data-testid="preflight-status">
+                    {errors.length > 0
+                      ? 'This race cannot start.'
+                      : warnings.length > 0
+                        ? 'This race can start, but it compares more than the hardware.'
+                        : 'All clear: the machines match and the prompt fits.'}{' '}
+                    {chosen
+                      .map((m) => {
+                        const tokens = current.result?.promptTokens[m.id];
+                        return typeof tokens === 'number'
+                          ? `${m.name} counts ${tokens.toLocaleString('en-US')} prompt tokens.`
+                          : null;
+                      })
+                      .filter(Boolean)
+                      .join(' ')}
+                  </p>
+                  {errors.length > 0 ? (
+                    <ul className="start-check" data-testid="start-blockers">
+                      {errors.map((issue) => (
+                        <li key={issue.text} className="field-error">
+                          {issue.text}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {warnings.length > 0 ? (
+                    <ul className="start-check" data-testid="race-warnings">
+                      {warnings.map((issue) => (
+                        <li key={issue.text} className="note-warn">
+                          {issue.text}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {warnings.length > 0 && errors.length === 0 ? (
+                    <label className="check-line">
+                      <input
+                        type="checkbox"
+                        checked={raceAnyway}
+                        onChange={(event) => setRaceAnyway(event.target.checked)}
+                        disabled={running}
+                      />
+                      Race anyway
+                    </label>
+                  ) : null}
+                </>
+              )}
+            </section>
             {formError ? (
               <p className="form-error" role="alert">
                 {formError}

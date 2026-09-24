@@ -12,9 +12,10 @@ import type { ModelStatus } from './models';
 
 /**
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
- * Version 2 added the run plan, the warm-up and per-round RTT; version 1 files are migrated.
+ * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
+ * full sampling and per-round nonce. Older files are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 2;
+export const SESSION_SCHEMA_VERSION = 3;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -48,6 +49,8 @@ export const sessionRequestSchema = z.object({
     .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.'),
   config: textConfigSchema,
   plan: runPlanSchema.prefault({}),
+  /** Start even though pre-flight has warnings; errors can never be overridden. */
+  acknowledgeWarnings: z.boolean().default(false),
 });
 export type SessionRequest = z.infer<typeof sessionRequestSchema>;
 
@@ -78,7 +81,7 @@ export interface MachineProvenance {
 export interface RoundFlag {
   /** The machine it concerns, or null for the whole round. */
   machineId: string | null;
-  kind: 'lag' | 'coalesced' | 'failed';
+  kind: 'lag' | 'coalesced' | 'failed' | 'cache' | 'length' | 'truncated';
   text: string;
 }
 
@@ -91,6 +94,8 @@ export interface RoundView {
   sendSkewMs: number | null;
   /** Machine ids in the order their requests went out. */
   order: string[];
+  /** The line that started this round's prompt with cold prefill; null with warm. */
+  nonce: string | null;
   /** One run per machine, in the order of `machines`. */
   runs: RunView[];
   /** Controller event-loop delay during the round. */
@@ -114,7 +119,7 @@ export interface SessionView {
   finishedAt: string | null;
   state: SessionState;
   error: string | null;
-  config: TextConfig & { sampling: Record<string, number> };
+  config: TextConfig;
   plan: RunPlan;
   machines: SessionMachine[];
   /** The discarded warm-up round, if the plan has one. */
@@ -220,25 +225,42 @@ export function publicSession(session: StoredSession | SessionView): SessionView
 
 /**
  * Brings a stored session of any earlier schema up to the current one. Version 1 had one round,
- * no plan, no warm-up and no RTT.
+ * no plan, no warm-up and no RTT. Versions 1 and 2 sent the same prompt every round without a seed,
+ * which is warm prefill, with four sampling fields.
  */
 export function migrateSession(value: StoredSession): StoredSession {
   if (value.schemaVersion >= SESSION_SCHEMA_VERSION) return value;
   const old = value as Partial<StoredSession>;
+  const oldSampling = (old.config?.sampling ?? {}) as unknown as Record<string, number | undefined>;
+  const round = (r: StoredRound): StoredRound => ({
+    ...r,
+    finishedAt: r.finishedAt ?? null,
+    order: r.order ?? r.runs.map((run) => run.machineId),
+    nonce: r.nonce ?? null,
+    loopLagMs: r.loopLagMs ?? value.loopLagMs ?? null,
+    flags: r.flags ?? [],
+    runs: r.runs.map((run) => ({ ...run, rtt: run.rtt ?? null })),
+  });
   return {
     ...value,
     schemaVersion: SESSION_SCHEMA_VERSION,
+    config: {
+      ...value.config,
+      preset: value.config.preset ?? 'custom',
+      prefill: value.config.prefill ?? 'warm',
+      sampling: {
+        temperature: oldSampling.temperature ?? 0.6,
+        topP: oldSampling.topP ?? oldSampling.top_p ?? 0.95,
+        topK: oldSampling.topK ?? oldSampling.top_k ?? 20,
+        minP: oldSampling.minP ?? oldSampling.min_p ?? 0,
+        repetitionPenalty: oldSampling.repetitionPenalty ?? 1,
+        seed: oldSampling.seed ?? 42,
+      },
+    },
     plan: old.plan ?? { rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' },
-    warmup: old.warmup ?? null,
+    warmup: old.warmup ? round(old.warmup) : null,
     progress: old.progress ?? { phase: 'finished', round: null },
-    rounds: (old.rounds ?? []).map((round) => ({
-      ...round,
-      finishedAt: round.finishedAt ?? null,
-      order: round.order ?? round.runs.map((run) => run.machineId),
-      loopLagMs: round.loopLagMs ?? value.loopLagMs ?? null,
-      flags: round.flags ?? [],
-      runs: round.runs.map((run) => ({ ...run, rtt: run.rtt ?? null })),
-    })),
+    rounds: (old.rounds ?? []).map(round),
   };
 }
 
@@ -297,39 +319,4 @@ export function backendLabel(backend: ModelStatus['backend']): string {
   if (backend === 'gguf') return 'GGUF';
   if (backend === 'mlx') return 'MLX';
   return backend ?? 'unknown';
-}
-
-/**
- * Differences between the machines of a race that make it compare more than the hardware. None
- * of them blocks a race; the user decides.
- */
-export function raceWarnings(
-  entries: ReadonlyArray<{ name: string; status: ModelStatus | null }>,
-): string[] {
-  const loaded = entries.filter(
-    (e): e is { name: string; status: ModelStatus } => !!e.status?.activeModel,
-  );
-  if (loaded.length < 2) return [];
-  const warnings: string[] = [];
-  const differs = (pick: (s: ModelStatus) => string | null) =>
-    new Set(loaded.map((e) => pick(e.status) ?? '')).size > 1;
-  const each = (pick: (s: ModelStatus) => string | null) =>
-    loaded.map((e) => `${e.name} has ${pick(e.status) ?? 'unknown'}`).join(', ');
-
-  if (differs((s) => s.activeModel)) {
-    warnings.push(`The machines run different models: ${each((s) => s.activeModel)}.`);
-  } else if (differs((s) => s.quant)) {
-    warnings.push(`The machines run different quants: ${each((s) => s.quant)}.`);
-  }
-  if (differs((s) => s.backend)) {
-    warnings.push(`The machines use different backends: ${each((s) => backendLabel(s.backend))}.`);
-  }
-  const speculative = loaded.filter((e) => speculativeOn(e.status));
-  if (speculative.length > 0) {
-    const names = speculative.map((e) => e.name).join(' and ');
-    warnings.push(
-      `Speculative decoding is on for ${names}, so tokens arrive in groups there. Load with speculative decoding off for a like-for-like race.`,
-    );
-  }
-  return warnings;
 }

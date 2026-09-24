@@ -120,6 +120,8 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   let config: MockConfig = structuredClone(initial);
   /** Chat requests served since the last reset, for `stream.speedFactors`. */
   let chatRequests = 0;
+  /** Recent prompts, for the prefix cache; a reset or a new model empties it. */
+  const cachedPrompts: string[][] = [];
   const state: ProfileState = {
     studioRootId: randomBytes(32).toString('hex'),
     port: 0,
@@ -314,7 +316,10 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     const settled = outcome.then((result) => {
       state.pending = null;
       settlePending = null;
-      if (result.kind === 'done') state.loaded = next;
+      if (result.kind === 'done') {
+        state.loaded = next;
+        cachedPrompts.length = 0;
+      }
       return result;
     });
     const answer = (result: Outcome): { status: number; body: unknown } =>
@@ -386,6 +391,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       startupMs: (config.stream.startupMs ?? profile().startupMs) * factor,
       tokenMs: (config.stream.tokenMs ?? profile().tokenMs) * factor,
       monitor,
+      cache: { prompts: cachedPrompts, keepsSeeded: profile().backend === 'mlx' },
       onCancelId: (id: string, cancel: () => void) => {
         cancels.set(id, cancel);
         return () => cancels.delete(id);
@@ -409,6 +415,19 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     reply.hijack();
     await streamChat(request.raw, reply.raw, body, deps);
     return reply;
+  });
+
+  /** The loaded tokenizer's count, here one token per word plus four for the chat template. */
+  route('POST', '/v1/chat/count_tokens', true, (request, reply) => {
+    const model = state.loaded;
+    if (!model) return openAiError(reply, 400, 'No model loaded. Call POST /inference/load first.');
+    const body = (request.body ?? {}) as { messages?: Array<{ content?: unknown }> };
+    const words = (body.messages ?? [])
+      .map((m) => (typeof m.content === 'string' ? m.content : ''))
+      .join(' ')
+      .split(/\s+/)
+      .filter(Boolean).length;
+    return { input_tokens: words + 4, model: model.entry.modelId };
   });
 
   route('GET', '/api/inference/monitor', true, () => {
@@ -458,6 +477,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   app.post('/__mock/reset', async () => {
     config = structuredClone(initial);
     chatRequests = 0;
+    cachedPrompts.length = 0;
     resetModels();
     log.length = 0;
     monitor.length = 0;

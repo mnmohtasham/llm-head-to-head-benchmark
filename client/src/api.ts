@@ -8,17 +8,30 @@ import type {
   MachineStatusView,
   MachineUpdateInput,
   MachineView,
+  PreflightIssue,
+  PreflightResult,
   ProbeSummary,
   SessionRequest,
   SessionSummary,
   SessionView,
+  TextConfig,
 } from '@duel/shared';
+
+export interface PresetView {
+  id: string;
+  label: string;
+  description: string;
+  words: number;
+  preview: string;
+}
 
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly fields: Record<string, string> = {},
+    /** Pre-flight findings, when pre-flight refused a race. */
+    readonly issues: PreflightIssue[] | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -66,6 +79,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
       error.message ?? `The request failed with HTTP ${response.status}.`,
       response.status,
       error.fields ?? {},
+      error.issues ?? null,
     );
   }
   return data as T;
@@ -95,6 +109,9 @@ export const api = {
 
   health: () => call<HealthInfo>('GET', '/api/health'),
   startSession: (request: SessionRequest) => call<SessionView>('POST', '/api/sessions', request),
+  presets: () => call<{ presets: PresetView[] }>('GET', '/api/presets'),
+  preflight: (machineIds: string[], config: TextConfig) =>
+    call<PreflightResult>('POST', '/api/preflight', { machineIds, config }),
   listSessions: () => call<{ sessions: SessionSummary[] }>('GET', '/api/sessions'),
   getSession: (id: string) => call<SessionView>('GET', sessionUrl(id)),
   cancelSession: (id: string) => call<SessionView>('POST', `${sessionUrl(id)}/cancel`),

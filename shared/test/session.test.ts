@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { TimedEvent } from '../src/chat';
-import type { ModelStatus } from '../src/models';
 import {
   compactEvents,
   expandEvents,
   migrateSession,
   publicSession,
-  raceWarnings,
   sessionRequestSchema,
-  speculativeOn,
   summarizeSession,
 } from '../src/session';
 import { makeRun, makeSession, type StoredSession } from './make';
@@ -25,83 +22,6 @@ describe('sessionRequestSchema', () => {
     expect(parse([]).error?.issues[0]?.message).toBe('Pick at least one machine.');
     expect(parse(['a', 'a']).error?.issues[0]?.message).toBe('Pick each machine only once.');
     expect(parse('abcdefghi'.split('')).error?.issues[0]?.message).toBe('Pick at most 8 machines.');
-  });
-});
-
-function status(over: Partial<ModelStatus>): ModelStatus {
-  return {
-    activeModel: 'unsloth/Qwen3.8-27B-GGUF',
-    modelIdentifier: 'unsloth/Qwen3.8-27B-GGUF',
-    backend: 'gguf',
-    quant: 'Q4_K_M',
-    contextLength: 32768,
-    maxContextLength: 262144,
-    nativeContextLength: 262144,
-    requestedContextLength: 32768,
-    supportsReasoning: true,
-    reasoningStyle: 'enable_thinking',
-    reasoningAlwaysOn: false,
-    reasoningEffortLevels: [],
-    reasoningBudget: -1,
-    speculativeType: 'off',
-    specDrafterKind: null,
-    specFallbackReason: null,
-    cacheTypeKv: null,
-    mlxKvBits: null,
-    gpuMemoryMode: null,
-    gpuLayers: -1,
-    totalLayers: null,
-    parallelSlots: 4,
-    memoryWarning: null,
-    loading: [],
-    isVision: false,
-    ...over,
-  };
-}
-
-describe('raceWarnings', () => {
-  it('says nothing when the machines match, or when only one machine races', () => {
-    expect(
-      raceWarnings([
-        { name: 'A', status: status({}) },
-        { name: 'B', status: status({}) },
-      ]),
-    ).toEqual([]);
-    expect(raceWarnings([{ name: 'A', status: status({ speculativeType: 'auto' }) }])).toEqual([]);
-  });
-
-  it('names different models, else different quants, and different backends', () => {
-    expect(
-      raceWarnings([
-        { name: 'A', status: status({ activeModel: 'x/One' }) },
-        { name: 'B', status: status({ activeModel: 'x/Two', quant: 'Q8_0' }) },
-      ]),
-    ).toEqual(['The machines run different models: A has x/One, B has x/Two.']);
-    expect(
-      raceWarnings([
-        { name: 'A', status: status({ quant: 'UD-IQ2_XXS' }) },
-        { name: 'B', status: status({ quant: 'Q4_0', backend: 'mlx' }) },
-        { name: 'C', status: null },
-      ]),
-    ).toEqual([
-      'The machines run different quants: A has UD-IQ2_XXS, B has Q4_0.',
-      'The machines use different backends: A has GGUF, B has MLX.',
-    ]);
-  });
-
-  it('warns about speculative decoding unless it fell back', () => {
-    expect(speculativeOn(status({ speculativeType: 'auto', specDrafterKind: 'mtp' }))).toBe(true);
-    expect(
-      speculativeOn(status({ speculativeType: 'auto', specFallbackReason: 'no drafter' })),
-    ).toBe(false);
-    expect(speculativeOn(status({ speculativeType: 'off' }))).toBe(false);
-    const warnings = raceWarnings([
-      { name: 'A', status: status({ speculativeType: 'auto' }) },
-      { name: 'B', status: status({}) },
-    ]);
-    expect(warnings).toEqual([
-      'Speculative decoding is on for A, so tokens arrive in groups there. Load with speculative decoding off for a like-for-like race.',
-    ]);
   });
 });
 
@@ -151,7 +71,7 @@ describe('stored sessions', () => {
     ]);
   });
 
-  it('migrate from version 1: one round, no plan, no warm-up, no RTT', () => {
+  it('migrate from version 1 or 2: one warm round, four sampling fields, custom prompt', () => {
     const v1 = {
       ...makeSession(['a'], [[makeRun('a')]]),
       schemaVersion: 1,
@@ -167,8 +87,22 @@ describe('stored sessions', () => {
     } as Record<string, unknown>;
     delete (oldRound.runs as Array<Record<string, unknown>>)[0]?.rtt;
     v1.rounds = [oldRound];
+    (v1.config as Record<string, unknown>).sampling = {
+      temperature: 0.6,
+      top_p: 0.95,
+      top_k: 20,
+      min_p: 0,
+    };
+    delete (v1.config as Record<string, unknown>).preset;
+    delete (v1.config as Record<string, unknown>).prefill;
     const migrated = migrateSession(v1 as unknown as StoredSession);
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.config).toMatchObject({
+      preset: 'custom',
+      prefill: 'warm',
+      sampling: { temperature: 0.6, topP: 0.95, topK: 20, minP: 0, repetitionPenalty: 1, seed: 42 },
+    });
+    expect(migrated.rounds[0]?.nonce).toBeNull();
     expect(migrated.plan).toEqual({
       rounds: 1,
       warmup: false,

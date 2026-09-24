@@ -11,11 +11,13 @@ import {
   detailOf,
   explainNetworkError,
   isTokenEvent,
+  newNonce,
   publicRun,
   publicSession,
   roundFlags,
   SESSION_SCHEMA_VERSION,
   summarizeSession,
+  withNonce,
   type ClientMetrics,
   type LiveMetrics,
   type MachineProvenance,
@@ -61,11 +63,17 @@ const KEEP_RECENT = 5;
 
 /** The warm-up asks for almost nothing: it only wakes each machine up. */
 const WARMUP: TextConfig = {
+  preset: 'custom',
   prompt: 'Reply with the single word: ready.',
   maxTokens: 16,
   thinking: false,
   reasoningEffort: null,
+  prefill: 'warm',
+  sampling: DEFAULT_SAMPLING,
 };
+
+/** Runs keep only the start of a long prompt; the session's config has all of it. */
+const PROMPT_KEPT = 300;
 
 type Listener = (message: SessionStreamMessage) => void;
 
@@ -85,6 +93,12 @@ interface LiveRound {
   runs: LiveRun[];
   warmup: boolean;
   lag: IntervalHistogram;
+  /** One cancel id for every machine, so the bodies differ only in `model`. */
+  cancelId: string;
+  /** Stops this round's runs, when Unsloth cut the prompt on one of them. */
+  controller: AbortController;
+  /** The machine whose prompt Unsloth cut, if any. */
+  truncatedBy: string | null;
 }
 
 interface ActiveSession {
@@ -98,6 +112,8 @@ interface ActiveSession {
   listeners: Set<Listener>;
   lag: IntervalHistogram;
   done: Promise<void>;
+  /** Why the session stopped before its last round, if it did. */
+  stopReason: string | null;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -143,7 +159,10 @@ function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
     id: randomUUID(),
     machineId: machine.id,
     machineName: machine.name,
-    prompt: config.prompt,
+    prompt:
+      config.prompt.length > PROMPT_KEPT
+        ? `${config.prompt.slice(0, PROMPT_KEPT)}…`
+        : config.prompt,
     maxTokens: config.maxTokens,
     thinking: config.thinking,
     reasoningEffort: config.reasoningEffort,
@@ -242,7 +261,7 @@ export class SessionManager {
       finishedAt: null,
       state: 'running',
       error: null,
-      config: { ...request.config, sampling: { ...DEFAULT_SAMPLING } },
+      config: { ...request.config },
       plan: { ...request.plan },
       machines: machines.map((m) => ({
         id: m.id,
@@ -267,6 +286,7 @@ export class SessionManager {
       listeners: new Set(),
       lag: monitorEventLoopDelay({ resolution: 10 }),
       done: Promise.resolve(),
+      stopReason: null,
     };
     this.active.set(id, entry);
     entry.done = this.execute(entry).catch(async (error: unknown) => {
@@ -288,7 +308,7 @@ export class SessionManager {
     await Promise.allSettled(
       (entry.current?.runs ?? [])
         .filter((run) => run.requestAt !== null && run.view.finishedAt === null)
-        .map((run) => cancelOnMachine(run.machine, run.view.id)),
+        .map((run) => cancelOnMachine(run.machine, entry.current?.cancelId ?? run.view.id)),
     );
     await entry.done;
     return this.get(id);
@@ -381,8 +401,14 @@ export class SessionManager {
     }
   }
 
-  private onEvent(run: LiveRun, timed: TimedEvent) {
+  private onEvent(round: LiveRound, run: LiveRun, timed: TimedEvent) {
     const { event } = timed;
+    if (event.type === 'truncated' && !round.warmup && round.truncatedBy === null) {
+      // The machines would no longer answer the same prompt: stop the round.
+      round.truncatedBy = run.machine.name;
+      round.controller.abort();
+      return;
+    }
     if (!isTokenEvent(event)) return;
     run.firstTokenAt ??= timed.t;
     run.lastTokenAt = timed.t;
@@ -463,7 +489,11 @@ export class SessionManager {
         this.setProgress(entry, 'warmup', null);
         await this.runRound(entry, -1, true);
       }
-      for (let index = 0; index < plan.rounds && !signal.aborted; index += 1) {
+      for (
+        let index = 0;
+        index < plan.rounds && !signal.aborted && entry.stopReason === null;
+        index += 1
+      ) {
         const settle = anyReady && plan.settleMs > 0 && (index > 0 || plan.warmup);
         if (settle) {
           this.setProgress(entry, 'settling', index);
@@ -480,13 +510,16 @@ export class SessionManager {
     const counted = session.rounds.flatMap((round) => round.runs);
     const state: SessionState = signal.aborted
       ? 'cancelled'
-      : counted.length > 0 && counted.every((run) => run.state === 'failed')
+      : entry.stopReason !== null ||
+          (counted.length > 0 && counted.every((run) => run.state === 'failed'))
         ? 'failed'
         : 'done';
     await this.finishSession(
       entry,
       state,
-      state === 'failed' ? 'Every machine failed in every round. Each pane says why.' : null,
+      state !== 'failed'
+        ? null
+        : (entry.stopReason ?? 'Every machine failed in every round. Each pane says why.'),
     );
   }
 
@@ -494,12 +527,14 @@ export class SessionManager {
     const { session, controller } = entry;
     const signal = controller.signal;
     const config = warmup ? WARMUP : session.config;
+    const cold = !warmup && config.prefill === 'cold';
     const view: StoredRound = {
       index,
       startedAt: null,
       finishedAt: null,
       sendSkewMs: null,
       order: [],
+      nonce: cold ? newNonce() : null,
       runs: entry.machines.map((machine) => newRun(machine, config)),
       loopLagMs: null,
       flags: [],
@@ -508,6 +543,9 @@ export class SessionManager {
       view,
       warmup,
       lag: monitorEventLoopDelay({ resolution: 10 }),
+      cancelId: randomUUID(),
+      controller: new AbortController(),
+      truncatedBy: null,
       runs: entry.machines.map((machine, i) => ({
         view: view.runs[i] as StoredRun,
         machine,
@@ -546,7 +584,7 @@ export class SessionManager {
       view.startedAt = new Date().toISOString();
       const bodyFor = (run: LiveRun) => {
         const model = entry.models[round.runs.indexOf(run)] ?? '';
-        return chatRequestBody(config, model, run.view.id);
+        return chatRequestBody(config, model, round.cancelId, view.nonce);
       };
       if (session.plan.sequencing === 'concurrent') {
         const pending: Array<Promise<void>> = [];
@@ -563,20 +601,40 @@ export class SessionManager {
         view.order = order.map((run) => run.machine.id);
         for (const run of order) run.view.state = 'queued';
         for (const run of order) {
-          if (signal.aborted) break;
+          if (signal.aborted || round.controller.signal.aborted) break;
           await this.stream(entry, round, run, bodyFor(run));
         }
       }
       round.lag.disable();
       view.loopLagMs = lagOf(round.lag);
     }
+    const cutOn = round.truncatedBy;
     for (const run of round.runs) {
       if (signal.aborted) this.finishRun(entry, round, run, 'cancelled', null);
+      else if (cutOn !== null) {
+        this.finishRun(
+          entry,
+          round,
+          run,
+          'cancelled',
+          `Stopped because Unsloth cut the prompt on ${cutOn}.`,
+        );
+      }
     }
     view.finishedAt = new Date().toISOString();
     if (!warmup) {
       const names = new Map(session.machines.map((m) => [m.id, m.name]));
-      view.flags = roundFlags(view.runs, names, view.loopLagMs);
+      view.flags = roundFlags(view.runs, names, view.loopLagMs, {
+        fixedLength: session.config.preset === 'fixed-length',
+      });
+    }
+    if (cutOn !== null) {
+      view.flags.push({
+        machineId: null,
+        kind: 'truncated',
+        text: `Unsloth cut the prompt on ${cutOn} to fit its context, so the round was stopped.`,
+      });
+      entry.stopReason = `Unsloth cut the prompt on ${cutOn} to fit its context, so the race stopped. Pick a shorter prompt, or load the model with a longer context.`;
     }
     this.flush(entry);
     this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
@@ -595,10 +653,10 @@ export class SessionManager {
     run.view.state = 'streaming';
     run.requestAt = performance.now();
     return streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
-      signal: entry.controller.signal,
+      signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
       idleTimeoutMs: this.deps.timings.idleTimeoutMs,
       totalTimeoutMs: this.deps.timings.totalTimeoutMs,
-      onEvent: (timed) => this.onEvent(run, timed),
+      onEvent: (timed) => this.onEvent(round, run, timed),
     })
       .then((outcome) => this.completeRun(entry, round, run, outcome))
       .catch((error: unknown) =>
@@ -635,8 +693,9 @@ export class SessionManager {
     if (round.warmup) {
       run.view.server = { timings, monitor: null };
     } else {
+      const sent = withNonce(entry.session.config.prompt, round.view.nonce);
       const [monitor, after] = await Promise.all([
-        readMonitorRow(machine, entry.session.config.prompt),
+        readMonitorRow(machine, sent),
         readModelStatus(machine),
       ]);
       run.view.server = { timings, monitor };
@@ -645,6 +704,24 @@ export class SessionManager {
     }
 
     const verdict = this.verdict(machine, outcome, client);
+    if (round.truncatedBy === machine.name && client.truncated) {
+      this.finishRun(entry, round, run, 'failed', 'Unsloth cut the prompt to fit the context.');
+      return;
+    }
+    if (
+      verdict.state === 'cancelled' &&
+      round.truncatedBy !== null &&
+      !entry.controller.signal.aborted
+    ) {
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'cancelled',
+        `Stopped because Unsloth cut the prompt on ${round.truncatedBy}.`,
+      );
+      return;
+    }
     this.finishRun(entry, round, run, verdict.state, verdict.error);
   }
 

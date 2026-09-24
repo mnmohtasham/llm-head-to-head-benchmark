@@ -4,11 +4,12 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 5 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 6 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
-several rounds, with medians, spread and an honest tie when the difference is within noise.
-Presets and cache control arrive in phase 6, and the transcription and image benchmarks later.
-[PLAN.md](PLAN.md) is the full specification.
+several rounds, with medians, spread and an honest tie when the difference is within noise. It
+has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
+check that stops races that would not be fair. Live telemetry arrives in phase 7, and the
+transcription and image benchmarks later. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -87,6 +88,34 @@ them side by side. Pick one machine for a single run.
    offered. Sampling is fixed for now: temperature 0.6, top-p 0.95, top-k 20, min-p 0.
 4. Press **Start**. Every machine gets an identical request in the same instant, apart from its
    model name. **Cancel** stops all of them and tells Unsloth to stop generating.
+
+### Prompts, prefill and sampling
+
+- **Prompt** offers presets. **Short** is a one-line question. **8K** and **32K** are the opening
+  of Mill's *On Liberty*, about 7,600 and 30,400 tokens, followed by a request for a five-point
+  summary. **Puzzle** and **Code** are a reasoning puzzle and a small coding task. **Fixed
+  length** asks for a long essay no model finishes, so every machine writes exactly **Max
+  tokens** and output length drops out of the comparison. **Custom** is your own prompt.
+- **Prefill** is **Cold** by default: a fresh line starts each round's prompt and a fixed seed is
+  sent, so no machine can reuse a cached prompt. llama.cpp turns its cache off for seeded
+  requests, and the nonce defeats MLX's cache. **Warm** sends the same prompt every round and no
+  seed, so rounds after the first can reuse the cache; a round is flagged when a machine reused
+  more than 64 cached prompt tokens.
+- **Sampling** holds temperature, top-p, top-k, min-p, repetition penalty and seed. Every field
+  goes to every machine, so server defaults can never differ.
+
+### Pre-flight
+
+Before a race starts, pre-flight reads each machine's status and has each machine count the
+prompt with its own tokenizer.
+
+- **Errors** stop the race: a machine that does not answer, has no model, is loading one, or is
+  short of memory for it; a prompt and Max tokens that do not fit a machine's context; thinking
+  asked of a model that cannot think.
+- **Warnings** mean the race compares more than the hardware: different models, quants,
+  backends, context lengths, speculative decoding, KV cache types or GPU memory modes. Tick
+  **Race anyway** to start regardless.
+- If Unsloth still cuts a prompt to fit, the race stops and says so.
 
 ### Rounds
 

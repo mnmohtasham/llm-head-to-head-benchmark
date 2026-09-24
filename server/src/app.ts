@@ -106,7 +106,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     log: app.log,
     isLoading: (machineId) => loads.isActive(machineId),
   });
-  registerSessionRoutes(app, { store, sessions });
+  registerSessionRoutes(app, { store, sessions, isLoading: (id) => loads.isActive(id) });
   app.addHook('onClose', async () => {
     await loads.close();
     await sessions.close();

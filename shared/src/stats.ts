@@ -127,12 +127,20 @@ export function sessionStats(session: SessionView): StatRow[] {
 export const COALESCED_LIMIT = 0.3;
 /** Event-loop delay above which a round's timings are flagged. */
 export const LAG_LIMIT_MS = 50;
+/** Cached prompt tokens above which a run counts as a cache hit; chat templates stay below it. */
+export const CACHE_HIT_TOKENS = 64;
 
-/** What makes a round's numbers less trustworthy. */
+/** Cached prompt tokens of a run, from usage or from the timings. */
+export function cachedTokensOf(run: RunView): number {
+  return run.client?.cachedTokens ?? run.server?.timings?.cacheN ?? 0;
+}
+
+/** What makes a round's numbers less trustworthy, or not like for like. */
 export function roundFlags(
   runs: readonly RunView[],
   names: ReadonlyMap<string, string>,
   loopLagMs: { max: number } | null,
+  options: { fixedLength?: boolean; cacheThreshold?: number } = {},
 ): RoundFlag[] {
   const flags: RoundFlag[] = [];
   if (loopLagMs && loopLagMs.max > LAG_LIMIT_MS) {
@@ -148,6 +156,36 @@ export function roundFlags(
       flags.push({ machineId: run.machineId, kind: 'failed', text: `${name} failed.` });
     }
     const c = run.client;
+    if (c?.truncated) {
+      flags.push({
+        machineId: run.machineId,
+        kind: 'truncated',
+        text: `Unsloth cut the prompt on ${name} to fit its context.`,
+      });
+    }
+    const cached = cachedTokensOf(run);
+    if (cached > (options.cacheThreshold ?? CACHE_HIT_TOKENS)) {
+      flags.push({
+        machineId: run.machineId,
+        kind: 'cache',
+        text: `${name} reused ${cached.toLocaleString('en-US')} cached prompt tokens, so its first token came early.`,
+      });
+    }
+    if (run.state === 'done' && c) {
+      if (options.fixedLength && c.finishReason !== 'length') {
+        flags.push({
+          machineId: run.machineId,
+          kind: 'length',
+          text: `${name} stopped before Max tokens (${c.finishReason ?? 'no reason'}), so its output length differs.`,
+        });
+      } else if (!options.fixedLength && c.finishReason === 'length') {
+        flags.push({
+          machineId: run.machineId,
+          kind: 'length',
+          text: `${name} stopped at Max tokens.`,
+        });
+      }
+    }
     if (c && c.chunks >= 10 && c.coalescedChunks / c.chunks > COALESCED_LIMIT) {
       flags.push({
         machineId: run.machineId,

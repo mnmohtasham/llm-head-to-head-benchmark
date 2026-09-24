@@ -132,12 +132,37 @@ export interface MonitorEntry {
   kind: 'request';
 }
 
+/**
+ * The prompt prefix cache, as llama-server and MLX keep one: recent prompts, as words. A new
+ * request reuses the longest start it shares with one of them.
+ */
+export interface PromptCache {
+  prompts: string[][];
+  /** llama.cpp turns its cache off for seeded requests; MLX keeps it. */
+  keepsSeeded: boolean;
+}
+
+/** Recent prompts the cache remembers, like MLX's six entries. */
+const CACHE_ENTRIES = 6;
+
+/** Words at the start of `prompt` that a cached prompt already has. */
+export function cachedPrefix(cache: PromptCache, prompt: string[]): number {
+  let best = 0;
+  for (const cached of cache.prompts) {
+    let i = 0;
+    while (i < prompt.length && i < cached.length && prompt[i] === cached[i]) i += 1;
+    best = Math.max(best, i);
+  }
+  return best;
+}
+
 export interface ChatDeps {
   model: LoadedModel;
   stream: StreamConfig;
   startupMs: number;
   tokenMs: number;
   monitor: MonitorEntry[];
+  cache: PromptCache;
   /** Registers a cancel function under the request's cancel_id; returns an unregister function. */
   onCancelId: (id: string, cancel: () => void) => () => void;
 }
@@ -172,7 +197,24 @@ export async function streamChat(
   const startedAt = Date.now() / 1000;
   const prompt = lastUserText(body);
   const seed = seedOf(prompt);
-  const promptTokens = Math.max(1, prompt.split(/\s+/).filter(Boolean).length + 4);
+  const promptWords = prompt.split(/\s+/).filter(Boolean);
+  const promptTokens = Math.max(1, promptWords.length + 4);
+  // A prompt longer than the context is cut, as Unsloth does, and the client is told.
+  const cut = promptTokens > model.contextLength;
+  // Seeded requests skip llama.cpp's cache; MLX keeps its cache whatever the seed.
+  const seeded = typeof body.seed === 'number';
+  const useCache = !seeded || deps.cache.keepsSeeded;
+  const prefix = useCache ? cachedPrefix(deps.cache, promptWords) : 0;
+  if (useCache) {
+    deps.cache.prompts.unshift(promptWords);
+    deps.cache.prompts.length = Math.min(deps.cache.prompts.length, CACHE_ENTRIES);
+  }
+  const cachedTokens =
+    cfg.cachedPromptTokens > 0
+      ? Math.min(cfg.cachedPromptTokens, promptTokens - 1)
+      : Math.min(prefix, promptTokens - 1);
+  // Only the tokens the cache did not have need processing.
+  const startupMs = deps.startupMs * (0.2 + (0.8 * (promptTokens - cachedTokens)) / promptTokens);
   const thinking = model.entry.supportsReasoning && body.enable_thinking !== false;
   const maxTokens =
     typeof body.max_tokens === 'number' && body.max_tokens > 0 ? body.max_tokens : 1_000_000;
@@ -266,12 +308,16 @@ export async function streamChat(
   });
   response.flushHeaders();
   chunk({ choices: [{ index: 0, delta: { role: 'assistant' } }] });
-  if (cfg.truncated)
-    chunk({ choices: [], context_truncated: { dropped_messages: 1, kept_tokens: 4096 } });
+  if (cfg.truncated || cut) {
+    chunk({
+      choices: [],
+      context_truncated: { dropped_messages: 1, kept_tokens: Math.min(4096, model.contextLength) },
+    });
+  }
   if (cfg.toolFrames)
     write(`data: ${JSON.stringify({ type: 'tool_status', content: 'Searching' })}\n\n`);
 
-  await waitWithKeepalive(deps.startupMs);
+  await waitWithKeepalive(startupMs);
   let firstTokenAt: number | null = null;
   let lastTokenAt: number | null = null;
   let sent = 0;
@@ -322,7 +368,7 @@ export async function streamChat(
   }
   unregister();
 
-  const promptMs = deps.startupMs * 0.9;
+  const promptMs = startupMs * 0.9;
   const predictedMs =
     firstTokenAt !== null && lastTokenAt !== null ? lastTokenAt - firstTokenAt + deps.tokenMs : 0;
   const finishedAt = Date.now() / 1000;
@@ -349,7 +395,7 @@ export async function streamChat(
   chunk({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] });
   if (includeUsage) {
     // Like llama-server: prompt_n counts only the prompt tokens that were not in the cache.
-    const cached = Math.max(0, Math.min(cfg.cachedPromptTokens, promptTokens - 1));
+    const cached = Math.max(0, cachedTokens);
     const fresh = promptTokens - cached;
     const drafts =
       cfg.draftAcceptRate === null

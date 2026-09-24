@@ -334,7 +334,8 @@ Scope
 - Run flags: a cache hit when cached tokens exceed a threshold (default 64, so chat-template tokens do not
   trigger it); `context_truncated` aborts the round; a stop on length is shown.
 - Fixed-length mode: `max_tokens` N with a prompt that always overruns it. Both machines must stop on
-  length, or the round is flagged.
+  length, or the round is flagged. (As built: a preset asking for a 3,000-word essay. A never-ending
+  counting prompt made the model stop at ten.)
 - Pre-flight before START, with blocking errors and warnings: same model, quant and backend; same context
   length; exact prompt tokens from `/v1/chat/count_tokens` fit the context; same engaged speculative
   method, KV cache type and GPU memory mode; no memory warning; thinking supported where requested.
@@ -351,7 +352,7 @@ Automated tests
 - End-to-end, also the manual demo script: warm mode shows cache hits from round two while cold mode shows
   none; the 32K preset against a mock with a 16K context is blocked by pre-flight.
 
-Real-machine script
+Real-machine script (run on the RTX machine alone; the Lenovo was offline and the Mac unreachable)
 1. Run the 32K preset cold for three rounds. Cached tokens stay under the threshold on both machines,
    including an MLX Mac.
 2. Switch to warm mode and see cache hits from round two.
