@@ -1,0 +1,14 @@
+{
+  "name": "@duel/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types, validation and pure logic shared by the controller, the client and the mock.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}

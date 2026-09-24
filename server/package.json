@@ -1,0 +1,19 @@
+{
+  "name": "@duel/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The controller: serves the app and talks to Unsloth Studio on every machine.",
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "dependencies": {
+    "@duel/shared": "*",
+    "@fastify/static": "^10.1.4",
+    "fastify": "^5.12.5",
+    "undici": "^8.11.2"
+  },
+  "devDependencies": {
+    "@duel/mock": "*"
+  }
+}

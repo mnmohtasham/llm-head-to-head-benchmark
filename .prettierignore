@@ -1,0 +1,11 @@
+node_modules
+**/dist
+data
+.demo-data
+e2e/.data
+e2e/test-results
+e2e/playwright-report
+coverage
+fixtures
+package-lock.json
+*.md

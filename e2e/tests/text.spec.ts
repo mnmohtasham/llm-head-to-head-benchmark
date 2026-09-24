@@ -1,0 +1,333 @@
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { E2E_MOCK_PORTS } from '../ports';
+
+// Phase 4 demo script: race two machines side by side, see the faster one win, lose one machine
+// mid-race, cancel, reload mid-race, reopen and delete past races. The phase 3 single-machine
+// checks still hold when one machine is picked.
+const [MAC, LINUX] = DEMO_MACHINES;
+const MAC_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[0]}`;
+const LINUX_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`;
+const MOCKS = [MAC_MOCK, LINUX_MOCK] as const;
+
+test.describe.configure({ mode: 'serial' });
+
+async function ensureMachines(request: APIRequestContext) {
+  const existing = (await (await request.get('/api/machines')).json()) as Array<{ name: string }>;
+  for (const [index, machine] of DEMO_MACHINES.entries()) {
+    if (existing.some((m) => m.name === machine.name)) continue;
+    await request.post('/api/machines', {
+      data: {
+        name: machine.name,
+        baseUrl: `127.0.0.1:${E2E_MOCK_PORTS[index]}`,
+        apiKey: machine.apiKey,
+      },
+    });
+  }
+}
+
+async function stream(request: APIRequestContext, mock: string, settings: Record<string, unknown>) {
+  await request.post(`${mock}/__mock/config`, { data: { stream: settings } });
+}
+
+/** Opens the Text tab and sets which machines race and whether they think. */
+async function setUp(page: Page, names: string[], options: { thinking?: boolean } = {}) {
+  await page.goto('/#/text');
+  for (const machine of DEMO_MACHINES) {
+    const box = page.getByRole('checkbox', { name: new RegExp(machine.name) });
+    await expect(box).toBeEnabled();
+    await box.setChecked(names.includes(machine.name));
+  }
+  await page.getByRole('radio', { name: options.thinking === false ? 'Off' : 'On' }).click();
+  await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+}
+
+const pane = (page: Page, name: string) =>
+  page.getByTestId('run-pane').and(page.locator(`[data-machine="${name}"]`));
+
+async function startAndFinish(page: Page, names: string[]) {
+  await page.getByRole('button', { name: 'Start' }).click();
+  for (const name of names) {
+    await expect(pane(page, name).getByTestId('run-state')).toHaveText(/Done|Failed/, {
+      timeout: 20_000,
+    });
+  }
+}
+
+test.beforeAll(async ({ request }) => {
+  await ensureMachines(request);
+});
+
+test.beforeEach(async ({ request }) => {
+  for (const mock of MOCKS) {
+    await request.post(`${mock}/__mock/reset`);
+    await stream(request, mock, {
+      startupMs: 300,
+      tokenMs: 20,
+      reasoningTokens: 60,
+      answerTokens: 60,
+    });
+  }
+});
+
+test.describe('racing two machines', () => {
+  test('runs both side by side, and the faster one wins', async ({ page, request }) => {
+    await stream(request, LINUX_MOCK, {
+      startupMs: 200,
+      tokenMs: 12,
+      reasoningTokens: 30,
+      answerTokens: 40,
+    });
+    await stream(request, MAC_MOCK, {
+      startupMs: 400,
+      tokenMs: 30,
+      reasoningTokens: 30,
+      answerTokens: 40,
+    });
+    await setUp(page, [MAC.name, LINUX.name]);
+    await page.getByRole('button', { name: 'Start' }).click();
+
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText(/Thinking|Answering/);
+    await expect(pane(page, MAC.name).getByTestId('run-state')).toHaveText(
+      /Waiting|Thinking|Answering/,
+    );
+    const macBox = await pane(page, MAC.name).boundingBox();
+    const linuxBox = await pane(page, LINUX.name).boundingBox();
+    expect(macBox && linuxBox && Math.abs(macBox.y - linuxBox.y) < 2).toBe(true);
+    expect(macBox && linuxBox && Math.abs(macBox.x - linuxBox.x) > 100).toBe(true);
+
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Done', {
+      timeout: 20_000,
+    });
+    await expect(pane(page, MAC.name).getByTestId('run-state')).toHaveText('Done', {
+      timeout: 20_000,
+    });
+    await expect(page).toHaveURL(/#\/text\/[0-9a-f-]{36}$/);
+
+    const compare = page.getByTestId('compare');
+    const cell = (key: string, name: string) =>
+      compare.locator(`tr[data-key="${key}"] td[data-machine="${name}"]`);
+    for (const key of ['firstAnswer', 'decode', 'decodeServer']) {
+      await expect(cell(key, LINUX.name)).toHaveAttribute('data-best', 'true');
+      await expect(cell(key, MAC.name)).not.toHaveAttribute('data-best', 'true');
+    }
+    await expect(compare.getByTestId('send-skew')).toContainText('within');
+    const setup = page.getByTestId('setup');
+    await expect(setup).toContainText('unsloth/Qwen3.8-27B-GGUF');
+    await expect(setup.locator('tr.differs')).toHaveCount(0);
+
+    const latest = page.getByTestId('session-row').first();
+    await expect(latest).toContainText(MAC.name);
+    await expect(latest).toContainText(LINUX.name);
+    await expect(latest).toHaveAttribute('aria-current', 'true');
+  });
+
+  test('a machine that drops out mid-race fails alone, and the other finishes', async ({
+    page,
+    request,
+  }) => {
+    await stream(request, MAC_MOCK, { disconnectAfterTokens: 10 });
+    await setUp(page, [MAC.name, LINUX.name]);
+    await startAndFinish(page, [MAC.name, LINUX.name]);
+    await expect(pane(page, MAC.name).getByTestId('run-state')).toHaveText('Failed');
+    await expect(pane(page, MAC.name).getByTestId('run-error')).toContainText(
+      'broke after 10 chunks',
+    );
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Done');
+    const compare = page.getByTestId('compare');
+    await expect(compare.locator('thead')).toContainText('failed');
+    // One finished machine is no contest.
+    await expect(compare.locator('td[data-best]')).toHaveCount(0);
+  });
+
+  test('cancel stops every machine', async ({ page, request }) => {
+    for (const mock of MOCKS) await stream(request, mock, { tokenMs: 80, answerTokens: 400 });
+    await setUp(page, [MAC.name, LINUX.name]);
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText(/Thinking|Answering/);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Cancelled');
+    await expect(pane(page, MAC.name).getByTestId('run-state')).toHaveText('Cancelled');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible();
+  });
+
+  test('reloading the page mid-race picks the race up again', async ({ page, request }) => {
+    for (const mock of MOCKS) {
+      await stream(request, mock, { tokenMs: 40, reasoningTokens: 10, answerTokens: 80 });
+    }
+    await setUp(page, [MAC.name, LINUX.name]);
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Answering', {
+      timeout: 10_000,
+    });
+    await page.reload();
+    await expect(pane(page, LINUX.name).getByTestId('answer')).not.toBeEmpty();
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText(/Answering|Done/);
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Done', {
+      timeout: 20_000,
+    });
+    await expect(pane(page, MAC.name).getByTestId('run-state')).toHaveText('Done', {
+      timeout: 20_000,
+    });
+    const words = (await pane(page, LINUX.name).getByTestId('answer').textContent())
+      ?.trim()
+      .split(/\s+/);
+    expect(words).toHaveLength(80);
+  });
+
+  test('warns before a race when the machines run different quants', async ({ page, request }) => {
+    await request.post(`${LINUX_MOCK}/api/inference/load`, {
+      headers: { authorization: `Bearer ${LINUX.apiKey}` },
+      data: {
+        model_path: 'unsloth/Qwen3.8-27B-GGUF',
+        gguf_variant: 'UD-IQ2_XXS',
+        max_seq_length: 0,
+      },
+      timeout: 20_000,
+    });
+    await setUp(page, [MAC.name, LINUX.name]);
+    await expect(page.getByTestId('race-warnings')).toContainText(
+      `The machines run different quants: ${MAC.name} has Q4_K_M, ${LINUX.name} has UD-IQ2_XXS.`,
+    );
+    await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+  });
+
+  test('opens a past race from the results log, and deletes one', async ({ page }) => {
+    await setUp(page, [LINUX.name]);
+    await startAndFinish(page, [LINUX.name]);
+    await setUp(page, [MAC.name]);
+    await startAndFinish(page, [MAC.name]);
+
+    const rows = page.getByTestId('session-row');
+    await expect(rows.first()).toHaveAttribute('aria-current', 'true');
+    await rows.nth(1).getByRole('link', { name: 'Open' }).click();
+    await expect(rows.nth(1)).toHaveAttribute('aria-current', 'true');
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Done');
+    await expect(page.getByTestId('run-pane')).toHaveCount(1);
+
+    const count = await rows.count();
+    await rows
+      .nth(1)
+      .getByRole('button', { name: /^Delete/ })
+      .click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete race' }).click();
+    await expect(rows).toHaveCount(count - 1);
+    await expect(page).toHaveURL(/#\/text$/);
+  });
+
+  test('fits a phone screen without sideways scrolling', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 800 });
+    await setUp(page, [MAC.name, LINUX.name]);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+test.describe('one machine', () => {
+  test('streams thinking, folds it at the first answer word, and fills the measurements', async ({
+    page,
+  }) => {
+    await setUp(page, [LINUX.name]);
+    await page.getByRole('button', { name: 'Start' }).click();
+    const linux = pane(page, LINUX.name);
+    await expect(linux.getByTestId('run-state')).toHaveText('Thinking');
+    await expect(linux.getByTestId('thinking')).toHaveAttribute('open', '');
+    await expect(linux.getByTestId('answer-empty')).toContainText('Thinking…');
+    await expect(linux.getByTestId('answer-empty')).toHaveCount(0, { timeout: 10_000 });
+    await expect(linux.getByTestId('thinking')).not.toHaveAttribute('open');
+    await expect(linux.getByTestId('run-state')).toHaveText('Done', { timeout: 15_000 });
+    await expect(linux.getByTestId('first-word')).toHaveText(/^\d+\.\d\d$/);
+
+    const table = page.getByTestId('run-metrics');
+    const cell = (label: string, column: 'measured' | 'reported') =>
+      table
+        .getByRole('row', { name: new RegExp(`^${label}`) })
+        .locator(`td[data-column="${column}"]`);
+    await expect(cell('Time to first token', 'measured')).toHaveText(/^\d+ ms$/);
+    await expect(cell('Time to first token', 'reported')).toHaveText(/^\d+ ms$/);
+    await expect(cell('Decode speed', 'measured')).toHaveText(/ tok\/s$/);
+    await expect(cell('Output tokens', 'measured')).toHaveText('120');
+    await expect(table.getByTestId('network-share')).toBeVisible();
+    for (const note of ['thinking-missing', 'speculative', 'prompt-cache', 'hit-max-tokens']) {
+      await expect(table.getByTestId(note)).toHaveCount(0);
+    }
+    await expect(page.getByTestId('compare')).toHaveCount(0);
+    await expect(page.getByTestId('setup')).toContainText('Q4_K_M');
+    await expect(page.getByRole('region', { name: 'Activity' })).toContainText('First word');
+  });
+
+  test('runs without thinking when it is switched off', async ({ page }) => {
+    await setUp(page, [LINUX.name], { thinking: false });
+    await startAndFinish(page, [LINUX.name]);
+    await expect(pane(page, LINUX.name).getByTestId('thinking')).toHaveCount(0);
+    const table = page.getByTestId('run-metrics');
+    await expect(
+      table.getByRole('row', { name: /^Thinking time/ }).locator('td[data-column="measured"]'),
+    ).toHaveText('n/a');
+  });
+
+  test('says why there is no answer when the model thinks until Max tokens', async ({ page }) => {
+    await setUp(page, [LINUX.name]);
+    await page.getByLabel('Max tokens').fill('30');
+    await startAndFinish(page, [LINUX.name]);
+    await expect(pane(page, LINUX.name).getByTestId('answer-empty')).toContainText(
+      'No answer: the model used all 30 tokens thinking',
+    );
+    await expect(pane(page, LINUX.name).getByTestId('thinking')).toHaveAttribute('open', '');
+    await expect(page.getByTestId('hit-max-tokens')).toContainText('before the answer started');
+  });
+
+  test('warns when thinking was on but the model wrote it into the answer', async ({
+    page,
+    request,
+  }) => {
+    await stream(request, LINUX_MOCK, { thinkingInAnswer: true });
+    await setUp(page, [LINUX.name]);
+    await startAndFinish(page, [LINUX.name]);
+    await expect(pane(page, LINUX.name).getByTestId('thinking')).toHaveCount(0);
+    await expect(page.getByTestId('thinking-missing')).toContainText('skipped its thinking block');
+  });
+
+  test('flags speculative decoding and a prompt cache hit', async ({ page, request }) => {
+    await stream(request, LINUX_MOCK, { cachedPromptTokens: 12, draftAcceptRate: 0.6 });
+    await setUp(page, [LINUX.name]);
+    await startAndFinish(page, [LINUX.name]);
+    const table = page.getByTestId('run-metrics');
+    const row = (label: string) => table.getByRole('row', { name: new RegExp(`^${label}`) });
+    await expect(table.getByTestId('speculative')).toContainText('Speculative decoding was on');
+    await expect(table.getByTestId('prompt-cache')).toContainText('12 of');
+    await expect(
+      row('Speculative drafts accepted').locator('td[data-column="reported"]'),
+    ).toHaveText(/^\d+ of \d+ \(60%\)$/);
+    const measured = await row('Prompt tokens').locator('td[data-column="measured"]').textContent();
+    await expect(row('Prompt tokens').locator('td[data-column="reported"]')).toHaveText(
+      measured ?? '',
+    );
+  });
+
+  test('shows an error Unsloth sends in the middle of the stream', async ({ page, request }) => {
+    await stream(request, LINUX_MOCK, { errorAfterTokens: 5 });
+    await setUp(page, [LINUX.name]);
+    await startAndFinish(page, [LINUX.name]);
+    await expect(pane(page, LINUX.name).getByTestId('run-error')).toContainText(
+      'Unsloth reported: Context size has been exceeded.',
+    );
+    await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Failed');
+  });
+
+  test('will not start while a chosen machine has no model', async ({ page, request }) => {
+    await request.post(`${MAC_MOCK}/api/inference/unload`, {
+      headers: { authorization: `Bearer ${MAC.apiKey}` },
+      data: { model_path: 'unsloth/Qwen3.8-27B-GGUF' },
+    });
+    await page.goto('/#/text');
+    const box = page.getByRole('checkbox', { name: new RegExp(MAC.name) });
+    await box.setChecked(true);
+    await expect(page.getByTestId('start-blockers')).toContainText(
+      `No model is loaded on ${MAC.name}.`,
+    );
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+});

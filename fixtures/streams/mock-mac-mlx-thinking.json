@@ -1,0 +1,190 @@
+{
+  "kind": "model-duel-stream",
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-24T21:18:01.089Z",
+  "machine": {
+    "name": "mock-mac-mlx-thinking",
+    "baseUrl": "http://127.0.0.1:18861",
+    "notes": ""
+  },
+  "model": "unsloth/Qwen3.8-27B-GGUF",
+  "status": {
+    "activeModel": "unsloth/Qwen3.8-27B-GGUF",
+    "modelIdentifier": "unsloth/Qwen3.8-27B-GGUF",
+    "backend": "gguf",
+    "quant": "Q4_K_M",
+    "contextLength": 32768,
+    "maxContextLength": 131072,
+    "nativeContextLength": 262144,
+    "requestedContextLength": 32768,
+    "supportsReasoning": true,
+    "reasoningStyle": "enable_thinking",
+    "reasoningAlwaysOn": false,
+    "reasoningBudget": -1,
+    "speculativeType": "off",
+    "specDrafterKind": null,
+    "specFallbackReason": null,
+    "cacheTypeKv": "f16",
+    "mlxKvBits": null,
+    "gpuMemoryMode": "auto",
+    "gpuLayers": -1,
+    "totalLayers": 64,
+    "parallelSlots": 1,
+    "memoryWarning": null,
+    "loading": [],
+    "isVision": false
+  },
+  "request": {
+    "model": "unsloth/Qwen3.8-27B-GGUF",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Why is the sky blue?"
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    },
+    "max_tokens": 400,
+    "enable_thinking": true,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0,
+    "cancel_id": "record-1790284679533"
+  },
+  "outcome": {
+    "status": 200,
+    "failure": null,
+    "networkError": null
+  },
+  "headersAtMs": 7.158673000000022,
+  "endAtMs": 1547.9589839999999,
+  "reads": [
+    {
+      "t": 7.778,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQifX1dfQoK"
+    },
+    {
+      "t": 67.883,
+      "b64": "OiBrZWVwLWFsaXZlCgo="
+    },
+    {
+      "t": 128.66,
+      "b64": "OiBrZWVwLWFsaXZlCgo="
+    },
+    {
+      "t": 188.851,
+      "b64": "OiBrZWVwLWFsaXZlCgo="
+    },
+    {
+      "t": 249.303,
+      "b64": "OiBrZWVwLWFsaXZlCgo="
+    },
+    {
+      "t": 257.968,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIiLCJyZWFzb25pbmdfY29udGVudCI6IiBtYWNoaW5lIG9mIGTDqWrDoCJ9fV19Cgo="
+    },
+    {
+      "t": 368.52,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIiLCJyZWFzb25pbmdfY29udGVudCI6IiBwcm9tcHQgY29tcHV0ZSB0aGUifX1dfQoK"
+    },
+    {
+      "t": 476.178,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIiLCJyZWFzb25pbmdfY29udGVudCI6IiBmcm9tIHRva2VuIHF1YW50aXplZCJ9fV19Cgo="
+    },
+    {
+      "t": 581.66,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIiLCJyZWFzb25pbmdfY29udGVudCI6IiBzbyByZWFkcyBjYWbDqSJ9fV19Cgo="
+    },
+    {
+      "t": 690.151,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIiLCJyZWFzb25pbmdfY29udGVudCI6IiBzcGVlZCBtYXR0ZXJzIn19XX0KCmRhdGE6IHsiaWQiOiJjaGF0Y21wbC03NTciLCJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjoxNzkwMjg0Njc5LCJtb2RlbCI6InVuc2xvdGgvUXdlbjMuOC0yN0ItR0dVRiIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiIHJlYWRzIn19XX0KCg=="
+    },
+    {
+      "t": 795.543,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgY2Fmw6kgc3BlZWQgbWF0dGVycyJ9fV19Cgo="
+    },
+    {
+      "t": 903.039,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZmFzdGVyIGxheWVyIFrDvHJpY2gifX1dfQoK"
+    },
+    {
+      "t": 1011.368,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIg8J+ZgiB0aGFuIHdpbnMifX1dfQoK"
+    },
+    {
+      "t": 1118.805,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgd2VpZ2h0cyB2dSBhbnN3ZXIifX1dfQoK"
+    },
+    {
+      "t": 1225.253,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgaGVyZSBtb2RlbCBtZW1vcnkifX1dfQoK"
+    },
+    {
+      "t": 1332.734,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgY2FjaGUgYmFuZHdpZHRoIHRoZSJ9fV19Cgo="
+    },
+    {
+      "t": 1441.111,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZXZlcnkgbmHDr3ZlIOaXpeacrOiqniJ9fV19Cgo="
+    },
+    {
+      "t": 1547.351,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbW9yZSBtYWNoaW5lIn19XX0KCmRhdGE6IHsiaWQiOiJjaGF0Y21wbC03NTciLCJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjoxNzkwMjg0Njc5LCJtb2RlbCI6InVuc2xvdGgvUXdlbjMuOC0yN0ItR0dVRiIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6e30sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQoKZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2NzksIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W10sInVzYWdlIjp7InByb21wdF90b2tlbnMiOjksImNvbXBsZXRpb25fdG9rZW5zIjozOCwidG90YWxfdG9rZW5zIjo0NywicHJvbXB0X3Rva2Vuc19kZXRhaWxzIjp7ImNhY2hlZF90b2tlbnMiOjB9fSwidGltaW5ncyI6eyJwcm9tcHRfbiI6OSwicHJvbXB0X21zIjoyMjUsInByb21wdF9wZXJfdG9rZW5fbXMiOjI1LCJwcm9tcHRfcGVyX3NlY29uZCI6NDAsInByZWRpY3RlZF9uIjozOCwicHJlZGljdGVkX21zIjoxMzI0LjQ3ODEzNCwicHJlZGljdGVkX3Blcl90b2tlbl9tcyI6MzQuODU0Njg3NzM2ODQyMSwicHJlZGljdGVkX3Blcl9zZWNvbmQiOjI4LjY5MDU0NTM3MzY5OTYxNywiY2FjaGVfbiI6MH19CgpkYXRhOiBbRE9ORV0KCg=="
+    }
+  ],
+  "metrics": {
+    "ttfbMs": 7.158673000000022,
+    "ttftMs": 257.968405,
+    "firstReasoningMs": 257.968405,
+    "firstAnswerMs": 690.150691,
+    "thinkingMs": 432.18228600000003,
+    "totalMs": 1547.350863,
+    "decodeMs": 1289.382458,
+    "promptTokens": 9,
+    "outputTokens": 38,
+    "cachedTokens": 0,
+    "decodeTokPerSec": 28.695907696302783,
+    "tokensEstimated": false,
+    "endToEndTokPerSec": 24.558101791035096,
+    "charsPerSec": 175.2777064693089,
+    "reasoningChars": 84,
+    "answerChars": 142,
+    "chunks": 14,
+    "coalescedChunks": 1,
+    "interChunk": {
+      "meanMs": 99.183266,
+      "medianMs": 107.48164399999996,
+      "p95Ms": 110.55144199999995,
+      "maxMs": 110.55144199999995
+    },
+    "finishReason": "stop",
+    "truncated": false,
+    "keepalives": 4,
+    "sawDone": true
+  },
+  "server": {
+    "timings": {
+      "promptN": 9,
+      "promptMs": 225,
+      "promptPerSecond": 40,
+      "predictedN": 38,
+      "predictedMs": 1324.478134,
+      "predictedPerSecond": 28.690545373699617,
+      "cacheN": 0
+    },
+    "monitor": {
+      "ttftMs": 252,
+      "tokPerSec": 28.69,
+      "promptTokPerSec": 40,
+      "durationMs": 1540,
+      "decodeMs": 1324,
+      "promptTokens": 9,
+      "completionTokens": 38,
+      "stopReason": "stop",
+      "status": "done"
+    }
+  }
+}

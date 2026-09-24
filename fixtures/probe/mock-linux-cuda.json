@@ -1,0 +1,517 @@
+{
+  "kind": "model-duel-probe",
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-24T20:10:30.461Z",
+  "app": {
+    "name": "model-duel",
+    "version": "record-probe"
+  },
+  "machine": {
+    "name": "mock-linux-cuda",
+    "baseUrl": "http://127.0.0.1:18862",
+    "notes": "Fake Unsloth, linux-cuda profile",
+    "keyConfigured": true
+  },
+  "probedAt": "2026-09-24T20:10:30.459Z",
+  "durationMs": 32,
+  "raw": {
+    "schemaVersion": 1,
+    "baseUrl": "http://127.0.0.1:18862",
+    "keyConfigured": true,
+    "startedAt": "2026-09-24T20:10:30.427Z",
+    "finishedAt": "2026-09-24T20:10:30.459Z",
+    "durationMs": 32,
+    "routes": {
+      "health": {
+        "path": "/api/health",
+        "status": 200,
+        "ms": 10.72,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "status": "healthy",
+          "timestamp": "2026-09-24T20:10:30.434",
+          "service": "Unsloth UI Backend",
+          "chat_only": false,
+          "desktop_protocol_version": 1,
+          "desktop_manageability_version": 2,
+          "supports_desktop_auth": true,
+          "supports_desktop_backend_ownership": true,
+          "studio_root_id": "<redacted>",
+          "native_path_leases_supported": true,
+          "hf_endpoint": "https://huggingface.co",
+          "hf_datasets_server": "https://datasets-server.huggingface.co",
+          "version": "2026.9.2",
+          "studio_version": "0.1.815-beta",
+          "cloudflare_url": null,
+          "server_url": "http://0.0.0.0:18862",
+          "secure": false,
+          "chat_only_reason": null,
+          "chat_only_detail": null,
+          "device_type": "linux",
+          "apple_silicon": false
+        },
+        "error": null
+      },
+      "status": {
+        "path": "/api/inference/status",
+        "status": 200,
+        "ms": 2.75,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "active_model": "unsloth/Qwen3.8-27B-GGUF",
+          "model_identifier": "unsloth/Qwen3.8-27B-GGUF",
+          "is_gguf": true,
+          "is_local_model": false,
+          "gguf_variant": "Q4_K_M",
+          "memory_warning": null,
+          "loading": [],
+          "loaded": [
+            "unsloth/Qwen3.8-27B-GGUF"
+          ],
+          "inference": {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0
+          },
+          "requested_context_length": 32768,
+          "load_in_4bit": null,
+          "llama_cpp_supports_mtp": true,
+          "spec_drafter_kind": null,
+          "spec_fallback_reason": null,
+          "llama_cpp_prebuilt_stale": false,
+          "llama_cpp_installed_tag": "b9601",
+          "llama_cpp_latest_tag": "b9601",
+          "is_vision": false,
+          "is_audio": false,
+          "has_audio_input": false,
+          "context_length": 32768,
+          "max_context_length": 65536,
+          "native_context_length": 262144,
+          "supports_reasoning": true,
+          "reasoning_style": "enable_thinking",
+          "reasoning_always_on": false,
+          "reasoning_effort_levels": [],
+          "reasoning_budget": -1,
+          "cache_type_kv": "f16",
+          "is_mlx": false,
+          "speculative_type": "off",
+          "spec_draft_n_max": null,
+          "gpu_layers": -1,
+          "parallel_slots": 1
+        },
+        "error": null
+      },
+      "system": {
+        "path": "/api/system",
+        "status": 200,
+        "ms": 4.67,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "memory_refreshed": false,
+          "platform": "Linux-6.17.0-41-generic-x86_64-with-glibc2.42",
+          "python_version": "3.12.11",
+          "device_backend": "cuda",
+          "cpu_count": 32,
+          "uptime_seconds": 86400,
+          "cpu": {
+            "logical_count": 32,
+            "physical_count": 16,
+            "usage_percent": 4.6,
+            "frequency_mhz": 5700
+          },
+          "memory": {
+            "total_gb": 125.6,
+            "available_gb": 102.99,
+            "percent_used": 18,
+            "process_used_mb": 812
+          },
+          "disk": {
+            "total_gb": 4000.79,
+            "free_gb": 1820.4,
+            "percent_used": 54.5
+          },
+          "gpu": {
+            "available": true,
+            "backend": "cuda",
+            "devices": [
+              {
+                "index": 0,
+                "visible_ordinal": 0,
+                "name": "NVIDIA GeForce RTX 5090",
+                "memory_total_gb": 31.84,
+                "vram_used_gb": 18.37,
+                "vram_free_gb": 13.47,
+                "vram_utilization_pct": 57.7
+              }
+            ],
+            "gguf_gpu_ids_supported": true,
+            "vram_used_gb_aggregate": 18.2
+          },
+          "inference_gpu": {
+            "available": true,
+            "backend": "cuda",
+            "devices": [
+              {
+                "index": 0,
+                "visible_ordinal": 0,
+                "name": "NVIDIA GeForce RTX 5090",
+                "memory_total_gb": 31.84,
+                "vram_used_gb": 18.37,
+                "vram_free_gb": 13.47,
+                "vram_utilization_pct": 57.7
+              }
+            ],
+            "gguf_gpu_ids_supported": true,
+            "vram_used_gb_aggregate": 18.2
+          },
+          "ml_packages": {
+            "torch": "2.9.0+cu130",
+            "transformers": "4.57.1"
+          }
+        },
+        "error": null
+      },
+      "hardware": {
+        "path": "/api/system/hardware?include_details=true",
+        "status": 200,
+        "ms": 4.84,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "gpu": {
+            "gpu_name": "NVIDIA GeForce RTX 5090",
+            "vram_total_gb": 31.84,
+            "vram_free_gb": 13.64
+          },
+          "versions": {
+            "unsloth": "2026.9.2",
+            "torch": "2.9.0+cu130",
+            "transformers": "4.57.1",
+            "cuda": "13.0",
+            "rocm": null
+          },
+          "gpus": [
+            {
+              "name": "NVIDIA GeForce RTX 5090",
+              "vram_total_gb": 31.84
+            }
+          ],
+          "llama_cpp": "b9601"
+        },
+        "error": null
+      },
+      "models": {
+        "path": "/v1/models",
+        "status": 200,
+        "ms": 4.87,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "object": "list",
+          "data": [
+            {
+              "id": "unsloth/Qwen3.8-27B-GGUF",
+              "object": "model",
+              "created": 1790280630,
+              "owned_by": "unsloth",
+              "quant": "Q4_K_M",
+              "context_length": 32768,
+              "max_context_length": 65536,
+              "loaded": true
+            },
+            {
+              "id": "unsloth/gemma-4-12b-it-GGUF",
+              "object": "model",
+              "created": 1790280630,
+              "owned_by": "unsloth",
+              "loaded": false
+            },
+            {
+              "id": "unsloth/Qwen3.8-8B-GGUF",
+              "object": "model",
+              "created": 1790280630,
+              "owned_by": "unsloth",
+              "loaded": false
+            }
+          ]
+        },
+        "error": null
+      },
+      "props": {
+        "path": "/v1/props",
+        "status": 200,
+        "ms": 4.86,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "default_generation_settings": {
+            "n_ctx": 32768
+          },
+          "total_slots": 1,
+          "chat_template": "{%- for message in messages %}{{ message.content }}{%- endfor %}",
+          "model_path": "unsloth/Qwen3.8-27B-GGUF",
+          "endpoint_slots": false,
+          "endpoint_props": false,
+          "endpoint_metrics": false,
+          "build_info": "unsloth-studio/0.1.815-beta"
+        },
+        "error": null
+      },
+      "stt": {
+        "path": "/api/inference/audio/stt/status",
+        "status": 200,
+        "ms": 6.21,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "available": true,
+          "loaded_model": null,
+          "loading": false,
+          "device": null,
+          "keep_alive_seconds": 300,
+          "default_model": "small",
+          "models": [
+            "tiny",
+            "base",
+            "small",
+            "large-v3-turbo",
+            "large-v3"
+          ],
+          "transformers": {
+            "available": true,
+            "loaded_model": null,
+            "loading": false,
+            "device": null,
+            "keep_alive_seconds": 300,
+            "default_model": "small",
+            "models": [
+              "tiny",
+              "base",
+              "small",
+              "large-v3-turbo",
+              "large-v3"
+            ],
+            "downloaded_models": [
+              "large-v3-turbo"
+            ],
+            "download": null
+          },
+          "mtmd": {
+            "available": true,
+            "loaded_model": null,
+            "loading": false,
+            "device": null,
+            "keep_alive_seconds": 300,
+            "default_model": null,
+            "models": [
+              "Qwen3-ASR-1.7B"
+            ],
+            "downloaded_models": [],
+            "download": null
+          },
+          "gguf": {
+            "available": true,
+            "loaded_model": null,
+            "loading": false,
+            "device": null,
+            "keep_alive_seconds": 300,
+            "default_model": "small",
+            "models": [
+              "tiny",
+              "base",
+              "small",
+              "large-v3-turbo",
+              "large-v3"
+            ],
+            "downloaded_models": [
+              "large-v3-turbo"
+            ],
+            "download": null
+          }
+        },
+        "error": null
+      },
+      "image": {
+        "path": "/api/inference/images/status",
+        "status": 200,
+        "ms": 6.58,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "loaded": false,
+          "repo_id": null,
+          "family": null,
+          "base_repo": null,
+          "device": null,
+          "dtype": null,
+          "model_kind": null,
+          "gguf_filename": null,
+          "gguf_variant": null,
+          "cpu_offload": false,
+          "offload_policy": null,
+          "vae_tiling": false,
+          "memory_mode": null,
+          "speed_mode": null,
+          "speed_optims": [],
+          "text_encoder_quant": null,
+          "transformer_quant": null,
+          "attention_backend": null,
+          "transformer_cache": null,
+          "workflows": [],
+          "conditioning": null,
+          "engine": null,
+          "native_mode": null,
+          "fallback_reason": null,
+          "supports_lora": false,
+          "supports_controlnet": false
+        },
+        "error": null
+      },
+      "telemetry": {
+        "path": "/api/train/hardware",
+        "status": 200,
+        "ms": 7.17,
+        "contentType": "application/json; charset=utf-8",
+        "body": {
+          "available": true,
+          "backend": "cuda",
+          "index": 0,
+          "visible_ordinal": 0,
+          "gpu_utilization_pct": 4,
+          "temperature_c": 38,
+          "vram_used_gb": 18.1,
+          "vram_total_gb": 31.84,
+          "vram_utilization_pct": 56.8,
+          "power_draw_w": 32.4,
+          "power_limit_w": 575,
+          "power_utilization_pct": 5.6,
+          "devices": [
+            {
+              "available": true,
+              "backend": "cuda",
+              "index": 0,
+              "visible_ordinal": 0,
+              "gpu_utilization_pct": 4,
+              "temperature_c": 38,
+              "vram_used_gb": 18.1,
+              "vram_total_gb": 31.84,
+              "vram_utilization_pct": 56.8,
+              "power_draw_w": 32.4,
+              "power_limit_w": 575,
+              "power_utilization_pct": 5.6
+            }
+          ]
+        },
+        "error": null
+      }
+    },
+    "rttMs": [
+      2.16,
+      1.78,
+      1.61
+    ]
+  },
+  "report": {
+    "overall": "ok",
+    "capabilities": {
+      "reachable": {
+        "status": "ok",
+        "summary": "RTT 1.8 ms"
+      },
+      "key": {
+        "status": "ok",
+        "summary": "Accepted"
+      },
+      "text": {
+        "status": "ok",
+        "summary": "Qwen3.8-27B-GGUF Q4_K_M loaded · 3 available"
+      },
+      "stt": {
+        "status": "ok",
+        "summary": "Transformers, whisper.cpp, llama.cpp"
+      },
+      "image": {
+        "status": "ok",
+        "summary": "No model loaded"
+      },
+      "telemetry": {
+        "status": "ok",
+        "summary": "GPU 4% · 32.4 W · 38 °C"
+      }
+    },
+    "issues": [],
+    "versions": {
+      "unsloth": "2026.9.2",
+      "studio": "0.1.815-beta",
+      "llamaCpp": "b9601",
+      "torch": "2.9.0+cu130",
+      "cuda": "13.0"
+    },
+    "platform": {
+      "os": "Linux-6.17.0-41-generic-x86_64-with-glibc2.42",
+      "deviceType": "linux",
+      "backend": "cuda",
+      "appleSilicon": false,
+      "cpuCores": 32,
+      "memoryTotalGb": 125.6
+    },
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 5090",
+        "memoryGb": 31.84
+      }
+    ],
+    "text": {
+      "activeModel": "unsloth/Qwen3.8-27B-GGUF",
+      "backend": "gguf",
+      "quant": "Q4_K_M",
+      "contextLength": 32768,
+      "supportsReasoning": true,
+      "loadedCount": 1,
+      "availableCount": 3,
+      "slots": 1
+    },
+    "stt": {
+      "engines": [
+        {
+          "name": "transformers",
+          "label": "Transformers",
+          "available": true,
+          "loadedModel": null
+        },
+        {
+          "name": "gguf",
+          "label": "whisper.cpp",
+          "available": true,
+          "loadedModel": null
+        },
+        {
+          "name": "mtmd",
+          "label": "llama.cpp",
+          "available": true,
+          "loadedModel": null
+        }
+      ]
+    },
+    "image": {
+      "loaded": false,
+      "model": null,
+      "engine": null,
+      "device": null
+    },
+    "telemetry": {
+      "backend": "cuda",
+      "devices": 1,
+      "gpuUtilPct": 4,
+      "powerW": 32.4,
+      "temperatureC": 38,
+      "vramUsedGb": 18.1,
+      "vramTotalGb": 31.84
+    },
+    "rtt": {
+      "samplesMs": [
+        2.16,
+        1.78,
+        1.61
+      ],
+      "medianMs": 1.78,
+      "minMs": 1.61
+    }
+  }
+}

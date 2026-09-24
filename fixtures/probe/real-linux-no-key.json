@@ -1,0 +1,157 @@
+{
+  "kind": "model-duel-probe",
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-24T20:10:28.828Z",
+  "app": {
+    "name": "model-duel",
+    "version": "record-probe"
+  },
+  "machine": {
+    "name": "real-linux-no-key",
+    "baseUrl": "http://127.0.0.1:8888",
+    "notes": "Real Unsloth Studio on the development machine, probed without an API key",
+    "keyConfigured": false
+  },
+  "probedAt": "2026-09-24T20:10:28.827Z",
+  "durationMs": 25,
+  "raw": {
+    "schemaVersion": 1,
+    "baseUrl": "http://127.0.0.1:8888",
+    "keyConfigured": false,
+    "startedAt": "2026-09-24T20:10:28.802Z",
+    "finishedAt": "2026-09-24T20:10:28.827Z",
+    "durationMs": 25,
+    "routes": {
+      "health": {
+        "path": "/api/health",
+        "status": 200,
+        "ms": 12.11,
+        "contentType": "application/json",
+        "body": {
+          "status": "healthy",
+          "timestamp": "2026-09-24T23:10:28.809826",
+          "service": "Unsloth UI Backend",
+          "chat_only": false,
+          "desktop_protocol_version": 1,
+          "desktop_manageability_version": 2,
+          "supports_desktop_auth": true,
+          "supports_desktop_backend_ownership": true,
+          "studio_root_id": "<redacted>",
+          "native_path_leases_supported": true,
+          "hf_endpoint": "https://huggingface.co",
+          "hf_datasets_server": "https://datasets-server.huggingface.co",
+          "desktop_owner": {
+            "kind": "tauri",
+            "token_sha256": "<redacted>"
+          }
+        },
+        "error": null
+      },
+      "status": {
+        "path": "/api/inference/status",
+        "status": 401,
+        "ms": 2.21,
+        "contentType": "application/json",
+        "body": {
+          "detail": "Not authenticated"
+        },
+        "error": null
+      }
+    },
+    "rttMs": [
+      2.66,
+      2.28,
+      2.27
+    ]
+  },
+  "report": {
+    "overall": "error",
+    "capabilities": {
+      "reachable": {
+        "status": "ok",
+        "summary": "RTT 2.3 ms"
+      },
+      "key": {
+        "status": "error",
+        "summary": "Key needed"
+      },
+      "text": {
+        "status": "unknown",
+        "summary": "Not checked"
+      },
+      "stt": {
+        "status": "unknown",
+        "summary": "Not checked"
+      },
+      "image": {
+        "status": "unknown",
+        "summary": "Not checked"
+      },
+      "telemetry": {
+        "status": "unknown",
+        "summary": "Not checked"
+      }
+    },
+    "issues": [
+      {
+        "capability": "key",
+        "severity": "error",
+        "title": "This machine needs an API key.",
+        "hint": "In Unsloth on that machine, open Settings → API and create a key. Then use Edit here to paste it."
+      }
+    ],
+    "versions": {
+      "unsloth": null,
+      "studio": null,
+      "llamaCpp": null,
+      "torch": null,
+      "cuda": null
+    },
+    "platform": {
+      "os": null,
+      "deviceType": null,
+      "backend": null,
+      "appleSilicon": null,
+      "cpuCores": null,
+      "memoryTotalGb": null
+    },
+    "gpus": [],
+    "text": {
+      "activeModel": null,
+      "backend": null,
+      "quant": null,
+      "contextLength": null,
+      "supportsReasoning": null,
+      "loadedCount": null,
+      "availableCount": null,
+      "slots": null
+    },
+    "stt": {
+      "engines": []
+    },
+    "image": {
+      "loaded": null,
+      "model": null,
+      "engine": null,
+      "device": null
+    },
+    "telemetry": {
+      "backend": null,
+      "devices": 0,
+      "gpuUtilPct": null,
+      "powerW": null,
+      "temperatureC": null,
+      "vramUsedGb": null,
+      "vramTotalGb": null
+    },
+    "rtt": {
+      "samplesMs": [
+        2.66,
+        2.28,
+        2.27
+      ],
+      "medianMs": 2.28,
+      "minMs": 2.27
+    }
+  }
+}

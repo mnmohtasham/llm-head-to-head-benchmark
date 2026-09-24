@@ -1,0 +1,16 @@
+{
+  "name": "@duel/mock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A fake Unsloth Studio backend for tests and the no-GPU demo.",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.12.5"
+  },
+  "devDependencies": {
+    "@duel/shared": "*"
+  }
+}

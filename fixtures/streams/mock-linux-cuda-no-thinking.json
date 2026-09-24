@@ -1,0 +1,242 @@
+{
+  "kind": "model-duel-stream",
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-24T21:18:02.402Z",
+  "machine": {
+    "name": "mock-linux-cuda-no-thinking",
+    "baseUrl": "http://127.0.0.1:18862",
+    "notes": ""
+  },
+  "model": "unsloth/Qwen3.8-27B-GGUF",
+  "status": {
+    "activeModel": "unsloth/Qwen3.8-27B-GGUF",
+    "modelIdentifier": "unsloth/Qwen3.8-27B-GGUF",
+    "backend": "gguf",
+    "quant": "Q4_K_M",
+    "contextLength": 32768,
+    "maxContextLength": 131072,
+    "nativeContextLength": 262144,
+    "requestedContextLength": 32768,
+    "supportsReasoning": true,
+    "reasoningStyle": "enable_thinking",
+    "reasoningAlwaysOn": false,
+    "reasoningBudget": -1,
+    "speculativeType": "off",
+    "specDrafterKind": null,
+    "specFallbackReason": null,
+    "cacheTypeKv": "f16",
+    "mlxKvBits": null,
+    "gpuMemoryMode": "auto",
+    "gpuLayers": -1,
+    "totalLayers": 64,
+    "parallelSlots": 1,
+    "memoryWarning": null,
+    "loading": [],
+    "isVision": false
+  },
+  "request": {
+    "model": "unsloth/Qwen3.8-27B-GGUF",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Why is the sky blue?"
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    },
+    "max_tokens": 400,
+    "enable_thinking": false,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0,
+    "cancel_id": "record-1790284681536"
+  },
+  "outcome": {
+    "status": 200,
+    "failure": null,
+    "networkError": null
+  },
+  "headersAtMs": 4.044035000000008,
+  "endAtMs": 861.79834,
+  "reads": [
+    {
+      "t": 4.671,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQifX1dfQoK"
+    },
+    {
+      "t": 205.118,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgcmVhZHMifX1dfQoK"
+    },
+    {
+      "t": 228.629,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgY2Fmw6kifX1dfQoK"
+    },
+    {
+      "t": 249.879,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgc3BlZWQifX1dfQoK"
+    },
+    {
+      "t": 273.359,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbWF0dGVycyJ9fV19Cgo="
+    },
+    {
+      "t": 294.8,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZmFzdGVyIn19XX0KCg=="
+    },
+    {
+      "t": 317.296,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbGF5ZXIifX1dfQoK"
+    },
+    {
+      "t": 339.644,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgWsO8cmljaCJ9fV19Cgo="
+    },
+    {
+      "t": 362.107,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIg8J+ZgiJ9fV19Cgo="
+    },
+    {
+      "t": 384.458,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgdGhhbiJ9fV19Cgo="
+    },
+    {
+      "t": 407.863,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgd2lucyJ9fV19Cgo="
+    },
+    {
+      "t": 429.415,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgd2VpZ2h0cyJ9fV19Cgo="
+    },
+    {
+      "t": 451.771,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgdnUifX1dfQoK"
+    },
+    {
+      "t": 475.29,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgYW5zd2VyIn19XX0KCg=="
+    },
+    {
+      "t": 496.675,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgaGVyZSJ9fV19Cgo="
+    },
+    {
+      "t": 521.935,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbW9kZWwifX1dfQoK"
+    },
+    {
+      "t": 543.254,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbWVtb3J5In19XX0KCg=="
+    },
+    {
+      "t": 566.608,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgY2FjaGUifX1dfQoK"
+    },
+    {
+      "t": 589.91,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgYmFuZHdpZHRoIn19XX0KCg=="
+    },
+    {
+      "t": 613.247,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgdGhlIn19XX0KCg=="
+    },
+    {
+      "t": 635.548,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZXZlcnkifX1dfQoK"
+    },
+    {
+      "t": 658.948,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbmHDr3ZlIn19XX0KCg=="
+    },
+    {
+      "t": 682.277,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIg5pel5pys6KqeIn19XX0KCg=="
+    },
+    {
+      "t": 703.604,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbW9yZSJ9fV19Cgo="
+    },
+    {
+      "t": 725.865,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgbWFjaGluZSJ9fV19Cgo="
+    },
+    {
+      "t": 750.147,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgb2YifX1dfQoK"
+    },
+    {
+      "t": 773.482,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZMOpasOgIn19XX0KCg=="
+    },
+    {
+      "t": 794.839,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgcHJvbXB0In19XX0KCg=="
+    },
+    {
+      "t": 815.173,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgY29tcHV0ZSJ9fV19Cgo="
+    },
+    {
+      "t": 838.509,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgdGhlIn19XX0KCg=="
+    },
+    {
+      "t": 861.211,
+      "b64": "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLTc1NyIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3OTAyODQ2ODEsIm1vZGVsIjoidW5zbG90aC9Rd2VuMy44LTI3Qi1HR1VGIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiIgZnJvbSJ9fV19CgpkYXRhOiB7ImlkIjoiY2hhdGNtcGwtNzU3Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MTc5MDI4NDY4MSwibW9kZWwiOiJ1bnNsb3RoL1F3ZW4zLjgtMjdCLUdHVUYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCmRhdGE6IHsiaWQiOiJjaGF0Y21wbC03NTciLCJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjoxNzkwMjg0NjgxLCJtb2RlbCI6InVuc2xvdGgvUXdlbjMuOC0yN0ItR0dVRiIsImNob2ljZXMiOltdLCJ1c2FnZSI6eyJwcm9tcHRfdG9rZW5zIjo5LCJjb21wbGV0aW9uX3Rva2VucyI6MzAsInRvdGFsX3Rva2VucyI6MzksInByb21wdF90b2tlbnNfZGV0YWlscyI6eyJjYWNoZWRfdG9rZW5zIjowfX0sInRpbWluZ3MiOnsicHJvbXB0X24iOjksInByb21wdF9tcyI6MTgwLCJwcm9tcHRfcGVyX3Rva2VuX21zIjoyMCwicHJvbXB0X3Blcl9zZWNvbmQiOjUwLCJwcmVkaWN0ZWRfbiI6MzAsInByZWRpY3RlZF9tcyI6Njc3Ljc5Njg0NzAwMDAwMDEsInByZWRpY3RlZF9wZXJfdG9rZW5fbXMiOjIyLjU5MzIyODIzMzMzMzMzNSwicHJlZGljdGVkX3Blcl9zZWNvbmQiOjQ0LjI2MTA0OTgwMDk1OTAxNSwiY2FjaGVfbiI6MH19CgpkYXRhOiBbRE9ORV0KCg=="
+    }
+  ],
+  "metrics": {
+    "ttfbMs": 4.044035000000008,
+    "ttftMs": 205.11783299999996,
+    "firstReasoningMs": null,
+    "firstAnswerMs": 205.11783299999996,
+    "thinkingMs": null,
+    "totalMs": 861.210683,
+    "decodeMs": 656.09285,
+    "promptTokens": 9,
+    "outputTokens": 30,
+    "cachedTokens": 0,
+    "decodeTokPerSec": 44.201060871186144,
+    "tokensEstimated": false,
+    "endToEndTokPerSec": 34.83468167800236,
+    "charsPerSec": 265.20636522711686,
+    "reasoningChars": 0,
+    "answerChars": 174,
+    "chunks": 30,
+    "coalescedChunks": 0,
+    "interChunk": {
+      "meanMs": 22.623891379310347,
+      "medianMs": 22.496561000000042,
+      "p95Ms": 24.28195100000005,
+      "maxMs": 25.26002900000003
+    },
+    "finishReason": "stop",
+    "truncated": false,
+    "keepalives": 0,
+    "sawDone": true
+  },
+  "server": {
+    "timings": {
+      "promptN": 9,
+      "promptMs": 180,
+      "promptPerSecond": 50,
+      "predictedN": 30,
+      "predictedMs": 677.7968470000001,
+      "predictedPerSecond": 44.261049800959015,
+      "cacheN": 0
+    },
+    "monitor": {
+      "ttftMs": 202,
+      "tokPerSec": 44.26,
+      "promptTokPerSec": 50,
+      "durationMs": 856,
+      "decodeMs": 678,
+      "promptTokens": 9,
+      "completionTokens": 30,
+      "stopReason": "stop",
+      "status": "done"
+    }
+  }
+}

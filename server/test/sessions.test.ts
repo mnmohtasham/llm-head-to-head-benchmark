@@ -1,0 +1,485 @@
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
+import path from 'node:path';
+import { startMockServer, type RunningMock } from '@duel/mock';
+import {
+  computeClientMetrics,
+  expandEvents,
+  SseParser,
+  type MachineView,
+  type RunView,
+  type SessionStreamMessage,
+  type SessionSummary,
+  type SessionView,
+  type StoredSession,
+  type TextConfig,
+} from '@duel/shared';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { testApp } from './helpers';
+
+const LINUX_KEY = 'sk-unsloth-race-linux-00000000000000001';
+const MAC_KEY = 'sk-unsloth-race-mac-0000000000000000002';
+let linux: RunningMock;
+let mac: RunningMock;
+let ctx: Awaited<ReturnType<typeof testApp>>;
+let linuxId: string;
+let macId: string;
+
+async function control(mock: RunningMock, body: unknown) {
+  await fetch(`${mock.url}/__mock/config`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function addMachine(name: string, mock: RunningMock, apiKey: string): Promise<string> {
+  const created = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/machines',
+    payload: { name, baseUrl: mock.url, apiKey },
+  });
+  return created.json<MachineView>().id;
+}
+
+async function startSession(
+  machineIds: string[],
+  config: Partial<TextConfig> = {},
+): Promise<SessionView> {
+  const response = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/sessions',
+    payload: {
+      workload: 'text',
+      machineIds,
+      config: {
+        prompt: 'Why is the sky blue?',
+        maxTokens: 1024,
+        thinking: true,
+        reasoningEffort: null,
+        ...config,
+      },
+    },
+  });
+  expect(response.statusCode, response.body).toBe(201);
+  return response.json<SessionView>();
+}
+
+async function getSession(id: string): Promise<SessionView> {
+  return (await ctx.app.inject({ method: 'GET', url: `/api/sessions/${id}` })).json<SessionView>();
+}
+
+async function finished(id: string): Promise<SessionView> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const view = await getSession(id);
+    if (view.finishedAt) return view;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('the race did not finish');
+}
+
+function runOf(session: SessionView, machineId: string): RunView {
+  const run = session.rounds[0]?.runs.find((r) => r.machineId === machineId);
+  if (!run) throw new Error(`no run for ${machineId}`);
+  return run;
+}
+
+/** Runs one prompt on the Linux mock alone and returns its run. */
+async function single(config: Partial<TextConfig> = {}): Promise<RunView> {
+  const session = await finished((await startSession([linuxId], config)).id);
+  return runOf(session, linuxId);
+}
+
+async function monitorOf(mock: RunningMock, key: string) {
+  const response = await fetch(`${mock.url}/api/inference/monitor`, {
+    headers: { authorization: `Bearer ${key}` },
+  });
+  return (await response.json()) as { entries: Array<Record<string, unknown>> };
+}
+
+const FAST = { startupMs: 50, tokenMs: 3, jitterMs: 0, reasoningTokens: 8, answerTokens: 16 };
+
+beforeAll(async () => {
+  linux = await startMockServer({ profile: 'linux-cuda', apiKey: LINUX_KEY });
+  mac = await startMockServer({ profile: 'mac-mlx', apiKey: MAC_KEY });
+});
+afterAll(async () => {
+  await linux.close();
+  await mac.close();
+});
+beforeEach(async () => {
+  for (const mock of [linux, mac]) {
+    await fetch(`${mock.url}/__mock/reset`, { method: 'POST' });
+    await control(mock, { latencyMs: 0, stream: FAST });
+  }
+  ctx = await testApp({ runTimings: { idleTimeoutMs: 5000 } });
+  linuxId = await addMachine('Linux', linux, LINUX_KEY);
+  macId = await addMachine('Mac', mac, MAC_KEY);
+});
+afterEach(async () => {
+  await ctx.app.close();
+  await rm(ctx.dataDir, { recursive: true, force: true });
+});
+
+describe('a run on one machine', () => {
+  it('measures the time to first token within 20 ms of the mock’s startup delay', async () => {
+    await control(linux, { stream: { startupMs: 300 } });
+    const run = await single();
+    expect(run.state).toBe('done');
+    expect(run.client?.ttftMs).toBeGreaterThanOrEqual(300);
+    expect(run.client?.ttftMs).toBeLessThan(320);
+  });
+
+  it('agrees with Unsloth’s own decode speed within 10 percent, and finds its monitor row', async () => {
+    await control(linux, { stream: { tokenMs: 20, reasoningTokens: 20, answerTokens: 40 } });
+    const run = await single();
+    const client = run.client?.decodeTokPerSec ?? 0;
+    const server = run.server?.timings?.predictedPerSecond ?? 0;
+    expect(client).toBeGreaterThan(35);
+    expect(Math.abs(client - server) / server).toBeLessThan(0.1);
+    expect(run.server?.monitor).toMatchObject({ completionTokens: 60, stopReason: 'stop' });
+    expect(run.server?.monitor?.ttftMs).toBeLessThanOrEqual(run.client?.ttftMs ?? 0);
+  });
+
+  it('keeps thinking and answer apart, and records the model before and after', async () => {
+    const run = await single();
+    expect(run.reasoning.trim().split(/\s+/)).toHaveLength(8);
+    expect(run.answer.trim().split(/\s+/)).toHaveLength(16);
+    expect(run.client).toMatchObject({
+      outputTokens: 24,
+      finishReason: 'stop',
+      sawDone: true,
+      tokensEstimated: false,
+    });
+    expect(run.client?.thinkingMs).toBeGreaterThan(0);
+    expect(run).toMatchObject({
+      modelBefore: 'unsloth/Qwen3.8-27B-GGUF',
+      modelAfter: 'unsloth/Qwen3.8-27B-GGUF',
+      sendOffsetMs: 0,
+    });
+    expect(run.loopLagMs?.max).toBeGreaterThanOrEqual(0);
+  });
+
+  it('sends no thinking when it is off', async () => {
+    const run = await single({ thinking: false });
+    expect(run.reasoning).toBe('');
+    expect(run.client?.firstReasoningMs).toBeNull();
+    expect(run.client?.firstAnswerMs).toBe(run.client?.ttftMs);
+  });
+
+  it('ignores UI frames, counts keep-alives and flags a truncated prompt', async () => {
+    await control(linux, {
+      stream: { startupMs: 160, keepaliveEveryMs: 30, toolFrames: true, truncated: true },
+    });
+    const run = await single();
+    expect(run.state).toBe('done');
+    expect(run.client?.keepalives).toBeGreaterThanOrEqual(3);
+    expect(run.client?.truncated).toBe(true);
+    expect(run.answer).not.toContain('Searching');
+  });
+});
+
+describe('when a run goes wrong', () => {
+  it('stops a silent stream at the idle timeout', async () => {
+    await ctx.app.close();
+    ctx = await testApp({ dataDir: ctx.dataDir, runTimings: { idleTimeoutMs: 400 } });
+    await control(linux, { stream: { stallAfterTokens: 3 } });
+    const run = await single();
+    expect(run).toMatchObject({
+      state: 'failed',
+      error: expect.stringMatching(/sent nothing for 0\.4 s/),
+    });
+    expect(run.client?.chunks).toBe(3);
+  });
+
+  it('surfaces an error frame from Unsloth', async () => {
+    await control(linux, { stream: { errorAfterTokens: 3 } });
+    expect(await single()).toMatchObject({
+      state: 'failed',
+      error: 'Unsloth reported: Context size has been exceeded.',
+    });
+  });
+
+  it('explains a dropped connection', async () => {
+    await control(linux, { stream: { disconnectAfterTokens: 3 } });
+    const run = await single();
+    expect(run.state).toBe('failed');
+    expect(run.error).toMatch(/^The stream from 127\.0\.0\.1:\d+ broke after 3 chunks/);
+  });
+
+  it('says so when no model is loaded', async () => {
+    await fetch(`${linux.url}/api/inference/unload`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${LINUX_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model_path: 'unsloth/Qwen3.8-27B-GGUF' }),
+    });
+    const session = await finished((await startSession([linuxId])).id);
+    expect(session.state).toBe('failed');
+    expect(runOf(session, linuxId)).toMatchObject({
+      state: 'failed',
+      error: 'No model is loaded on Linux. Load one on the Models tab first.',
+    });
+  });
+
+  it('rejects an invalid request, an unknown machine and a machine picked twice', async () => {
+    const post = (payload: Record<string, unknown>) =>
+      ctx.app.inject({ method: 'POST', url: '/api/sessions', payload });
+    const config = { prompt: 'Hi', maxTokens: 10, thinking: true, reasoningEffort: null };
+    expect(
+      (
+        await post({
+          workload: 'text',
+          machineIds: [linuxId],
+          config: { ...config, prompt: ' ', maxTokens: 0 },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect((await post({ workload: 'text', machineIds: [], config })).statusCode).toBe(400);
+    expect(
+      (await post({ workload: 'text', machineIds: [linuxId, linuxId], config })).json(),
+    ).toMatchObject({ message: 'Pick each machine only once.' });
+    expect(
+      (
+        await post({
+          workload: 'text',
+          machineIds: ['0f0f0f0f-0000-4000-8000-000000000000'],
+          config,
+        })
+      ).statusCode,
+    ).toBe(404);
+  });
+});
+
+describe('a race between two machines', () => {
+  it('sends identical requests within 5 ms of each other, and the faster machine wins', async () => {
+    await control(linux, { stream: { tokenMs: 8, reasoningTokens: 10, answerTokens: 30 } });
+    await control(mac, { stream: { tokenMs: 20, reasoningTokens: 10, answerTokens: 30 } });
+    const session = await finished((await startSession([linuxId, macId])).id);
+    expect(session.state).toBe('done');
+    const round = session.rounds[0];
+    expect(round?.sendSkewMs).toBeGreaterThanOrEqual(0);
+    expect(round?.sendSkewMs).toBeLessThan(5);
+    const fast = runOf(session, linuxId);
+    const slow = runOf(session, macId);
+    expect([fast.state, slow.state]).toEqual(['done', 'done']);
+    expect(fast.client?.decodeTokPerSec ?? 0).toBeGreaterThan(slow.client?.decodeTokPerSec ?? 0);
+
+    // The same body everywhere except the model name and the cancel id.
+    const [a, b] = session.provenance.map((p) => p.request ?? {});
+    const strip = (body: Record<string, unknown>) => ({ ...body, model: '', cancel_id: '' });
+    expect(strip(a ?? {})).toEqual(strip(b ?? {}));
+    expect(session.provenance.map((p) => p.statusBefore?.quant)).toEqual(['Q4_K_M', 'Q4_K_M']);
+  });
+
+  it('keeps going when one machine dies mid-race, with partial numbers for the dead one', async () => {
+    const doomedKey = 'sk-unsloth-race-doomed-0000000000000003';
+    const doomed = await startMockServer({ profile: 'mac-mlx', apiKey: doomedKey });
+    await control(doomed, { latencyMs: 0, stream: { ...FAST, tokenMs: 30, answerTokens: 200 } });
+    await control(linux, { stream: { tokenMs: 10, answerTokens: 60 } });
+    const doomedId = await addMachine('Doomed', doomed, doomedKey);
+    const { id } = await startSession([linuxId, doomedId]);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    doomed.app.server.closeAllConnections();
+    await doomed.close();
+    const session = await finished(id);
+    expect(session.state).toBe('done');
+    expect(runOf(session, linuxId).state).toBe('done');
+    const dead = runOf(session, doomedId);
+    expect(dead.state).toBe('failed');
+    expect(dead.error).toMatch(/broke after \d+ chunks/);
+    expect(dead.client?.chunks).toBeGreaterThan(0);
+    expect(dead.client?.ttftMs).not.toBeNull();
+  });
+
+  it('cancels every machine, and both mocks stop generating', async () => {
+    for (const mock of [linux, mac]) {
+      await control(mock, { stream: { tokenMs: 40, answerTokens: 400 } });
+    }
+    const { id } = await startSession([linuxId, macId]);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const cancelled = (
+      await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` })
+    ).json<SessionView>();
+    expect(cancelled.state).toBe('cancelled');
+    expect(cancelled.rounds[0]?.runs.map((r) => r.state)).toEqual(['cancelled', 'cancelled']);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    for (const [mock, key] of [
+      [linux, LINUX_KEY],
+      [mac, MAC_KEY],
+    ] as const) {
+      const row = (await monitorOf(mock, key)).entries[0];
+      expect(row?.status).toBe('cancelled');
+      expect(Number(row?.completion_tokens)).toBeLessThan(400);
+    }
+  });
+
+  it('runs one race at a time', async () => {
+    await control(linux, { stream: { tokenMs: 30, answerTokens: 100 } });
+    const { id } = await startSession([linuxId]);
+    const second = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      payload: {
+        workload: 'text',
+        machineIds: [macId],
+        config: { prompt: 'Hi', maxTokens: 10, thinking: true, reasoningEffort: null },
+      },
+    });
+    expect(second.statusCode).toBe(409);
+    await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` });
+  });
+
+  it('fails only the machine that has no model, and still races the others', async () => {
+    await fetch(`${mac.url}/api/inference/unload`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MAC_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model_path: 'unsloth/Qwen3.8-27B-GGUF' }),
+    });
+    const session = await finished((await startSession([linuxId, macId])).id);
+    expect(session.state).toBe('done');
+    expect(runOf(session, linuxId).state).toBe('done');
+    expect(runOf(session, macId)).toMatchObject({
+      state: 'failed',
+      error: 'No model is loaded on Mac. Load one on the Models tab first.',
+    });
+  });
+});
+
+describe('saved races', () => {
+  it('survive a restart: listed, reopened whole, with raw events and without keys', async () => {
+    const { id } = await startSession([linuxId, macId]);
+    const done = await finished(id);
+    await ctx.app.close();
+    ctx = await testApp({ dataDir: ctx.dataDir });
+
+    const list = (await ctx.app.inject({ method: 'GET', url: '/api/sessions' })).json<{
+      sessions: SessionSummary[];
+    }>().sessions;
+    expect(list.map((s) => s.id)).toEqual([id]);
+    expect(list[0]?.machines.map((m) => [m.name, m.state])).toEqual([
+      ['Linux', 'done'],
+      ['Mac', 'done'],
+    ]);
+    const reopened = await getSession(id);
+    expect(reopened).toEqual(done);
+    expect(reopened.provenance.map((p) => p.statusBefore?.backend)).toEqual(['gguf', 'gguf']);
+
+    const text = await readFile(path.join(ctx.dataDir, 'sessions', `${id}.json`), 'utf8');
+    expect(text).not.toContain(LINUX_KEY);
+    expect(text).not.toContain(MAC_KEY);
+    const stored = JSON.parse(text) as StoredSession;
+    expect(stored.schemaVersion).toBe(1);
+    const run = stored.rounds[0]?.runs[0];
+    const raw = run?.raw;
+    expect(raw?.events.length).toBeGreaterThan(20);
+    // The raw events give back the same numbers.
+    const again = computeClientMetrics({
+      requestAt: 0,
+      headersAt: raw?.headersAtMs ?? null,
+      endAt: raw?.endAtMs ?? 0,
+      events: expandEvents(raw?.events ?? []),
+    });
+    expect(again.outputTokens).toBe(run?.client?.outputTokens);
+    expect(again.ttftMs).toBeCloseTo(run?.client?.ttftMs ?? 0, 1);
+  });
+
+  it('marks a race that was running when Model Duel stopped as interrupted', async () => {
+    const { id } = await startSession([linuxId]);
+    await finished(id);
+    const file = path.join(ctx.dataDir, 'sessions', `${id}.json`);
+    const stored = JSON.parse(await readFile(file, 'utf8')) as StoredSession;
+    stored.state = 'running';
+    stored.finishedAt = null;
+    const run = stored.rounds[0]?.runs[0];
+    if (run) {
+      run.finishedAt = null;
+      run.state = 'streaming';
+    }
+    await writeFile(file, JSON.stringify(stored));
+    await writeFile(path.join(ctx.dataDir, 'sessions', 'not-a-session.json'), '{');
+    await writeFile(
+      path.join(ctx.dataDir, 'sessions', '0f0f0f0f-0000-4000-8000-000000000000.json'),
+      '{ broken',
+    );
+    await ctx.app.close();
+    ctx = await testApp({ dataDir: ctx.dataDir });
+    const reopened = await getSession(id);
+    expect(reopened).toMatchObject({
+      state: 'interrupted',
+      error: 'Model Duel stopped before this race finished.',
+    });
+    expect(reopened.rounds[0]?.runs[0]?.state).toBe('failed');
+  });
+
+  it('deletes a finished race, but not a running one', async () => {
+    const { id } = await startSession([linuxId]);
+    const busy = await ctx.app.inject({ method: 'DELETE', url: `/api/sessions/${id}` });
+    expect(busy.statusCode).toBe(409);
+    await finished(id);
+    const gone = await ctx.app.inject({ method: 'DELETE', url: `/api/sessions/${id}` });
+    expect(gone.statusCode).toBe(204);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/sessions/${id}` })).statusCode).toBe(
+      404,
+    );
+    expect(
+      (await ctx.app.inject({ method: 'DELETE', url: `/api/sessions/${id}` })).statusCode,
+    ).toBe(404);
+  });
+});
+
+describe('the event stream to the browser', () => {
+  async function collect(url: string): Promise<SessionStreamMessage[]> {
+    const response = await fetch(url);
+    const reader = response.body!.getReader();
+    const parser = new SseParser();
+    const messages: SessionStreamMessage[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const message of parser.push(value, 0)) {
+        if (message.kind === 'data') {
+          messages.push(JSON.parse(message.data) as SessionStreamMessage);
+        }
+      }
+    }
+    return messages;
+  }
+
+  async function listen(): Promise<string> {
+    await ctx.app.listen({ port: 0, host: '127.0.0.1' });
+    return `http://127.0.0.1:${(ctx.app.server.address() as AddressInfo).port}`;
+  }
+
+  it('resumes from a snapshot mid-race, and the text adds up for every machine', async () => {
+    const base = await listen();
+    for (const mock of [linux, mac]) await control(mock, { stream: { tokenMs: 15 } });
+    const { id } = await startSession([linuxId, macId]);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const messages = await collect(`${base}/api/sessions/${id}/stream`);
+    const first = messages[0];
+    const last = messages[messages.length - 1];
+    expect(first?.type).toBe('snapshot');
+    expect(last?.type).toBe('finished');
+    if (first?.type !== 'snapshot' || last?.type !== 'finished') return;
+    // Joined mid-race: some text had already arrived.
+    const already = first.session.rounds[0]?.runs.map((r) => r.reasoning + r.answer) ?? [];
+    expect(already.some((text) => text.length > 0)).toBe(true);
+    expect(messages.filter((m) => m.type === 'run')).toHaveLength(2);
+
+    for (const machineId of [linuxId, macId]) {
+      let text = first.session.rounds[0]?.runs.find((r) => r.machineId === machineId);
+      let answer = text?.answer ?? '';
+      for (const message of messages) {
+        if (message.type === 'delta') {
+          answer += message.runs.find((r) => r.machineId === machineId)?.answer ?? '';
+        }
+      }
+      text = runOf(last.session, machineId);
+      expect(answer).toBe(text.answer);
+    }
+
+    const replay = await collect(`${base}/api/sessions/${id}/stream`);
+    expect(replay.map((m) => m.type)).toEqual(['snapshot', 'finished']);
+  });
+});

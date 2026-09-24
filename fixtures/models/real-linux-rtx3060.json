@@ -1,0 +1,626 @@
+{
+  "note": "Read-only answers from a real Unsloth Studio 2026.9.11 (Linux, RTX 3060 12 GB), recorded 2026-09-24. No model loaded. Paths are redacted by Unsloth for API-key callers; ref: ids are its opaque handles.",
+  "local": {
+    "models_dir": "",
+    "hf_cache_dir": "",
+    "lmstudio_dirs": [],
+    "hermes_dirs": [],
+    "models": [
+      {
+        "id": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        "display_name": "Wan2.2-TI2V-5B-Diffusers",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        "active_cache": true,
+        "partial": false,
+        "model_format": null,
+        "updated_at": 1790243943.2350855,
+        "task": "text-to-video",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/Wan2.2-TI2V-5B-GGUF",
+        "display_name": "Wan2.2-TI2V-5B-GGUF",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/Wan2.2-TI2V-5B-GGUF",
+        "active_cache": true,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1790243940.959335,
+        "task": "text-to-video",
+        "audio_type": null
+      },
+      {
+        "id": "Qwen/Qwen-Image-2.1",
+        "display_name": "Qwen-Image-2.1",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "Qwen/Qwen-Image-2.1",
+        "active_cache": true,
+        "partial": true,
+        "model_format": null,
+        "updated_at": 1790243471.6090553,
+        "task": "text-to-image",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/Qwen-Image-2.1-FP8",
+        "display_name": "Qwen-Image-2.1-FP8",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/Qwen-Image-2.1-FP8",
+        "active_cache": true,
+        "partial": false,
+        "model_format": null,
+        "updated_at": 1790243427.2468052,
+        "task": "text-to-image",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/Qwen-Image-2.1-GGUF",
+        "display_name": "Qwen-Image-2.1-GGUF",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/Qwen-Image-2.1-GGUF",
+        "active_cache": true,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1790160844.4808896,
+        "task": null,
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/FLUX.2-klein-9B-GGUF",
+        "display_name": "FLUX.2-klein-9B-GGUF",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/FLUX.2-klein-9B-GGUF",
+        "active_cache": true,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1790001881.0572753,
+        "task": "text-to-image",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/gemma-4-12B-it-qat-GGUF",
+        "display_name": "gemma-4-12B-it-qat-GGUF",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/gemma-4-12B-it-qat-GGUF",
+        "active_cache": true,
+        "partial": true,
+        "model_format": null,
+        "updated_at": 1789027210.2465723,
+        "task": null,
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/Qwen3.8-27B-GGUF",
+        "display_name": "Qwen3.8-27B-GGUF",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/Qwen3.8-27B-GGUF",
+        "active_cache": true,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1788339449.8315957,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/FLUX.2-klein-9B",
+        "display_name": "FLUX.2-klein-9B",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/FLUX.2-klein-9B",
+        "active_cache": true,
+        "partial": false,
+        "model_format": null,
+        "updated_at": 1787749529.2406862,
+        "task": "text-to-image",
+        "audio_type": null
+      },
+      {
+        "id": "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit",
+        "display_name": "gemma-4-E4B-it-unsloth-bnb-4bit",
+        "path": "",
+        "source": "hf_cache",
+        "model_id": "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit",
+        "active_cache": true,
+        "partial": false,
+        "model_format": null,
+        "updated_at": 1787657960.0733333,
+        "task": null,
+        "audio_type": null
+      },
+      {
+        "id": "ref:3c3631f60334214aae815fe78f74bf34",
+        "display_name": "Qwen3.8-27B-GGUF",
+        "path": "",
+        "source": "lmstudio",
+        "model_id": "lmstudio-community/Qwen3.8-27B-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1786806322.3963642,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "ref:3c3631f60334214aae815fe78f74bf34",
+        "display_name": "Qwen3.8-27B-GGUF",
+        "path": "",
+        "source": "custom",
+        "model_id": "lmstudio-community/Qwen3.8-27B-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1786806322.3963642,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "ref:0b4edcd1fe5da20edb1011d1d8bc4059",
+        "display_name": "Ornith-1.0-9B-GGUF",
+        "path": "",
+        "source": "lmstudio",
+        "model_id": "deepreinforce-ai/Ornith-1.0-9B-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1783060013.0923514,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "ref:0b4edcd1fe5da20edb1011d1d8bc4059",
+        "display_name": "Ornith-1.0-9B-GGUF",
+        "path": "",
+        "source": "custom",
+        "model_id": "deepreinforce-ai/Ornith-1.0-9B-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1783060013.0923514,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "ref:4d85c81aaa754b96017a556a135dc815",
+        "display_name": "gemma-4-12B-it-QAT-GGUF",
+        "path": "",
+        "source": "lmstudio",
+        "model_id": "lmstudio-community/gemma-4-12B-it-QAT-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1781504521.1831493,
+        "task": "text-generation",
+        "audio_type": null
+      },
+      {
+        "id": "ref:4d85c81aaa754b96017a556a135dc815",
+        "display_name": "gemma-4-12B-it-QAT-GGUF",
+        "path": "",
+        "source": "custom",
+        "model_id": "lmstudio-community/gemma-4-12B-it-QAT-GGUF",
+        "active_cache": null,
+        "partial": false,
+        "model_format": "gguf",
+        "updated_at": 1781504521.1831493,
+        "task": "text-generation",
+        "audio_type": null
+      }
+    ]
+  },
+  "v1Models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "unsloth/Qwen-Image-2.1-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "quant": "Q4_K_M",
+        "display_name": "Qwen-Image-2.1-GGUF"
+      },
+      {
+        "id": "unsloth/Qwen3.8-27B-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "quant": "UD-IQ2_XXS",
+        "display_name": "Qwen3.8-27B-GGUF"
+      },
+      {
+        "id": "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "display_name": "gemma-4-E4B-it-unsloth-bnb-4bit"
+      },
+      {
+        "id": "lmstudio-community/Qwen3.8-27B-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "quant": "Q4_K_M",
+        "display_name": "Qwen3.8-27B-GGUF"
+      },
+      {
+        "id": "deepreinforce-ai/Ornith-1.0-9B-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "quant": "Q4_K_M",
+        "display_name": "Ornith-1.0-9B-GGUF"
+      },
+      {
+        "id": "lmstudio-community/gemma-4-12B-it-QAT-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "loaded": false,
+        "quant": "Q4_0",
+        "display_name": "gemma-4-12B-it-QAT-GGUF"
+      },
+      {
+        "id": "unsloth/FLUX.2-klein-9B-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "task": "text-to-image",
+        "loaded": false,
+        "quant": "Q4_K_M",
+        "display_name": "FLUX.2-klein-9B-GGUF"
+      },
+      {
+        "id": "unsloth/Wan2.2-TI2V-5B-GGUF",
+        "object": "model",
+        "created": 1790282272,
+        "owned_by": "unsloth-studio",
+        "task": "text-to-video",
+        "loaded": false,
+        "quant": "Q8_0",
+        "display_name": "Wan2.2-TI2V-5B-GGUF"
+      }
+    ]
+  },
+  "status": {
+    "is_vision": false,
+    "is_diffusion": false,
+    "diffusion_requested_ngl": null,
+    "is_audio": false,
+    "audio_type": null,
+    "has_audio_input": false,
+    "has_video_input": false,
+    "requires_trust_remote_code": false,
+    "context_length": null,
+    "max_context_length": null,
+    "native_context_length": null,
+    "context_length_enforced": null,
+    "supports_reasoning": false,
+    "reasoning_style": "enable_thinking",
+    "reasoning_effort_levels": [],
+    "reasoning_always_on": false,
+    "reasoning_budget": -1,
+    "reasoning_budget_message": "",
+    "requested_reasoning_budget": -1,
+    "requested_reasoning_budget_message": "",
+    "supports_preserve_thinking": false,
+    "preserve_thinking_default": false,
+    "supports_tools": false,
+    "cache_type_kv": null,
+    "is_mlx": false,
+    "mlx_kv_bits": null,
+    "mlx_kv_bits_requested": null,
+    "chat_template_override": null,
+    "chat_template_override_reason": null,
+    "mlx_kv_quant_eligibility": null,
+    "mlx_kv_quant_reason": null,
+    "mlx_kv_quant_note": null,
+    "chat_template": null,
+    "speculative_type": null,
+    "spec_draft_n_max": null,
+    "tensor_parallel": false,
+    "disable_vision": false,
+    "vision_disabled_by_user": false,
+    "gpu_memory_mode": "auto",
+    "gpu_layers": -1,
+    "cpu_fallback_reason": null,
+    "mmproj_fallback_reason": null,
+    "n_cpu_moe": 0,
+    "tensor_split": null,
+    "n_layers": null,
+    "n_moe_layers": 0,
+    "gpu_ids": null,
+    "requested_gpu_ids": null,
+    "requested_parallel_slots": null,
+    "parallel_slots": null,
+    "requested_n_batch": null,
+    "requested_n_ubatch": null,
+    "requested_load_mode": null,
+    "requested_spec_draft_cache_type": null,
+    "requested_ctx_checkpoints": null,
+    "requested_cache_ram": null,
+    "requested_llama_extra_args": null,
+    "active_model": null,
+    "model_identifier": null,
+    "is_gguf": false,
+    "is_local_model": false,
+    "gguf_variant": null,
+    "memory_warning": null,
+    "loading": [],
+    "loaded": [],
+    "inference": null,
+    "requested_context_length": null,
+    "load_in_4bit": null,
+    "llama_cpp_supports_mtp": true,
+    "spec_drafter_kind": null,
+    "spec_fallback_reason": null,
+    "spec_fallback_binary_changed": null,
+    "spec_probe_retry_pending": null,
+    "spec_dflash_retry_pending": null,
+    "spec_dspark_sidecar_absent": null,
+    "tensor_parallel_dropped_by_arch_gate": null,
+    "gpu_placement_paravirtual": null,
+    "audio_probe_pending": false,
+    "diffusion_split_supported": null,
+    "llama_cpp_prebuilt_stale": false,
+    "llama_cpp_installed_tag": "b11139",
+    "llama_cpp_latest_tag": "b11139-mix-a6922cc"
+  },
+  "loadProgress": {
+    "phase": null,
+    "bytes_loaded": 0,
+    "bytes_total": 0,
+    "fraction": 0
+  },
+  "variants": {
+    "unsloth/Wan2.2-TI2V-5B-GGUF": {
+      "status": 200,
+      "body": {
+        "repo_id": "unsloth/Wan2.2-TI2V-5B-GGUF",
+        "variants": [
+          {
+            "filename": "Wan2.2-TI2V-5B-Q8_0.gguf",
+            "quant": "Q8_0",
+            "display_label": null,
+            "size_bytes": 5400179040,
+            "download_size_bytes": 5400179040,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": false,
+        "default_variant": "Q8_0",
+        "context_length": null,
+        "resolved_locally": false,
+        "dependencies_resolved": false,
+        "loadable_variants": null,
+        "loadable": null
+      }
+    },
+    "unsloth/Qwen-Image-2.1-GGUF": {
+      "status": 200,
+      "body": {
+        "repo_id": "unsloth/Qwen-Image-2.1-GGUF",
+        "variants": [
+          {
+            "filename": "qwen-image-2.1-Q8_0.gguf",
+            "quant": "Q8_0",
+            "display_label": null,
+            "size_bytes": 7640860384,
+            "download_size_bytes": 7640860384,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          },
+          {
+            "filename": "qwen-image-2.1-Q4_K_M.gguf",
+            "quant": "Q4_K_M",
+            "display_label": null,
+            "size_bytes": 4199565024,
+            "download_size_bytes": 4199565024,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": false,
+        "default_variant": "Q4_K_M",
+        "context_length": null,
+        "resolved_locally": false,
+        "dependencies_resolved": false,
+        "loadable_variants": null,
+        "loadable": null
+      }
+    },
+    "unsloth/FLUX.2-klein-9B-GGUF": {
+      "status": 200,
+      "body": {
+        "repo_id": "unsloth/FLUX.2-klein-9B-GGUF",
+        "variants": [
+          {
+            "filename": "flux-2-klein-9b-Q4_K_M.gguf",
+            "quant": "Q4_K_M",
+            "display_label": null,
+            "size_bytes": 5909829920,
+            "download_size_bytes": 5909829920,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": false,
+        "default_variant": "Q4_K_M",
+        "context_length": null,
+        "resolved_locally": false,
+        "dependencies_resolved": false,
+        "loadable_variants": null,
+        "loadable": null
+      }
+    },
+    "unsloth/gemma-4-12B-it-qat-GGUF": {
+      "status": 404,
+      "body": {
+        "detail": "No cached GGUF variants available while offline."
+      }
+    },
+    "unsloth/Qwen3.8-27B-GGUF": {
+      "status": 200,
+      "body": {
+        "repo_id": "unsloth/Qwen3.8-27B-GGUF",
+        "variants": [
+          {
+            "filename": "Qwen3.8-27B-UD-IQ2_XXS.gguf",
+            "quant": "UD-IQ2_XXS",
+            "display_label": null,
+            "size_bytes": 7266070528,
+            "download_size_bytes": 7266070528,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          },
+          {
+            "filename": "Qwen3.8-27B-UD-Q4_K_S.gguf",
+            "quant": "UD-Q4_K_S",
+            "display_label": null,
+            "size_bytes": 15358213024,
+            "download_size_bytes": 16285820512,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": false,
+            "update_available": false,
+            "partial": true,
+            "cleanable": false
+          }
+        ],
+        "has_vision": true,
+        "default_variant": "UD-IQ2_XXS",
+        "context_length": 262144,
+        "resolved_locally": false,
+        "dependencies_resolved": false,
+        "loadable_variants": null,
+        "loadable": null
+      }
+    },
+    "ref:3c3631f60334214aae815fe78f74bf34": {
+      "status": 200,
+      "body": {
+        "repo_id": "ref:3c3631f60334214aae815fe78f74bf34",
+        "variants": [
+          {
+            "filename": "Qwen3.8-27B-Q4_K_M.gguf",
+            "quant": "Q4_K_M",
+            "display_label": null,
+            "size_bytes": 16810714336,
+            "download_size_bytes": 16810714336,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": true,
+        "default_variant": "Q4_K_M",
+        "context_length": 262144,
+        "resolved_locally": true,
+        "dependencies_resolved": false,
+        "loadable_variants": [
+          "Q4_K_M",
+          "Qwen3.8-27B-Q4_K_M"
+        ],
+        "loadable": true
+      }
+    },
+    "ref:0b4edcd1fe5da20edb1011d1d8bc4059": {
+      "status": 200,
+      "body": {
+        "repo_id": "ref:0b4edcd1fe5da20edb1011d1d8bc4059",
+        "variants": [
+          {
+            "filename": "ornith-1.0-9b-Q4_K_M.gguf",
+            "quant": "Q4_K_M",
+            "display_label": null,
+            "size_bytes": 5629108704,
+            "download_size_bytes": 5629108704,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": false,
+        "default_variant": "Q4_K_M",
+        "context_length": 262144,
+        "resolved_locally": true,
+        "dependencies_resolved": false,
+        "loadable_variants": [
+          "Q4_K_M",
+          "ornith-1.0-9b-Q4_K_M"
+        ],
+        "loadable": true
+      }
+    },
+    "ref:4d85c81aaa754b96017a556a135dc815": {
+      "status": 200,
+      "body": {
+        "repo_id": "ref:4d85c81aaa754b96017a556a135dc815",
+        "variants": [
+          {
+            "filename": "gemma-4-12B-it-QAT-Q4_0.gguf",
+            "quant": "Q4_0",
+            "display_label": null,
+            "size_bytes": 6975878560,
+            "download_size_bytes": 6975878560,
+            "pending_drafter_filename": null,
+            "pending_drafter_size_bytes": 0,
+            "downloaded": true,
+            "update_available": false,
+            "partial": false,
+            "cleanable": false
+          }
+        ],
+        "has_vision": true,
+        "default_variant": "Q4_0",
+        "context_length": 262144,
+        "resolved_locally": true,
+        "dependencies_resolved": false,
+        "loadable_variants": [
+          "Q4_0",
+          "gemma-4-12B-it-QAT-Q4_0"
+        ],
+        "loadable": true
+      }
+    }
+  }
+}
