@@ -2,6 +2,8 @@ export * from './chat';
 export * from './compare';
 export * from './machines';
 export * from './models';
+export * from './preflight';
+export * from './presets';
 export * from './probe';
 export * from './secrets';
 export * from './session';

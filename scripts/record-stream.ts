@@ -16,9 +16,11 @@ import {
   chatRequestBody,
   computeClientMetrics,
   normalizeBaseUrl,
+  PREFILL_MODES,
   REASONING_EFFORTS,
   redactSecrets,
-  type ReasoningEffort,
+  textConfigSchema,
+  withNonce,
   type Timings,
 } from '@duel/shared';
 import { streamChatCompletion } from '../server/src/chat-stream';
@@ -41,6 +43,7 @@ const { values } = parseArgs({
     'max-tokens': { type: 'string', default: '600' },
     thinking: { type: 'string', default: 'on' },
     effort: { type: 'string' },
+    prefill: { type: 'string', default: 'warm' },
     name: { type: 'string' },
     out: { type: 'string', default: 'fixtures/streams' },
   },
@@ -93,13 +96,19 @@ const levels = before.status?.reasoningEffortLevels ?? [];
 if (effort !== null && levels.length > 0 && !levels.includes(effort)) {
   fail(`${model} accepts --effort ${levels.join(', ')}.`);
 }
-const request = {
+if (!(PREFILL_MODES as readonly string[]).includes(values.prefill)) {
+  fail(`--prefill must be one of ${PREFILL_MODES.join(', ')}.`);
+}
+const request = textConfigSchema.parse({
+  preset: 'custom',
   prompt: values.prompt,
   maxTokens: Number(values['max-tokens']),
   thinking: values.thinking !== 'off',
-  reasoningEffort: effort as ReasoningEffort | null,
-};
-const body = chatRequestBody(request, model, `record-${Date.now()}`);
+  reasoningEffort: effort,
+  prefill: values.prefill,
+});
+const nonce = request.prefill === 'cold' ? Date.now().toString(16) : null;
+const body = chatRequestBody(request, model, `record-${Date.now()}`, nonce);
 const reads: Array<{ t: number; b64: string }> = [];
 let requestAt = 0;
 const outcome = await streamChatCompletion(machine.baseUrl, machine.apiKey, body, {
@@ -112,7 +121,7 @@ requestAt = outcome.timeline.requestAt;
 const metrics = computeClientMetrics(outcome.timeline);
 const usage = [...outcome.timeline.events].reverse().find((e) => e.event.type === 'usage')?.event;
 const timings: Timings | null = usage?.type === 'usage' ? usage.timings : null;
-const monitor = await readMonitorRow(machine, request.prompt);
+const monitor = await readMonitorRow(machine, withNonce(request.prompt, nonce));
 
 const name = (values.name ?? machine.name)
   .toLowerCase()

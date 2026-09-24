@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PRESET_IDS, withNonce } from './presets';
 import { detailOf } from './probe';
 import type { SseMessage } from './sse';
 
@@ -383,21 +384,55 @@ export function thinkingMissing(thinkingRequested: boolean, metrics: ClientMetri
   return thinkingRequested && metrics.reasoningChars === 0 && metrics.answerChars > 0;
 }
 
-/** What a text run asks every machine for. */
-export const textConfigSchema = z.object({
-  prompt: z.string().trim().min(1, 'Write a prompt.').max(200_000, 'That prompt is too long.'),
-  maxTokens: z
+/** Every sampling field, always sent, so server defaults can never differ between machines. */
+export const samplingSchema = z.object({
+  temperature: z
     .number()
-    .int('Use a whole number of tokens.')
-    .min(1, 'Allow at least 1 token.')
-    .max(131_072, 'Use at most 131,072 tokens.'),
-  thinking: z.boolean(),
-  reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
+    .min(0, 'Temperature starts at 0.')
+    .max(2, 'Keep temperature at 2 or less.')
+    .default(0.6),
+  topP: z.number().gt(0, 'Top-p must be above 0.').max(1, 'Top-p is at most 1.').default(0.95),
+  topK: z.number().int('Top-k is a whole number.').min(0).max(1000).default(20),
+  minP: z.number().min(0).max(1, 'Min-p is at most 1.').default(0),
+  repetitionPenalty: z
+    .number()
+    .min(0.5)
+    .max(2, 'Keep the repetition penalty at 2 or less.')
+    .default(1),
+  /** Sent only with cold prefill, where it also turns llama.cpp's prompt cache off. */
+  seed: z.number().int('The seed is a whole number.').min(0).max(2_147_483_647).default(42),
 });
-export type TextConfig = z.infer<typeof textConfigSchema>;
+export type Sampling = z.infer<typeof samplingSchema>;
+export const DEFAULT_SAMPLING: Sampling = samplingSchema.parse({});
 
-/** Sampling sent on every run until phase 6 makes it adjustable. */
-export const DEFAULT_SAMPLING = { temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0 } as const;
+/**
+ * Cold prefill puts a fresh nonce at the start of every round's prompt and sends a fixed seed, so
+ * no machine can reuse a cached prompt. Warm sends the same prompt every round and no seed.
+ */
+export const PREFILL_MODES = ['cold', 'warm'] as const;
+export type PrefillMode = (typeof PREFILL_MODES)[number];
+
+/** What a text run asks every machine for. */
+export const textConfigSchema = z
+  .object({
+    preset: z.enum(PRESET_IDS).default('custom'),
+    /** The prompt for `custom`; the server fills in the preset's prompt for the others. */
+    prompt: z.string().trim().max(200_000, 'That prompt is too long.').default(''),
+    maxTokens: z
+      .number()
+      .int('Use a whole number of tokens.')
+      .min(1, 'Allow at least 1 token.')
+      .max(131_072, 'Use at most 131,072 tokens.'),
+    thinking: z.boolean(),
+    reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
+    prefill: z.enum(PREFILL_MODES).default('cold'),
+    sampling: samplingSchema.prefault({}),
+  })
+  .refine((config) => config.preset !== 'custom' || config.prompt.length > 0, {
+    message: 'Write a prompt.',
+    path: ['prompt'],
+  });
+export type TextConfig = z.infer<typeof textConfigSchema>;
 
 /** `queued` waits for its turn when machines run one after another. */
 export type RunState = 'starting' | 'queued' | 'streaming' | 'done' | 'failed' | 'cancelled';
@@ -445,21 +480,36 @@ export interface RunView {
   rtt: RttResult | null;
 }
 
-/** The request body for one run. The sampling is fixed and always sent. */
+/**
+ * The request body for one run. Every sampling field is sent. With cold prefill the round's nonce
+ * starts the message and the seed is sent; with warm prefill neither is. Machines in a round get
+ * the same body apart from `model`.
+ */
 export function chatRequestBody(
-  run: Pick<TextConfig, 'prompt' | 'maxTokens' | 'thinking' | 'reasoningEffort'>,
+  config: Pick<
+    TextConfig,
+    'prompt' | 'maxTokens' | 'thinking' | 'reasoningEffort' | 'prefill' | 'sampling'
+  >,
   model: string,
   cancelId: string,
+  nonce: string | null = null,
 ): Record<string, unknown> {
+  const s = config.sampling;
+  const cold = config.prefill === 'cold';
   return {
     model,
-    messages: [{ role: 'user', content: run.prompt }],
+    messages: [{ role: 'user', content: withNonce(config.prompt, cold ? nonce : null) }],
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: run.maxTokens,
-    enable_thinking: run.thinking,
-    ...(run.reasoningEffort ? { reasoning_effort: run.reasoningEffort } : {}),
-    ...DEFAULT_SAMPLING,
+    max_tokens: config.maxTokens,
+    enable_thinking: config.thinking,
+    ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort } : {}),
+    temperature: s.temperature,
+    top_p: s.topP,
+    top_k: s.topK,
+    min_p: s.minP,
+    repetition_penalty: s.repetitionPenalty,
+    ...(cold ? { seed: s.seed } : {}),
     cancel_id: cancelId,
   };
 }

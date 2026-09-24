@@ -1,13 +1,14 @@
 # Model Duel v2: build plan
 
-Status: draft v2.4, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.5, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
 v2.2 adds what phase 3 measured on two real machines: the streaming details in section 2.3, the
 client and server agreement in section 4.1, and the per-run connection in section 8.
 v2.3 records the session file, the stream messages and the measured send skew from phase 4, in
-sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5.
+sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5. v2.5
+records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5.
 
 ## 0. Decisions so far
 
@@ -337,10 +338,17 @@ on Apple.
 6. Prefill mode. Warm: same prompt every round, no seed, cache allowed on both. Cold (default): a random
    nonce line is prepended to the user message each round and a fixed seed is sent, so llama.cpp's cache is
    off by the seed and MLX's cache is defeated by the nonce. `cache_n` and `cached_tokens` are shown either
-   way, so a cache hit is always visible.
+   way, so a cache hit is always visible. Measured in phase 6 on the RTX machine with the 8K preset: cold
+   rounds reported 0 cached tokens and took 15.3 to 15.7 s to the first token; warm rounds 2 and 3 reused
+   7,543 of 7,547 prompt tokens and took 285 and 258 ms. As built, a run counts as a cache hit above 64
+   cached tokens, so a chat template (about 30 tokens) never triggers the flag. The nonce line is the same
+   in every round (only the nonce changes), and all machines in a round get the same nonce and the same
+   `cancel_id`, so their bodies differ only in `model`.
 7. Output-length confound: ratio headlines only on TTFT, tok/s, characters per second and processing time.
    Totals are shown next to token counts. Optional fixed-length mode: `max_tokens = N` with a prompt that
-   always overruns it; `stop_reason` must be `length` on both sides or the round is flagged.
+   always overruns it; `stop_reason` must be `length` on both sides or the round is flagged. As built it is
+   a preset: a request for an essay of at least 3,000 words. Endless-counting prompts do not work: the model
+   counted to ten and stopped, and asked to write out 5,000 numbers it declined after 56 tokens.
 8. RTT: three round trips before each round, shown per machine. As built in phase 5 they are TCP handshakes
    to the Unsloth port, not `GET /api/health` on a keep-alive socket: Unsloth's HTTP answers on a reused
    connection stall for about 40 ms (Nagle's algorithm meeting delayed ACKs), measured with curl and undici
@@ -354,7 +362,11 @@ on Apple.
 10. Timeouts: idle (no bytes) and total, both configurable. Cancel aborts the upstream socket. Settle delay
     between rounds. A failed side never stops the other.
 11. Context: request the same `max_seq_length` on both, read `context_length` back from status into the
-    report, abort the round if `context_truncated` appears.
+    report, abort the round if `context_truncated` appears. As built, pre-flight has each machine count the
+    exact prompt with `POST /v1/chat/count_tokens` (verified on Unsloth 2026.9.11: it answers
+    `{input_tokens, model}`) and refuses a race whose prompt plus `max_tokens` does not fit a context. A
+    `context_truncated` that still arrives stops the round and the session, because every later round would
+    be cut the same way.
 12. Provenance per session: Unsloth version, llama.cpp version, backend (GGUF or MLX), model id, quant,
     context length, `n_parallel`, speculative decoding method and drafter, KV cache type, GPU memory mode,
     STT and image engine and device, GPU inventory, the `/api/system` snapshot, the exact request
@@ -369,7 +381,10 @@ on Apple.
 15. Decoding path: `speculative_type` is sent explicitly and identically at load, `off` by default for
     benchmarks; `auto` can be tested as a labelled variant. Pre-flight compares the engaged speculative
     method, KV cache type, backend (GGUF or MLX) and GPU memory mode across machines, and a
-    `memory_warning` blocks the run.
+    `memory_warning` blocks the run. As built, differences of model, quant, backend, context length,
+    speculative method, KV cache type and GPU memory mode are warnings the user must accept with "Race
+    anyway"; a machine that cannot race, a prompt that does not fit, a memory warning and thinking asked of
+    a model that cannot think are errors.
 
 ## 6. Controller API (server to browser)
 

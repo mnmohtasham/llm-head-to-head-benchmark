@@ -7,6 +7,7 @@ import {
   expandEvents,
   SseParser,
   type MachineView,
+  type PreflightResult,
   type RunPlan,
   type RunView,
   type SessionStreamMessage,
@@ -70,6 +71,28 @@ async function startSession(
   expect(response.statusCode, response.body).toBe(201);
   return response.json<SessionView>();
 }
+
+function sessionPayload(
+  machineIds: string[],
+  config: Partial<TextConfig> = {},
+  plan: Partial<RunPlan> = {},
+): Record<string, unknown> {
+  return {
+    workload: 'text',
+    machineIds,
+    config: {
+      prompt: 'Why is the sky blue?',
+      maxTokens: 1024,
+      thinking: true,
+      reasoningEffort: null,
+      ...config,
+    },
+    plan: { ...ONE_ROUND, ...plan },
+  };
+}
+
+const post = (payload: Record<string, unknown>) =>
+  ctx.app.inject({ method: 'POST', url: '/api/sessions', payload });
 
 async function getSession(id: string): Promise<SessionView> {
   return (await ctx.app.inject({ method: 'GET', url: `/api/sessions/${id}` })).json<SessionView>();
@@ -174,15 +197,28 @@ describe('a run on one machine', () => {
     expect(run.client?.firstAnswerMs).toBe(run.client?.ttftMs);
   });
 
-  it('ignores UI frames, counts keep-alives and flags a truncated prompt', async () => {
+  it('ignores UI frames and counts keep-alives', async () => {
     await control(linux, {
-      stream: { startupMs: 160, keepaliveEveryMs: 30, toolFrames: true, truncated: true },
+      stream: { startupMs: 160, keepaliveEveryMs: 30, toolFrames: true },
     });
     const run = await single();
     expect(run.state).toBe('done');
     expect(run.client?.keepalives).toBeGreaterThanOrEqual(3);
-    expect(run.client?.truncated).toBe(true);
     expect(run.answer).not.toContain('Searching');
+  });
+
+  it('stops the race when Unsloth cuts the prompt to fit the context', async () => {
+    await control(linux, { stream: { truncated: true, tokenMs: 20 } });
+    const session = await finished((await startSession([linuxId, macId], {}, { rounds: 3 })).id);
+    expect(session.state).toBe('failed');
+    expect(session.error).toMatch(/^Unsloth cut the prompt on Linux to fit its context/);
+    expect(session.rounds).toHaveLength(1);
+    expect(runOf(session, linuxId)).toMatchObject({
+      state: 'failed',
+      error: 'Unsloth cut the prompt to fit the context.',
+    });
+    expect(runOf(session, macId).error).toBe('Stopped because Unsloth cut the prompt on Linux.');
+    expect(session.rounds[0]?.flags.map((f) => f.kind)).toContain('truncated');
   });
 });
 
@@ -214,17 +250,18 @@ describe('when a run goes wrong', () => {
     expect(run.error).toMatch(/^The stream from 127\.0\.0\.1:\d+ broke after 3 chunks/);
   });
 
-  it('says so when no model is loaded', async () => {
+  it('will not start on a machine with no model: pre-flight says why', async () => {
     await fetch(`${linux.url}/api/inference/unload`, {
       method: 'POST',
       headers: { authorization: `Bearer ${LINUX_KEY}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model_path: 'unsloth/Qwen3.8-27B-GGUF' }),
     });
-    const session = await finished((await startSession([linuxId])).id);
-    expect(session.state).toBe('failed');
-    expect(runOf(session, linuxId)).toMatchObject({
-      state: 'failed',
-      error: 'No model is loaded on Linux. Load one on the Models tab first.',
+    const response = await post(sessionPayload([linuxId, macId]));
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: 'preflight',
+      message: 'No model is loaded on Linux. Load one on the Models tab.',
+      issues: [{ level: 'error', code: 'no-model', machineId: linuxId }],
     });
   });
 
@@ -271,9 +308,9 @@ describe('a race between two machines', () => {
     expect([fast.state, slow.state]).toEqual(['done', 'done']);
     expect(fast.client?.decodeTokPerSec ?? 0).toBeGreaterThan(slow.client?.decodeTokPerSec ?? 0);
 
-    // The same body everywhere except the model name and the cancel id.
+    // The same body everywhere except the model name.
     const [a, b] = session.provenance.map((p) => p.request ?? {});
-    const strip = (body: Record<string, unknown>) => ({ ...body, model: '', cancel_id: '' });
+    const strip = (body: Record<string, unknown>) => ({ ...body, model: '' });
     expect(strip(a ?? {})).toEqual(strip(b ?? {}));
     expect(session.provenance.map((p) => p.statusBefore?.quant)).toEqual(['Q4_K_M', 'Q4_K_M']);
   });
@@ -337,19 +374,121 @@ describe('a race between two machines', () => {
     await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` });
   });
 
-  it('fails only the machine that has no model, and still races the others', async () => {
-    await fetch(`${mac.url}/api/inference/unload`, {
+  it('needs racing anyway when pre-flight warns, and then races', async () => {
+    await fetch(`${linux.url}/api/inference/load`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${MAC_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model_path: 'unsloth/Qwen3.8-27B-GGUF' }),
+      headers: { authorization: `Bearer ${LINUX_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model_path: 'unsloth/Qwen3.8-27B-GGUF',
+        gguf_variant: 'UD-IQ2_XXS',
+        max_seq_length: 0,
+      }),
     });
-    const session = await finished((await startSession([linuxId, macId])).id);
-    expect(session.state).toBe('done');
-    expect(runOf(session, linuxId).state).toBe('done');
-    expect(runOf(session, macId)).toMatchObject({
-      state: 'failed',
-      error: 'No model is loaded on Mac. Load one on the Models tab first.',
+    const refused = await post(sessionPayload([linuxId, macId]));
+    expect(refused.statusCode).toBe(409);
+    const body = refused.json<{ error: string; issues: Array<{ level: string; code: string }> }>();
+    expect(body.error).toBe('preflight_warnings');
+    expect(body.issues.map((i) => `${i.level}:${i.code}`)).toContain('warning:quant');
+    expect(body.issues.every((i) => i.level === 'warning')).toBe(true);
+    const accepted = await post({ ...sessionPayload([linuxId, macId]), acknowledgeWarnings: true });
+    expect(accepted.statusCode).toBe(201);
+    await finished(accepted.json<SessionView>().id);
+  });
+});
+
+describe('pre-flight and presets', () => {
+  it('counts the prompt on each machine and stops one that does not fit the context', async () => {
+    await fetch(`${linux.url}/api/inference/load`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${LINUX_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model_path: 'unsloth/Qwen3.8-27B-GGUF',
+        gguf_variant: 'Q4_K_M',
+        max_seq_length: 4096,
+      }),
     });
+    const check = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/preflight',
+      payload: {
+        machineIds: [linuxId, macId],
+        config: { preset: 'long-8k', maxTokens: 256, thinking: false, reasoningEffort: null },
+      },
+    });
+    const result = check.json<PreflightResult>();
+    expect(result.promptWords).toBeGreaterThan(6000);
+    // The nonce line adds a few words to what the machines count.
+    expect(result.promptTokens[linuxId]).toBeGreaterThan(result.promptWords);
+    expect(result.issues.filter((i) => i.level === 'error')).toEqual([
+      expect.objectContaining({ code: 'no-fit', machineId: linuxId }),
+    ]);
+    const start = await post(
+      sessionPayload([linuxId, macId], { preset: 'long-8k', prompt: '', maxTokens: 256 }),
+    );
+    expect(start.statusCode).toBe(400);
+  });
+
+  it('lists the presets with their sizes', async () => {
+    const { presets } = (await ctx.app.inject({ method: 'GET', url: '/api/presets' })).json<{
+      presets: Array<{ id: string; words: number; preview: string }>;
+    }>();
+    expect(presets.map((p) => p.id)).toEqual([
+      'short',
+      'long-8k',
+      'long-32k',
+      'puzzle',
+      'code',
+      'fixed-length',
+    ]);
+    const long = presets.find((p) => p.id === 'long-32k');
+    expect(long?.words).toBeGreaterThan(25_000);
+    expect(long?.preview).toContain('Summarize the argument of the text above');
+  });
+
+  it('warm prefill reuses the cache from round two; cold never does, on either kind of machine', async () => {
+    const run = async (prefill: 'warm' | 'cold') =>
+      finished(
+        (
+          await startSession(
+            [linuxId, macId],
+            { preset: 'long-8k', prompt: '', maxTokens: 40, thinking: false, prefill },
+            { rounds: 3 },
+          )
+        ).id,
+      );
+    const warm = await run('warm');
+    const cachedWarm = warm.rounds.map((round) =>
+      round.runs.map((r) => r.client?.cachedTokens ?? 0),
+    );
+    expect(cachedWarm[0]).toEqual([0, 0]);
+    for (const round of cachedWarm.slice(1))
+      for (const cached of round) expect(cached).toBeGreaterThan(64);
+    expect(warm.rounds[1]?.flags.map((f) => f.kind)).toEqual(['cache', 'cache']);
+
+    const cold = await run('cold');
+    for (const round of cold.rounds) {
+      expect(round.nonce).toMatch(/^[0-9a-f]{12}$/);
+      // The fixed start of the nonce line can match, like a chat template: under the threshold.
+      for (const run of round.runs) expect(run.client?.cachedTokens ?? 0).toBeLessThan(64);
+      expect(round.flags.filter((f) => f.kind === 'cache')).toEqual([]);
+    }
+    expect(new Set(cold.rounds.map((round) => round.nonce)).size).toBe(3);
+    // The seed goes out with cold prefill only.
+    expect(cold.provenance[0]?.request?.seed).toBe(42);
+    expect(warm.provenance[0]?.request?.seed).toBeUndefined();
+  });
+
+  it('fixed length: every machine must stop on length, or the round is flagged', async () => {
+    const fixed = { preset: 'fixed-length' as const, prompt: '', maxTokens: 10, thinking: false };
+    const even = await finished((await startSession([linuxId, macId], fixed)).id);
+    expect(even.rounds[0]?.runs.map((r) => r.client?.finishReason)).toEqual(['length', 'length']);
+    expect(even.rounds[0]?.flags).toEqual([]);
+
+    await control(mac, { stream: { answerTokens: 5 } });
+    const uneven = await finished((await startSession([linuxId, macId], fixed)).id);
+    expect(uneven.rounds[0]?.flags).toEqual([
+      expect.objectContaining({ kind: 'length', machineId: macId }),
+    ]);
   });
 });
 
@@ -376,7 +515,7 @@ describe('saved races', () => {
     expect(text).not.toContain(LINUX_KEY);
     expect(text).not.toContain(MAC_KEY);
     const stored = JSON.parse(text) as StoredSession;
-    expect(stored.schemaVersion).toBe(2);
+    expect(stored.schemaVersion).toBe(3);
     const run = stored.rounds[0]?.runs[0];
     const raw = run?.raw;
     expect(raw?.events.length).toBeGreaterThan(20);
@@ -571,7 +710,7 @@ describe('rounds', () => {
     await ctx.app.close();
     ctx = await testApp({ dataDir: ctx.dataDir });
     const view = await getSession(original.id);
-    expect(view.schemaVersion).toBe(2);
+    expect(view.schemaVersion).toBe(3);
     expect(view.plan).toEqual({ rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' });
     expect(view.warmup).toBeNull();
     expect(view.rounds).toHaveLength(1);
