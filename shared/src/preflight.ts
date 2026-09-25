@@ -2,6 +2,7 @@ import type { TextConfig } from './chat';
 import type { ModelStatus } from './models';
 import { backendLabel, speculativeOn } from './session';
 import { STT_MODELS, type SttStatus, type TranscribeConfig } from './transcribe';
+import { imageModelReady, imageSettingsLine, type ImageConfig, type ImageStatus } from './images';
 
 /** What pre-flight knows about one machine just before a race. */
 export interface PreflightMachine {
@@ -17,8 +18,8 @@ export interface PreflightMachine {
 }
 
 export interface PreflightIssue {
-  /** Errors stop a race; warnings need the user to race anyway on purpose. */
-  level: 'error' | 'warning';
+  /** Errors stop a race; warnings need the user to race anyway on purpose; notes only inform. */
+  level: 'error' | 'warning' | 'note';
   code:
     | 'unreachable'
     | 'loading'
@@ -38,7 +39,13 @@ export interface PreflightIssue {
     | 'no-stt'
     | 'stt-engine'
     | 'stt-model'
-    | 'stt-download';
+    | 'stt-download'
+    | 'no-image'
+    | 'image-download'
+    | 'image-busy'
+    | 'image-settings'
+    | 'image-speed'
+    | 'handoff';
   machineId: string | null;
   text: string;
 }
@@ -248,6 +255,120 @@ export function transcribePreflightIssues(
       .map((m) => `${m.name} uses ${served.get(m.id)}`)
       .join(', ');
     warning('stt-engine', null, `The machines use different engines: ${each}.`);
+  }
+  return issues;
+}
+
+/** What pre-flight knows about one machine before an image race. */
+export interface ImagePreflightMachine {
+  id: string;
+  name: string;
+  /** Why the machine could not be read at all. */
+  error: string | null;
+  /** A chat model load is running. */
+  loading: boolean;
+  /** The image status, or null with `imageError` when the routes are missing. */
+  image: ImageStatus | null;
+  imageError: string | null;
+  /** Whether the model's files are on disk; null when that could not be read. */
+  onDisk: { ok: boolean; detail: string } | null;
+  /** The chat model loaded now, which the image load will push out. */
+  chatModel: string | null;
+  /** Apple Silicon, CUDA, ROCm, or null when unknown. */
+  platform: string | null;
+}
+
+/**
+ * The checks before an image race. A missing file is an error, because loading it would start a
+ * download. Unloading the chat model is only a note: the tab exists to do that.
+ */
+export function imagePreflightIssues(
+  machines: readonly ImagePreflightMachine[],
+  config: ImageConfig,
+): PreflightIssue[] {
+  const issues: PreflightIssue[] = [];
+  const add =
+    (level: PreflightIssue['level']) =>
+    (code: PreflightIssue['code'], machineId: string | null, text: string) =>
+      issues.push({ level, code, machineId, text });
+  const error = add('error');
+  const warning = add('warning');
+  const note = add('note');
+  const usable: ImagePreflightMachine[] = [];
+  for (const m of machines) {
+    if (m.error) {
+      error('unreachable', m.id, `${m.name} is not answering: ${m.error}`);
+      continue;
+    }
+    if (m.loading) {
+      error('loading', m.id, `A model is loading on ${m.name}. Wait for it to finish.`);
+      continue;
+    }
+    if (!m.image) {
+      error(
+        'no-image',
+        m.id,
+        `${m.name} cannot generate images: ${m.imageError ?? 'no image routes'}.`,
+      );
+      continue;
+    }
+    if (!m.onDisk) {
+      warning(
+        'image-download',
+        m.id,
+        `Pre-flight could not check that ${config.model} is on ${m.name}'s disk. If it is not, loading it starts a download.`,
+      );
+    } else if (!m.onDisk.ok) {
+      error(
+        'image-download',
+        m.id,
+        `${m.onDisk.detail} Download it in Unsloth Studio first, so the race does not start a download.`,
+      );
+      continue;
+    }
+    if (m.image.loaded && !m.image.yours) {
+      warning(
+        'image-busy',
+        m.id,
+        `Another account's image model is loaded on ${m.name}. Loading this one replaces it.`,
+      );
+    }
+    usable.push(m);
+    if (m.chatModel) {
+      note(
+        'handoff',
+        m.id,
+        `Loading the image model unloads ${m.chatModel} on ${m.name}. ${config.restoreText ? 'Model Duel loads it again when the race ends.' : 'It stays unloaded after the race.'}`,
+      );
+    }
+  }
+  if (config.speedMode !== 'off') {
+    note(
+      'image-speed',
+      null,
+      `Speed mode ${config.speedMode} compiles the model during the first images, so a warm-up matters, and the pixels may differ from the "off" baseline.`,
+    );
+  }
+  if (usable.length < 2) return issues;
+  const ready = usable.filter((m) => m.image && imageModelReady(m.image, config));
+  if (ready.length === usable.length) {
+    const lines = ready.map((m) => imageSettingsLine(m.image as ImageStatus));
+    if (new Set(lines).size > 1) {
+      warning(
+        'image-settings',
+        null,
+        `The machines resolved the model differently: ${ready.map((m, i) => `${m.name} runs ${lines[i]}`).join('; ')}.`,
+      );
+    }
+  } else {
+    const platforms = new Set(usable.map((m) => m.platform).filter(Boolean));
+    if (platforms.size > 1) {
+      warning(
+        'image-settings',
+        null,
+        `The machines run on ${[...platforms].join(' and ')}, so Unsloth picks a different engine, precision or speed setting on each, and one seed gives different pixels. The report prints what each machine used.`,
+      );
+    }
   }
   return issues;
 }

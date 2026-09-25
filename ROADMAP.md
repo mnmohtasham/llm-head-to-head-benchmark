@@ -501,7 +501,9 @@ Automated tests
 - Unit: step rate and decode tail from progress timelines; eviction handling.
 - End-to-end, also the manual demo script: an image race on the mocks shows progress and both images.
 
-Real-machine script (prerequisite: the same image model and quant on both machines, open question 3)
+Real-machine script (prerequisite: the same image model and quant on both machines, open question 3. In
+phase 10 only pre-flight and the model list ran, on the RTX machine: a race unloads its chat model, which
+waits for Mani's go-ahead)
 1. Run three rounds at 1024 by 1024 with a fixed seed.
 2. Record the resolved settings of both machines in the phase record.
 

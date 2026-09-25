@@ -472,7 +472,7 @@ test.describe('the report', () => {
       schemaVersion: number;
       rounds: Array<{ runs: Array<{ raw: { events: unknown[] } }> }>;
     };
-    expect(json.schemaVersion).toBe(6);
+    expect(json.schemaVersion).toBe(7);
     expect(json.rounds).toHaveLength(2);
     expect(json.rounds[0]?.runs[0]?.raw.events.length).toBeGreaterThan(10);
     const csv = await exported('CSV');

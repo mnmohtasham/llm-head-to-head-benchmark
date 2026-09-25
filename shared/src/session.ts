@@ -17,14 +17,16 @@ import {
   type SttStatus,
   type TranscribeConfig,
 } from './transcribe';
+import { imageConfigSchema, imagePrompt, type ImageConfig, type ImageStatus } from './images';
 
 /**
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
  * full sampling and per-round nonce; version 4 telemetry; version 5 blind votes and each run's
- * token timeline; version 6 the transcription workload. Older files are migrated on read.
+ * token timeline; version 6 the transcription workload; version 7 the image workload. Older files
+ * are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 6;
+export const SESSION_SCHEMA_VERSION = 7;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -75,6 +77,7 @@ export const sessionRequestSchema = z.preprocess(
       config: transcribeConfigSchema,
       ...sessionRequestBase,
     }),
+    z.object({ workload: z.literal('image'), config: imageConfigSchema, ...sessionRequestBase }),
   ]),
 );
 
@@ -92,6 +95,11 @@ export const preflightRequestSchema = z.preprocess(
       machineIds: sessionRequestBase.machineIds,
       config: transcribeConfigSchema,
     }),
+    z.object({
+      workload: z.literal('image'),
+      machineIds: sessionRequestBase.machineIds,
+      config: imageConfigSchema,
+    }),
   ]),
 );
 export type PreflightRequest = z.infer<typeof preflightRequestSchema>;
@@ -100,7 +108,9 @@ export type Workload = SessionRequest['workload'];
 
 /** A workload and its settings; the rest of a session is the same for every workload. */
 export type WorkloadConfig =
-  { workload: 'text'; config: TextConfig } | { workload: 'transcribe'; config: TranscribeConfig };
+  | { workload: 'text'; config: TextConfig }
+  | { workload: 'transcribe'; config: TranscribeConfig }
+  | { workload: 'image'; config: ImageConfig };
 
 export type SessionState = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -127,6 +137,19 @@ export interface MachineProvenance {
   /** Speech-to-text status before and after, for transcription sessions. */
   sttBefore: SttStatus | null;
   sttAfter: SttStatus | null;
+  /** Image model status before and after, for image sessions. */
+  imageBefore: ImageStatus | null;
+  imageAfter: ImageStatus | null;
+  /** The chat model the image load pushed out, and whether it came back after the race. */
+  restore: RestoreOutcome | null;
+}
+
+export interface RestoreOutcome {
+  model: string;
+  quant: string | null;
+  state: 'loaded' | 'failed' | 'skipped';
+  error: string | null;
+  durationMs: number | null;
 }
 
 /** A blind vote on one round's two answers; the machines were hidden until it was cast. */
@@ -142,7 +165,7 @@ export interface Vote {
 export interface RoundFlag {
   /** The machine it concerns, or null for the whole round. */
   machineId: string | null;
-  kind: 'lag' | 'coalesced' | 'failed' | 'cache' | 'length' | 'truncated';
+  kind: 'lag' | 'coalesced' | 'failed' | 'cache' | 'length' | 'truncated' | 'split';
   text: string;
 }
 
@@ -165,7 +188,15 @@ export interface RoundView {
 }
 
 export type SessionPhase =
-  'preparing' | 'baseline' | 'loading' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
+  | 'preparing'
+  | 'baseline'
+  | 'loading'
+  | 'restoring'
+  | 'warmup'
+  | 'rtt'
+  | 'running'
+  | 'settling'
+  | 'finished';
 
 export interface SessionProgress {
   phase: SessionPhase;
@@ -240,6 +271,9 @@ export interface SessionSummary {
     /** Transcription only: audio seconds per processing second, and the word error rate. */
     rtf: number | null;
     wer: number | null;
+    /** Image only: time for one image, and denoising steps per second. */
+    imageMs: number | null;
+    stepsPerSec: number | null;
   }>;
 }
 
@@ -324,12 +358,22 @@ export function migrateSession(value: StoredSession): StoredSession {
       timeline: run.timeline ?? null,
       requestedAtMs: run.requestedAtMs ?? null,
       transcription: run.transcription ?? null,
+      image: run.image ?? null,
     })),
   });
-  if (value.workload === 'transcribe') {
+  const provenance = (old.provenance ?? []).map((p) => ({
+    ...p,
+    sttBefore: p.sttBefore ?? null,
+    sttAfter: p.sttAfter ?? null,
+    imageBefore: p.imageBefore ?? null,
+    imageAfter: p.imageAfter ?? null,
+    restore: p.restore ?? null,
+  }));
+  if (value.workload === 'transcribe' || value.workload === 'image') {
     return {
       ...value,
       schemaVersion: SESSION_SCHEMA_VERSION,
+      provenance,
       rounds: value.rounds.map(round),
       warmup: value.warmup ? round(value.warmup) : null,
     };
@@ -338,11 +382,7 @@ export function migrateSession(value: StoredSession): StoredSession {
     ...value,
     workload: 'text',
     schemaVersion: SESSION_SCHEMA_VERSION,
-    provenance: (old.provenance ?? []).map((p) => ({
-      ...p,
-      sttBefore: p.sttBefore ?? null,
-      sttAfter: p.sttAfter ?? null,
-    })),
+    provenance,
     config: {
       ...(oldConfig as TextConfig),
       preset: oldConfig.preset ?? 'custom',
@@ -369,6 +409,21 @@ export function publicRun(run: RunView | StoredRun): RunView {
   if (!('raw' in run)) return run;
   const { raw: _raw, ...view } = run;
   return view;
+}
+
+/** A few words about an image session's prompt, model and size, for the results log. */
+export function imageLabel(config: ImageConfig): string {
+  const prompt = imagePrompt(config);
+  const model = config.model.split('/').pop() ?? config.model;
+  const quant = config.ggufFilename?.match(/(I?Q\d\w*|BF16|F16|F32)(?=\.gguf$)/i)?.[1];
+  return `Image "${prompt.length > 60 ? `${prompt.slice(0, 60).trimEnd()}…` : prompt}" with ${model}${quant ? ` ${quant}` : ''}, ${config.width}×${config.height}, ${config.steps} steps`;
+}
+
+/** The line the results log shows for a session. */
+export function sessionLabel(session: WorkloadConfig): string {
+  if (session.workload === 'text') return session.config.prompt.slice(0, 160);
+  if (session.workload === 'transcribe') return audioLabel(session.config);
+  return imageLabel(session.config);
 }
 
 /** A few words about a transcription session's audio and model, for the results log. */
@@ -399,9 +454,7 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
     finishedAt: session.finishedAt,
     state: session.state,
     workload: session.workload,
-    prompt: isTextSession(session)
-      ? session.config.prompt.slice(0, 160)
-      : audioLabel(session.config as TranscribeConfig),
+    prompt: sessionLabel(session),
     rounds: session.rounds.length,
     votes: labelVotes(session),
     machines: session.machines.map((machine) => {
@@ -424,6 +477,8 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
         decodeTokPerSec: pick((run) => run.client?.decodeTokPerSec),
         rtf: pick((run) => run.transcription?.rtf),
         wer: pick((run) => run.transcription?.wer?.wer),
+        imageMs: pick((run) => run.image?.totalMs),
+        stepsPerSec: pick((run) => run.image?.stepsPerSec),
       };
     }),
   };

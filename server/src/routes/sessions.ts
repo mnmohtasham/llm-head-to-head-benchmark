@@ -2,6 +2,7 @@ import {
   comparisonTable,
   hasErrors,
   hasWarnings,
+  imagePrompt,
   roundTable,
   tallyVotes,
   toCsv,
@@ -17,7 +18,14 @@ import { createReadStream } from 'node:fs';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
-import { runPreflight, runTranscribePreflight } from '../preflight';
+import { listImageModels, readImageStatus } from '../imagegen';
+import type { ImageStore } from '../imagestore';
+import {
+  platformName,
+  runImagePreflight,
+  runPreflight,
+  runTranscribePreflight,
+} from '../preflight';
 import { readSttStatus } from '../stt';
 import { presetViews, resolvePrompt } from '../presets';
 import type { SessionManager } from '../sessions';
@@ -60,13 +68,48 @@ export function registerSessionRoutes(
     sessions: SessionManager;
     isLoading: (machineId: string) => boolean;
     audio: AudioStore;
+    images: ImageStore;
   },
 ): void {
-  const { store, sessions, isLoading, audio } = deps;
+  const { store, sessions, isLoading, audio, images } = deps;
   const preflight = (machines: StoredMachine[], request: PreflightRequest) =>
     request.workload === 'text'
       ? runPreflight(machines, request.config, isLoading)
-      : runTranscribePreflight(machines, request.config, isLoading, audio);
+      : request.workload === 'transcribe'
+        ? runTranscribePreflight(machines, request.config, isLoading, audio)
+        : runImagePreflight(machines, request.config, isLoading, (id) =>
+            platformName(store.lastProbe(id)?.report ?? null),
+          );
+
+  /** A machine's image model status, and the image models on its disk. */
+  app.get<IdParams>('/api/machines/:id/image', async (request, reply) => {
+    const machine = store.get(request.params.id);
+    if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    const [status, models] = await Promise.all([
+      readImageStatus(machine),
+      listImageModels(machine),
+    ]);
+    return {
+      machineId: machine.id,
+      status: status.status,
+      error: status.error,
+      models: models.models,
+      modelsError: models.error,
+    };
+  });
+
+  /** The image one run of a race made, as Model Duel kept it. */
+  app.get<{ Params: { id: string; runId: string } }>(
+    '/api/sessions/:id/images/:runId',
+    async (request, reply) => {
+      const png = await images.load(request.params.id, request.params.runId);
+      if (!png) return fail(reply, 404, 'not_found', 'There is no image for that run.');
+      return reply
+        .header('content-type', 'image/png')
+        .header('cache-control', 'private, max-age=31536000, immutable')
+        .send(png);
+    },
+  );
 
   /** Audio for a transcription race, sent as the raw file; stored by its hash. */
   app.post<{ Querystring: { name?: string } }>(
@@ -159,7 +202,12 @@ export function registerSessionRoutes(
             ...parsed.data,
             config: { ...parsed.data.config, prompt: resolvePrompt(parsed.data.config) },
           }
-        : parsed.data,
+        : parsed.data.workload === 'image'
+          ? {
+              ...parsed.data,
+              config: { ...parsed.data.config, prompt: imagePrompt(parsed.data.config) },
+            }
+          : parsed.data,
     );
     request.log.info({ sessionId: view.id, machines: parsed.data.machineIds }, 'race started');
     return reply.code(201).send(view);

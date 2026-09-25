@@ -1,8 +1,11 @@
 import {
+  imagePreflightIssues,
   newNonce,
   preflightIssues,
   transcribePreflightIssues,
   withNonce,
+  type ImageConfig,
+  type ImagePreflightMachine,
   type PreflightMachine,
   type PreflightResult,
   type SttPreflightMachine,
@@ -10,6 +13,7 @@ import {
   type TranscribeConfig,
 } from '@duel/shared';
 import { describeAudio, type AudioStore } from './audio';
+import { imageFilesOnDisk, readImageStatus } from './imagegen';
 import { readModelStatus } from './models';
 import { readSttStatus } from './stt';
 import { resolvePrompt } from './presets';
@@ -122,5 +126,72 @@ export async function runTranscribePreflight(
     promptTokens: {},
     promptWords: 0,
     audio: typeof audio === 'string' ? null : audio,
+  };
+}
+
+/** Apple Silicon, CUDA or ROCm, from a machine's last probe, for spotting platform differences. */
+export function platformName(
+  report: { platform: { os: string | null; backend: string | null } } | null,
+): string | null {
+  const text = `${report?.platform.os ?? ''} ${report?.platform.backend ?? ''}`.toLowerCase();
+  if (/mps|mlx|metal|macos|darwin/.test(text)) return 'Apple Silicon';
+  if (/rocm|hip/.test(text)) return 'ROCm';
+  if (/cuda/.test(text)) return 'CUDA';
+  return null;
+}
+
+/**
+ * The checks for an image race: each machine's image routes and resident model, whether the
+ * files are on disk, and which chat model the load will push out.
+ */
+export async function runImagePreflight(
+  machines: readonly StoredMachine[],
+  config: ImageConfig,
+  isLoading: (machineId: string) => boolean,
+  platformOf: (machineId: string) => string | null,
+): Promise<PreflightResult> {
+  const entries: ImagePreflightMachine[] = await Promise.all(
+    machines.map(async (machine) => {
+      const base = { id: machine.id, name: machine.name, platform: platformOf(machine.id) };
+      if (isLoading(machine.id)) {
+        return {
+          ...base,
+          error: null,
+          loading: true,
+          image: null,
+          imageError: null,
+          onDisk: null,
+          chatModel: null,
+        };
+      }
+      const [image, chat] = await Promise.all([readImageStatus(machine), readModelStatus(machine)]);
+      if (!image.status && chat.error !== null) {
+        return {
+          ...base,
+          error: chat.error,
+          loading: false,
+          image: null,
+          imageError: image.error,
+          onDisk: null,
+          chatModel: null,
+        };
+      }
+      const onDisk = image.status ? await imageFilesOnDisk(machine, config) : null;
+      return {
+        ...base,
+        error: null,
+        loading: false,
+        image: image.status,
+        imageError: image.error,
+        onDisk,
+        chatModel: chat.status?.activeModel ?? null,
+      };
+    }),
+  );
+  return {
+    checkedAt: new Date().toISOString(),
+    issues: imagePreflightIssues(entries, config),
+    promptTokens: {},
+    promptWords: 0,
   };
 }

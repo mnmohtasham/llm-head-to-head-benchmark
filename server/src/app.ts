@@ -6,6 +6,8 @@ import fastifyStatic from '@fastify/static';
 import type { ApiErrorBody } from '@duel/shared';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { AudioStore } from './audio';
+import { ImageStore } from './imagestore';
+import { chatRestorer } from './restore';
 import { DEFAULT_LOAD_TIMINGS, LoadManager, type LoadTimings } from './loads';
 import { ModelCatalog } from './models';
 import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
@@ -110,6 +112,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   registerTelemetryRoutes(app, { store, telemetry });
   const audio = new AudioStore(options.dataDir);
+  const images = new ImageStore(options.dataDir);
   // Audio arrives as the raw file; the upload route alone raises the size limit.
   app.addContentTypeParser(
     /^(application\/octet-stream|audio\/|video\/)/,
@@ -126,12 +129,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     isLoading: (machineId) => loads.isActive(machineId),
     telemetry,
     audio,
+    images,
+    restoreText: chatRestorer({ catalog, loads, store }),
   });
   registerSessionRoutes(app, {
     store,
     sessions,
     isLoading: (id) => loads.isActive(id),
     audio,
+    images,
   });
   app.addHook('onClose', async () => {
     await loads.close();

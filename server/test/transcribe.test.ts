@@ -267,7 +267,7 @@ describe('a transcription race', () => {
     expect(view.rounds[0]?.runs[0]?.state).toBe('cancelled');
   });
 
-  it('exports the report with the LibriSpeech credit, and saves the session as version 6', async () => {
+  it('exports the report with the LibriSpeech credit, and saves the session as version 7', async () => {
     const session = await race([linuxId, macId]);
     const md = await ctx.app.inject({
       method: 'GET',
@@ -286,7 +286,7 @@ describe('a transcription race', () => {
     const stored = JSON.parse(
       await readFile(path.join(ctx.dataDir, 'sessions', `${session.id}.json`), 'utf8'),
     ) as StoredSession;
-    expect(stored.schemaVersion).toBe(6);
+    expect(stored.schemaVersion).toBe(7);
     expect(stored.workload).toBe('transcribe');
     const text = JSON.stringify(stored);
     expect(text).not.toContain(LINUX_KEY);

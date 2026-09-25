@@ -220,6 +220,7 @@ export function PreflightPanel({
   error,
   errors,
   warnings,
+  notes = [],
   clear,
   details,
   raceAnyway,
@@ -232,6 +233,8 @@ export function PreflightPanel({
   error: string | null;
   errors: PreflightIssue[];
   warnings: PreflightIssue[];
+  /** Things to know that never hold a race back. */
+  notes?: PreflightIssue[];
   /** What an all-clear means for this workload. */
   clear: string;
   details: string;
@@ -280,6 +283,15 @@ export function PreflightPanel({
               ))}
             </ul>
           ) : null}
+          {notes.length > 0 ? (
+            <ul className="start-check" data-testid="race-notes">
+              {notes.map((issue) => (
+                <li key={issue.text} className="field-hint">
+                  {issue.text}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {warnings.length > 0 && errors.length === 0 ? (
             <label className="check-line">
               <input
@@ -304,15 +316,21 @@ function progressText(workload: Workload, progress: SessionProgress, rounds: num
     case 'preparing':
       return workload === 'transcribe'
         ? 'Reading each machine’s speech-to-text…'
-        : 'Reading each machine’s model…';
+        : workload === 'image'
+          ? 'Reading each machine’s image and chat models…'
+          : 'Reading each machine’s model…';
     case 'baseline':
       return 'Reading idle power before the first request…';
     case 'loading':
-      return `Loading the speech model where it is not in memory${round ? `, before ${round}` : ''}. Load time is kept apart.`;
+      return `Loading the ${workload === 'image' ? 'image' : 'speech'} model where it is not in memory${round ? `, before ${round}` : ''}. Load time is kept apart.`;
+    case 'restoring':
+      return 'Loading each machine’s chat model again…';
     case 'warmup':
       return workload === 'transcribe'
         ? 'Warm-up: five seconds of audio per machine, not counted.'
-        : 'Warm-up: one short request per machine, not counted.';
+        : workload === 'image'
+          ? 'Warm-up: a two-step image per machine, not counted.'
+          : 'Warm-up: one short request per machine, not counted.';
     case 'rtt':
       return `Measuring round trips before ${round}.`;
     case 'settling':

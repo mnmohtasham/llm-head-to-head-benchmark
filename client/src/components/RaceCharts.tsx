@@ -152,6 +152,46 @@ function TelemetryChart({ session, round }: { session: SessionView; round: Round
   );
 }
 
+/** Denoising steps against time, one line per machine, from the progress readings. */
+function StepChart({ session, round }: { session: SessionView; round: RoundView }) {
+  const { options, data } = useMemo(() => {
+    const series: Array<Array<[number, number | null]>> = [];
+    const specs: uPlot.Series[] = [{}];
+    for (const machine of session.machines) {
+      const run = round.runs.find((r) => r.machineId === machine.id);
+      const image = run?.image ?? null;
+      const points: Array<[number, number | null]> = (image?.timeline ?? []).map(([ms, step]) => [
+        Math.round(ms) / 1000,
+        step,
+      ]);
+      // The line ends when the answer came, after the decode.
+      if (image && points.length > 0) points.push([image.totalMs / 1000, image.totalSteps]);
+      series.push(points);
+      specs.push({ label: machine.name, stroke: machine.color, width: 2, spanGaps: true });
+    }
+    const options: Omit<uPlot.Options, 'width'> = {
+      height: 240,
+      series: specs,
+      scales: { x: { time: false } },
+      axes: [
+        { ...AXIS, label: 'seconds since the request', labelSize: 18 },
+        { ...AXIS, label: 'denoising step', labelSize: 18 },
+      ],
+      legend: { show: true },
+      cursor: { drag: { x: false, y: false } },
+    };
+    return { options, data: alignSeries(series) };
+  }, [session, round]);
+  return (
+    <Chart
+      options={options}
+      data={data}
+      label="Denoising steps against time for each machine"
+      testId="step-chart"
+    />
+  );
+}
+
 /**
  * Where each machine's time went in a transcription: sending the file, then processing it, on
  * one scale so the bars compare directly.
@@ -213,6 +253,8 @@ export function RaceCharts({
       </h2>
       {session.workload === 'transcribe' ? (
         <PhaseBars session={session} round={round} />
+      ) : session.workload === 'image' ? (
+        <StepChart session={session} round={round} />
       ) : (
         <RaceChart session={session} round={round} />
       )}

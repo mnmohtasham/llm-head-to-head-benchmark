@@ -6,6 +6,7 @@ import type { Page } from './components/TopBar';
 import { MachinesPage } from './pages/MachinesPage';
 import { ModelsPage } from './pages/ModelsPage';
 import { TextPage } from './pages/TextPage';
+import { ImagePage } from './pages/ImagePage';
 import { TranscribePage } from './pages/TranscribePage';
 
 let nextLogId = 1;
@@ -16,6 +17,8 @@ function pageFromHash(): Page {
     return 'text';
   if (window.location.hash === '#/transcribe' || window.location.hash.startsWith('#/transcribe/'))
     return 'transcribe';
+  if (window.location.hash === '#/image' || window.location.hash.startsWith('#/image/'))
+    return 'image';
   return 'machines';
 }
 
@@ -24,6 +27,7 @@ const TITLES: Record<Page, string> = {
   models: 'Models',
   text: 'Text',
   transcribe: 'Transcribe',
+  image: 'Image',
 };
 
 export function App() {
@@ -89,6 +93,8 @@ export function App() {
         <TextPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'transcribe' ? (
         <TranscribePage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+      ) : page === 'image' ? (
+        <ImagePage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'models' ? (
         <ModelsPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : (

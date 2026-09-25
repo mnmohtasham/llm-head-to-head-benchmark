@@ -2,6 +2,8 @@ export * from './blind';
 export * from './chat';
 export * from './compare';
 export * from './format';
+export * from './images';
+export * from './imagesteps';
 export * from './machines';
 export * from './models';
 export * from './preflight';

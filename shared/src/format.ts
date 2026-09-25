@@ -26,5 +26,7 @@ export function formatValue(value: number | null, unit: MetricUnit): string {
   if (unit === 'tok/J') return `${value.toFixed(3)} tok/J`;
   if (unit === '%') return value < 10 ? `${value.toFixed(1)}%` : `${Math.round(value)}%`;
   if (unit === '×') return `${value.toFixed(1)}×`;
+  // Slow machines manage well under one step a second, so two decimals.
+  if (unit === 'steps/s') return `${value.toFixed(2)} steps/s`;
   return formatRate(value, unit);
 }

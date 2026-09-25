@@ -2,7 +2,18 @@ import type { RunView } from './chat';
 
 export type Better = 'lower' | 'higher' | null;
 export type MetricUnit =
-  'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text' | 'J' | 'tok/J' | 'W' | '%' | 'GB' | '×';
+  | 'ms'
+  | 'tok/s'
+  | 'chars/s'
+  | 'tokens'
+  | 'text'
+  | 'J'
+  | 'tok/J'
+  | 'W'
+  | '%'
+  | 'GB'
+  | '×'
+  | 'steps/s';
 
 export interface MetricSpec {
   key: string;
@@ -216,6 +227,77 @@ export const TRANSCRIBE_METRICS: readonly MetricSpec[] = [
   },
 ];
 
-export function metricsFor(workload: 'text' | 'transcribe'): readonly MetricSpec[] {
-  return workload === 'transcribe' ? TRANSCRIBE_METRICS : METRICS;
+/** The metrics of an image race, one image per run. */
+export const IMAGE_METRICS: readonly MetricSpec[] = [
+  {
+    key: 'imageTime',
+    label: 'Time per image',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.image?.totalMs,
+  },
+  {
+    key: 'stepsPerSec',
+    label: 'Denoising speed',
+    unit: 'steps/s',
+    better: 'higher',
+    pick: (r) => r.image?.stepsPerSec,
+  },
+  {
+    key: 'firstStep',
+    label: 'Time to first step',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.image?.firstStepMs,
+  },
+  {
+    key: 'decodeTail',
+    label: 'Decode and save after the last step',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.image?.decodeTailMs,
+  },
+  {
+    key: 'load',
+    label: 'Model load time',
+    unit: 'ms',
+    better: null,
+    pick: (r) => r.image?.loadMs,
+  },
+  {
+    key: 'energyPerImage',
+    label: 'Energy per image, approx.',
+    unit: 'J',
+    better: 'lower',
+    pick: (r) => r.telemetry?.energy.energyJ,
+  },
+  {
+    key: 'power',
+    label: 'Mean power while denoising, approx.',
+    unit: 'W',
+    better: null,
+    pick: (r) => r.telemetry?.energy.meanDecodePowerW,
+  },
+  {
+    key: 'peakGpu',
+    label: 'Peak GPU',
+    unit: '%',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakGpuPct,
+  },
+  {
+    key: 'peakMemory',
+    label: 'Peak GPU memory or RAM',
+    unit: 'GB',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakVramGb ?? r.telemetry?.energy.peakRamGb,
+  },
+];
+
+export function metricsFor(workload: 'text' | 'transcribe' | 'image'): readonly MetricSpec[] {
+  return workload === 'transcribe'
+    ? TRANSCRIBE_METRICS
+    : workload === 'image'
+      ? IMAGE_METRICS
+      : METRICS;
 }
