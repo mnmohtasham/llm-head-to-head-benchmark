@@ -1,8 +1,8 @@
 /**
- * Starts two fake Unsloth machines and the production build of Model Duel, each in its own
- * process, so every feature can be tried without a GPU.
+ * Starts two fake Unsloth machines, three fake cloud providers and the production build of Model
+ * Duel, each in its own process, so every feature can be tried without a GPU or a cloud key.
  *
- *   npm run demo                      build, then start with both machines added and probed
+ *   npm run demo                      build, then start with the machines and cloud models added
  *   tsx scripts/demo.ts --no-seed     start with an empty machine list (used by the browser tests)
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -12,7 +12,14 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEMO_AGENT_PORTS, DEMO_APP_PORT, DEMO_MACHINES, DEMO_MOCK_PORTS } from './demo-config';
+import {
+  DEMO_AGENT_PORTS,
+  DEMO_APP_PORT,
+  DEMO_CLOUD_PORTS,
+  DEMO_CLOUDS,
+  DEMO_MACHINES,
+  DEMO_MOCK_PORTS,
+} from './demo-config';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -21,6 +28,7 @@ const { values } = parseArgs({
     port: { type: 'string', default: String(DEMO_APP_PORT) },
     'mock-ports': { type: 'string', default: DEMO_MOCK_PORTS.join(',') },
     'agent-ports': { type: 'string', default: DEMO_AGENT_PORTS.join(',') },
+    'cloud-ports': { type: 'string', default: DEMO_CLOUD_PORTS.join(',') },
     'data-dir': { type: 'string', default: '.demo-data' },
     'no-seed': { type: 'boolean', default: false },
     'keep-data': { type: 'boolean', default: false },
@@ -30,6 +38,7 @@ const { values } = parseArgs({
 const appPort = Number(values.port);
 const mockPorts = values['mock-ports'].split(',').map(Number);
 const agentPorts = values['agent-ports'].split(',').map(Number);
+const cloudPorts = values['cloud-ports'].split(',').map(Number);
 const dataDir = path.resolve(root, values['data-dir']);
 const children: ChildProcess[] = [];
 let stopping = false;
@@ -140,6 +149,16 @@ DEMO_MACHINES.forEach((machine, index) => {
     '--no-telemetry',
   ]);
 });
+DEMO_CLOUDS.forEach((cloud, index) => {
+  start(`mock ${cloud.provider}`, 'mock/dist/index.js', [
+    '--cloud',
+    cloud.provider,
+    '--port',
+    String(cloudPorts[index]),
+    '--api-key',
+    cloud.apiKey,
+  ]);
+});
 start('app', 'server/dist/index.js', ['--port', String(appPort), '--data-dir', dataDir]);
 
 await Promise.all(
@@ -151,6 +170,23 @@ await Promise.all(
   agentPorts.map((port, index) =>
     waitFor(`http://127.0.0.1:${port}/health`, `agent ${DEMO_MACHINES[index]?.profile}`),
   ),
+);
+await Promise.all(
+  cloudPorts.map(async (port, index) => {
+    const cloud = DEMO_CLOUDS[index];
+    const deadline = Date.now() + 20_000;
+    // A fake provider answers its model list only with its key, as the real ones do.
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://127.0.0.1:${port}/__mock/reset`, { method: 'POST' });
+        return;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    process.stderr.write(`[demo] mock ${cloud?.provider} did not start on port ${port}.\n`);
+    stopAll(1);
+  }),
 );
 const app = `http://127.0.0.1:${appPort}`;
 await waitFor(`${app}/api/health`, 'app');
@@ -170,6 +206,22 @@ if (!values['no-seed']) {
     })) as { id: string };
     await post(`${app}/api/machines/${created.id}/probe`);
   }
+  for (const [index, cloud] of DEMO_CLOUDS.entries()) {
+    if (existing.some((m) => m.name === cloud.name)) continue;
+    const baseUrl = `http://127.0.0.1:${cloudPorts[index]}`;
+    const { models } = (await post(`${app}/api/cloud/models`, {
+      provider: cloud.provider,
+      apiKey: cloud.apiKey,
+      baseUrl,
+    })) as { models: Array<{ id: string }> };
+    await post(`${app}/api/machines`, {
+      name: cloud.name,
+      baseUrl,
+      apiKey: cloud.apiKey,
+      color: cloud.color,
+      cloud: { provider: cloud.provider, model: models.find((m) => m.id === cloud.model) ?? null },
+    });
+  }
 }
 
 process.stdout.write(
@@ -179,6 +231,10 @@ process.stdout.write(
     ...DEMO_MACHINES.map(
       (m, i) =>
         `  ${m.name} (${m.profile}) at http://127.0.0.1:${mockPorts[i]}, key ${m.apiKey}; fake agent at 127.0.0.1:${agentPorts[i]}`,
+    ),
+    ...DEMO_CLOUDS.map(
+      (c, i) =>
+        `  ${c.name} (fake ${c.provider} API, ${c.model}) at http://127.0.0.1:${cloudPorts[i]}`,
     ),
     'Break a mock to see the error messages, for example a revoked key:',
     `  curl -X POST http://127.0.0.1:${mockPorts[1]}/__mock/config -H 'content-type: application/json' -d '{"rejectKey":true}'`,

@@ -1,4 +1,5 @@
 import type { TextConfig } from './chat';
+import { CLOUD_INFO, type CloudConfig } from './cloud';
 import type { AgentHealth, CommandConfig } from './commands';
 import type { ModelStatus } from './models';
 import { backendLabel, speculativeOn } from './session';
@@ -18,6 +19,8 @@ export interface PreflightMachine {
   tokenError: string | null;
   /** Requests the loaded model serves at once, from its status or llama-server's props. */
   slots?: number | null;
+  /** Set for a cloud reference model, which has no status, tokenizer or slots to check. */
+  cloud?: CloudConfig | null;
 }
 
 export interface PreflightIssue {
@@ -51,6 +54,8 @@ export interface PreflightIssue {
     | 'image-settings'
     | 'image-speed'
     | 'handoff'
+    | 'cloud'
+    | 'cloud-model'
     | 'no-agent'
     | 'agent'
     | 'template'
@@ -93,7 +98,38 @@ export function preflightIssues(
   const warning = (code: PreflightIssue['code'], machineId: string | null, text: string) =>
     issues.push({ level: 'warning', code, machineId, text });
 
+  const note = (code: PreflightIssue['code'], machineId: string | null, text: string) =>
+    issues.push({ level: 'note', code, machineId, text });
   for (const m of machines) {
+    if (m.cloud) {
+      const provider = CLOUD_INFO[m.cloud.provider].label;
+      const model = m.cloud.model;
+      if (!model) {
+        error(
+          'cloud-model',
+          m.id,
+          `Pick a ${provider} model for ${m.name} on the Machines screen.`,
+        );
+        continue;
+      }
+      if (model.maxOutput !== null && config.maxTokens > model.maxOutput) {
+        error(
+          'cloud-model',
+          m.id,
+          `${model.id} writes at most ${n(model.maxOutput)} tokens. Lower Max tokens to race ${m.name}.`,
+        );
+      }
+      if (config.thinking && model.thinking === 'none') {
+        note('cloud', m.id, `${model.id} does not think, so ${m.name} answers straight away.`);
+      } else if (!config.thinking && model.thinking === 'always') {
+        note(
+          'cloud',
+          m.id,
+          `${model.id} always thinks, so ${m.name} thinks with Thinking off too.`,
+        );
+      }
+      continue;
+    }
     const s = m.status;
     if (m.error) {
       error('unreachable', m.id, `${m.name} is not answering: ${m.error}`);
@@ -171,9 +207,20 @@ export function preflightIssues(
     }
   }
 
+  const clouds = machines.filter((m) => m.cloud?.model);
+  if (clouds.length > 0) {
+    const named = clouds.map(
+      (m) => `${m.name} (${CLOUD_INFO[m.cloud?.provider ?? 'openai'].label})`,
+    );
+    note(
+      'cloud',
+      null,
+      `${named.join(', ')} ${named.length === 1 ? 'is a cloud model' : 'are cloud models'}, raced as a reference: times include the internet and the provider's own queue, and each request is billed to the key.`,
+    );
+  }
   const loaded = machines.filter(
     (m): m is PreflightMachine & { status: ModelStatus } =>
-      !m.error && !m.loading && !!m.status?.activeModel,
+      !m.cloud && !m.error && !m.loading && !!m.status?.activeModel,
   );
   if (loaded.length < 2) return issues;
   const compare = (

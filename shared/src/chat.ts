@@ -1,3 +1,4 @@
+import type { CloudProvider } from './cloud';
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
 import type { RunEnergy, TelemetrySample } from './telemetry';
@@ -357,6 +358,14 @@ export function findMonitorRow(body: unknown, prompt: string, withinSec = 60): M
 export interface ServerMetrics {
   timings: Timings | null;
   monitor: MonitorRow | null;
+  /** A cloud provider's own account of the run: its usage, request id and processing time. */
+  cloud?: {
+    provider: CloudProvider;
+    requestId: string | null;
+    /** OpenAI's `openai-processing-ms` header; the others send none. */
+    processingMs: number | null;
+    usage: Record<string, unknown> | null;
+  } | null;
 }
 
 /** The thinking block is open while the model thinks and folds away at the first answer token. */

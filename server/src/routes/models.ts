@@ -30,6 +30,16 @@ export function registerModelRoutes(
   const { store, catalog, loads, timings } = deps;
 
   const statusView = async (machine: StoredMachine): Promise<MachineStatusView> => {
+    if (machine.cloud) {
+      // A cloud model has no Unsloth status; its model is the one chosen for it.
+      return {
+        machineId: machine.id,
+        status: null,
+        error: null,
+        job: null,
+        checkedAt: new Date().toISOString(),
+      };
+    }
     const { status, error } = await readModelStatus(machine);
     return {
       machineId: machine.id,

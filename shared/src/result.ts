@@ -115,6 +115,10 @@ export const resultSchema = z.object({
       index: z.number().int(),
       label: z.string(),
       color: z.string(),
+      /** `local` runs Unsloth on the user's machine; `cloud` is a provider's model, as a reference. */
+      kind: z.enum(['local', 'cloud']).optional(),
+      /** For a cloud model: the provider and model id. */
+      cloud: z.object({ provider: z.string(), model: z.string().nullable() }).nullable().optional(),
       hardware: z.object({
         os: z.string().nullable(),
         backend: z.string().nullable(),
@@ -203,6 +207,8 @@ export function canonicalJson(value: unknown): string {
 const HOME = /(\/home\/|\/Users\/|[A-Za-z]:\\Users\\)[^/\\\s"']+/g;
 const URL_OR_ADDRESS =
   /\bhttps?:\/\/[^\s"'<>)]+|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b|\[[0-9a-f:]+\](?::\d+)?/gi;
+/** API keys a provider might echo in an error, even masked. */
+const API_KEY = /\b(?:sk-(?:ant-|proj-|unsloth-)?[\w*.…-]{6,}|AIza[\w-]{20,})/g;
 const ABSOLUTE_PATH = /(?:^|(?<=[\s="'(]))(?:\/[\w.@+-]+){2,}/g;
 
 /**
@@ -211,6 +217,7 @@ const ABSOLUTE_PATH = /(?:^|(?<=[\s="'(]))(?:\/[\w.@+-]+){2,}/g;
  */
 export function redactText(text: string): string {
   return text
+    .replace(API_KEY, '<key>')
     .replace(URL_OR_ADDRESS, '<address>')
     .replace(HOME, '~')
     .replace(ABSOLUTE_PATH, (path) => `<path>/${path.split('/').pop() ?? ''}`);
@@ -327,6 +334,8 @@ export function buildResult(
         index: i,
         label: machine.name,
         color: machine.color,
+        kind: p?.cloud ? ('cloud' as const) : ('local' as const),
+        cloud: p?.cloud ? { provider: p.cloud.provider, model: p.cloud.model?.id ?? null } : null,
         hardware: {
           os: p?.platform.os ?? null,
           backend: p?.platform.backend ?? null,
@@ -406,7 +415,7 @@ export function resultJsonSchema(): Record<string, unknown> {
     $id: `urn:model-duel:schema:result:${RESULT_FORMAT_VERSION}`,
     title: 'Model Duel result',
     description:
-      'One benchmark race between machines running Unsloth Studio: settings, machines, every round and run with its measurements, and the statistics. See docs/result-format.md.',
+      'One benchmark race between machines running Unsloth Studio, and cloud models as references: settings, machines, every round and run with its measurements, and the statistics. See docs/result-format.md.',
     ...z.toJSONSchema(resultSchema),
   };
 }

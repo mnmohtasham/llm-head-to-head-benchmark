@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Twelve phases in four milestones. Each phase ends with a complete app that can be installed, run and
+- Fourteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 and 12 are `v1.1` and `v1.2`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 14 are `v1.1` to `v1.4`.
 
 ## Running a phase
 
@@ -90,6 +90,8 @@ flowchart LR
   P8 --> P10[10 Images]
   P6 --> P11[11 Throughput]
   P8 --> P12[12 Agent]
+  P8 --> P13[13 Results]
+  P6 --> P14[14 Cloud]
 ```
 
 ## Phase 1: Foundation and machines
@@ -663,6 +665,8 @@ Exit checklist
 | 10 | the chosen image model and quant downloaded |
 | 11 | nothing new |
 | 12 | ffmpeg, the source clip, the agent running |
+| 13 | nothing new |
+| 14 | nothing on the machines; an API key from each provider to race |
 
 ## Open questions and when they block
 
@@ -687,6 +691,8 @@ Exit checklist
 | Loading an image model evicts the chat model | 10 | explicit hand-off, optional reload afterwards |
 | Image settings resolve differently per platform | 10 | settings read back, printed, warned about |
 | The agent becomes a remote execution hole | 12 | allowlisted templates only, token, LAN only |
+| A cloud key leaks or reaches the wrong provider | 14 | kept like Unsloth keys, never in results or the browser, saved keys used only for their own provider |
+| A provider changes its API or model list | 14 | contracts in one module, fake providers copy them, errors shown in the provider's words |
 
 ## Phase record template
 

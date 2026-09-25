@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.12, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.13, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -13,7 +13,8 @@ records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 rec
 built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
 2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
-command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1.
+command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
+sections 2.7, 6 and 9.
 
 ## 0. Decisions so far
 
@@ -27,6 +28,7 @@ command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (p
 | Quality | Word error rate for transcription, blind vote for text, side-by-side for images. |
 | Concurrency | Single-stream latency is the core. A "parallel requests" mode is an optional later phase. |
 | Telemetry | Live GPU, CPU, RAM, power and temperature come from Unsloth's own routes. No agent is needed for phases 1 to 3. |
+| Cloud models | OpenAI, Anthropic and Google Gemini models join text races as references, never as machines (phase 14). |
 
 Telemetry means the live hardware readings in the panes of the reference tool: GPU %, GPU power in watts,
 CPU %, RAM used, GPU temperature. Unsloth Studio already collects these for its GPU monitor and serves them
@@ -265,6 +267,50 @@ are under `/api/inference/images/` only.
   middle of its request, on fresh connections (reused ones stall 40 ms), and the next poll starts only when
   the last one is done. The `backend` of the hardware route tells unified memory (`mps`, `mlx`) apart, where
   there is no VRAM to report.
+
+### 2.7 Cloud reference models
+
+Not Unsloth, but raced beside it on the Text tab. Contracts as documented by each provider and
+checked on 2026-09-25; `shared/src/cloud.ts` holds them and the fake providers in `mock/src/cloud.ts`
+copy them.
+
+- **Participants.** A cloud participant is a machine record with `cloud: {provider, model}`: its key
+  is `apiKey` and its API address `baseUrl` (https unless typed otherwise). The provider cannot change
+  after it is saved, and a saved key is used only for its own provider. `model` is chosen from the
+  provider's list and keeps what the model accepts: context window, output limit, `thinking`
+  (`always`, `optional`, `none`), the style of thinking control, effort levels and sampling fields.
+- **Model lists.** OpenAI `GET /v1/models` (Bearer key) lists ids only, so what a model accepts comes
+  from its family, and embedding, moderation, audio, realtime, image and video ids are dropped.
+  Anthropic `GET /v1/models?limit=1000` (`x-api-key`, `anthropic-version: 2023-06-01`, pages by
+  `after_id`) gives display names, token limits and capabilities: thinking types (adaptive, enabled)
+  and effort levels. Gemini `GET /v1beta/models?pageSize=1000` (`x-goog-api-key`, pages by
+  `pageToken`) gives limits, generation methods and `thinking`; only `generateContent` models that are
+  not TTS, live, image, embedding and similar are kept.
+- **Requests.** OpenAI: `POST /v1/responses` with `stream`, `store: false`, `max_output_tokens`,
+  `reasoning {effort, summary: auto}`; temperature and top-p only for non-reasoning models or effort
+  `none`; no seed or top-k. `minimal` is only for the first GPT-5 models. Anthropic: `POST /v1/messages`
+  with `max_tokens`, `thinking {type: adaptive, display: summarized}` or `{type: disabled}` (or
+  `enabled` on older models, with a budget of 60 percent of Max tokens and at least 1024, sent only
+  when Max tokens is above 1024), `output_config.effort`, and no sampling fields, which newer models refuse. Gemini:
+  `POST /v1beta/models/{id}:streamGenerateContent?alt=sse` with `maxOutputTokens`,
+  `thinkingConfig {includeThoughts, thinkingLevel}` on Gemini 3 (which cannot stop thinking) or
+  `thinkingBudget` on 2.5, sampling only before Gemini 3, and the seed with cold prefill.
+- **Effort.** With Thinking on, the level asked for, or the nearest one the model takes. With Thinking
+  off, the lowest (`none`, `minimal` or `low`), so a model that always thinks thinks as little as it can.
+- **Streams.** Each provider's events become Unsloth's: OpenAI `response.output_text.delta`,
+  `response.reasoning_summary_text.delta`, `response.completed` or `response.incomplete` with usage;
+  Anthropic `content_block_delta` (`thinking_delta`, `text_delta`), `message_delta` with the stop reason
+  and usage, `message_stop`; Gemini chunks with `parts[].thought`, `finishReason` and `usageMetadata`,
+  finished by the end of the stream. `max_output_tokens`, `max_tokens` and `MAX_TOKENS` become
+  `length`. Errors in every shape become a run error in words: a refused key, rate limiting,
+  overload.
+- **Tokens.** Output tokens count what streamed: thinking a provider kept hidden is subtracted from
+  its billed output, while summarised thinking counts in full. The decode speed is then approximate for
+  summarised thinking, and the report says so. The provider's own usage, request id and OpenAI's
+  `openai-processing-ms` are kept in the run's server details.
+- **Everything else.** No status, probe, telemetry, energy, slots or cancel id; the run ends by closing
+  the connection. Pre-flight errors when no model is chosen or Max tokens is above the model's output
+  limit, and notes the thinking mismatch and that times include the internet and the provider's queue.
 
 ## 3. Architecture
 
@@ -531,6 +577,10 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   defaults to `text`.
 - Agents (phase 12): machines take `agentUrl` and `agentToken`; `GET /api/machines/:id/agent` answers
   the agent's health, and the probe includes it as `agent`.
+- Cloud models (phase 14): machines take `cloud: {provider, model}`; `POST /api/cloud/models
+  {provider, apiKey?, baseUrl?, machineId?}` answers `{models}` from the provider, with a saved
+  participant's key when `apiKey` is empty, or 502 with the provider's refusal in words. A cloud
+  participant answers 400 to a probe and is left out of hosts, status and telemetry.
 - `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
   slots and its other settings, through the load manager, and answers 202 with the load job.
 - Images (phase 10): `GET /api/machines/:id/image` answers the image status and the image models on disk
@@ -605,7 +655,9 @@ background, the chat and image hand-off, step progress that follows Unsloth's ph
 a PNG per seed, and request slots with a first-in, first-out admission queue and a slowdown per
 busy slot, image progress at a fixed steps per second, and telemetry that ramps during
 runs. It can also replay recorded fixtures with their original timing. `npm run demo` starts two mocks on
-different ports plus the app.
+different ports plus the app. `mock/src/cloud.ts` (`npm run mock -- --cloud <provider>`) is a fake OpenAI,
+Anthropic or Gemini API: model lists with models to leave out, streaming in each provider's events,
+usage, key checks, and each provider's error body on demand.
 
 ## 10. Recorder
 
@@ -628,7 +680,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: twelve phases in four milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: fourteen phases in five milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions
@@ -648,7 +700,8 @@ testable app.
 
 ## 14. Non-goals
 
-No auth on the controller, no multi-user, no cloud models, no model downloads, no training, no i18n.
+No auth on the controller, no multi-user, no cloud models except as text references (section 2.7), no
+model downloads, no training, no i18n.
 
 ## 15. Definition of done
 

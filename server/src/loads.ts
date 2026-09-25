@@ -45,6 +45,8 @@ export class LoadManager {
   private readonly running = new Map<string, Running>();
   /** Finished loads, kept here until the store has them, so a reader never sees a stale one. */
   private readonly finished = new Map<string, LoadJob>();
+  /** Every load until its result is saved, which is after it leaves `running`. */
+  private readonly unsaved = new Set<Promise<void>>();
 
   constructor(
     private readonly store: MachineStore,
@@ -190,6 +192,8 @@ export class LoadManager {
       },
       done,
     });
+    this.unsaved.add(done);
+    void done.finally(() => this.unsaved.delete(done)).catch(() => undefined);
     return structuredClone(job);
   }
 
@@ -220,6 +224,7 @@ export class LoadManager {
       run.stopPolling();
       await run.client.close();
     }
-    await Promise.allSettled(runs.map((run) => run.done));
+    // Also the loads that just finished, so their results are on disk before the app stops.
+    await Promise.allSettled([...this.unsaved]);
   }
 }

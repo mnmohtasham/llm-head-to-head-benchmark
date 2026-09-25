@@ -3,6 +3,8 @@ import type {
   LoadJob,
   LoadRequest,
   LoadStartResult,
+  CloudModel,
+  CloudProvider,
   MachineCreateInput,
   MachineModelsView,
   MachineStatusView,
@@ -109,6 +111,13 @@ export const api = {
   updateMachine: (id: string, input: MachineUpdateInput) =>
     call<MachineView>('PUT', machineUrl(id), input),
   deleteMachine: (id: string) => call<void>('DELETE', machineUrl(id)),
+  /** A provider's text models for a key; the key goes to Model Duel's server only. */
+  cloudModels: (input: {
+    provider: CloudProvider;
+    apiKey?: string;
+    baseUrl?: string;
+    machineId?: string;
+  }) => call<{ models: CloudModel[] }>('POST', '/api/cloud/models', input),
   probeMachine: (id: string) => call<ProbeSummary>('POST', `${machineUrl(id)}/probe`),
   exportUrl: (id: string) => `${machineUrl(id)}/probe/export`,
 

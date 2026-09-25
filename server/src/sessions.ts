@@ -27,6 +27,9 @@ import {
   stepMetrics,
   commandLabel,
   commandResult,
+  CLOUD_INFO,
+  cloudRequest,
+  type CloudProvider,
   type CommandConfig,
   observeQueue,
   summarizeThroughput,
@@ -71,6 +74,7 @@ import {
   readImageStatus,
 } from './imagegen';
 import { agentHealth, cancelJob, followJob, startJob } from './agent';
+import { cloudFailure, streamCloud } from './cloud';
 import type { ImageStore } from './imagestore';
 import type { ResultStore } from './results';
 import { watchQueue } from './queue';
@@ -132,6 +136,12 @@ const WARMUP: TextConfig = {
 const PROMPT_KEPT = 300;
 
 type Listener = (message: SessionStreamMessage) => void;
+
+/** What goes to a machine for one text run: Unsloth's chat body, or a cloud provider's request. */
+interface OutgoingRequest {
+  body: Record<string, unknown>;
+  cloud: { provider: CloudProvider; path: string } | null;
+}
 
 interface LiveRun {
   view: StoredRun;
@@ -453,11 +463,14 @@ export class SessionManager {
             : []
           : session.workload === 'image'
             ? [cancelImage(run.machine)]
-            : batch > 0
-              ? Array.from({ length: batch }, (_unused, k) =>
-                  cancelOnMachine(run.machine, `${cancelId(run)}-${k + 1}`),
-                )
-              : [cancelOnMachine(run.machine, cancelId(run))],
+            : run.machine.cloud
+              ? // Closing the connection is how a cloud request is cancelled.
+                []
+              : batch > 0
+                ? Array.from({ length: batch }, (_unused, k) =>
+                    cancelOnMachine(run.machine, `${cancelId(run)}-${k + 1}`),
+                  )
+                : [cancelOnMachine(run.machine, cancelId(run))],
       ),
     );
     // An image race still loads the chat models again after this, so do not wait for that.
@@ -560,6 +573,7 @@ export class SessionManager {
       imageAfter: null,
       restore: null,
       agent: null,
+      cloud: machine.cloud,
     };
   }
 
@@ -721,6 +735,17 @@ export class SessionManager {
       entry.models[index] = session.config.model;
       return;
     }
+    if (machine.cloud) {
+      // A cloud model has no status to read: the chosen model is what runs.
+      const model = machine.cloud.model;
+      if (!model) {
+        entry.unready[index] =
+          `Pick a ${CLOUD_INFO[machine.cloud.provider].label} model for ${machine.name} on the Machines screen.`;
+        return;
+      }
+      entry.models[index] = model.id;
+      return;
+    }
     if (this.deps.isLoading(machine.id)) {
       entry.unready[index] =
         `A model is loading on ${machine.name}. Wait for it to finish, then start again.`;
@@ -760,7 +785,9 @@ export class SessionManager {
       }
       const anyReady = entry.models.some((model) => model !== null) && entry.stopReason === null;
       if (session.telemetry.enabled && anyReady && !signal.aborted) {
-        releaseTelemetry = this.deps.telemetry.acquire(entry.machines.map((m) => m.id));
+        releaseTelemetry = this.deps.telemetry.acquire(
+          entry.machines.filter((m) => !m.cloud).map((m) => m.id),
+        );
         this.setProgress(entry, 'baseline', null);
         await pause(baselineMs, signal);
       }
@@ -944,9 +971,19 @@ export class SessionManager {
       this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
       round.lag.enable();
       view.startedAt = new Date().toISOString();
-      const bodyFor = (run: LiveRun) => {
+      const bodyFor = (run: LiveRun): OutgoingRequest => {
+        const cloud = run.machine.cloud;
+        if (cloud?.model) {
+          const built = cloudRequest(
+            cloud.provider,
+            cloud.model,
+            config,
+            withNonce(config.prompt, view.nonce),
+          );
+          return { body: built.body, cloud: { provider: cloud.provider, path: built.path } };
+        }
         const model = entry.models[round.runs.indexOf(run)] ?? '';
-        return chatRequestBody(config, model, round.cancelId, view.nonce);
+        return { body: chatRequestBody(config, model, round.cancelId, view.nonce), cloud: null };
       };
       // Throughput mode sends a batch per machine; the warm-up stays a single request.
       const batch = !warmup && config.mode === 'throughput' ? config.concurrency : 0;
@@ -1682,18 +1719,38 @@ export class SessionManager {
   }
 
   /** Sends one machine's request; the moment it leaves is stamped before this returns. */
+  /** Opens one stream: Unsloth's chat completions, or the cloud provider's own API. */
+  private open(
+    machine: StoredMachine,
+    outgoing: OutgoingRequest,
+    body: Record<string, unknown>,
+    options: Parameters<typeof streamChatCompletion>[3],
+  ): Promise<StreamOutcome & { usage?: Record<string, unknown> | null }> {
+    return outgoing.cloud
+      ? streamCloud(
+          outgoing.cloud.provider,
+          machine.baseUrl,
+          machine.apiKey,
+          outgoing.cloud.path,
+          body,
+          options,
+        )
+      : streamChatCompletion(machine.baseUrl, machine.apiKey, body, options);
+  }
+
   private stream(
     entry: ActiveSession,
     round: LiveRound,
     run: LiveRun,
-    body: Record<string, unknown>,
+    outgoing: OutgoingRequest,
   ): Promise<void> {
+    const body = outgoing.body;
     if (!round.warmup) run.provenance.request ??= body;
     run.view.state = 'streaming';
     run.requestAt = performance.now();
     run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
     entry.starts.set(run.view.id, run.view.requestedAtMs);
-    return streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
+    return this.open(run.machine, outgoing, body, {
       signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
       idleTimeoutMs: this.deps.timings.idleTimeoutMs,
       totalTimeoutMs: this.deps.timings.totalTimeoutMs,
@@ -1720,10 +1777,11 @@ export class SessionManager {
     entry: ActiveSession,
     round: LiveRound,
     run: LiveRun,
-    body: Record<string, unknown>,
+    outgoing: OutgoingRequest,
     count: number,
   ): Promise<void> {
     const { machine } = run;
+    const body = outgoing.body;
     if (!round.warmup) run.provenance.request ??= body;
     run.view.state = 'streaming';
     run.requestAt = performance.now();
@@ -1731,16 +1789,17 @@ export class SessionManager {
     entry.starts.set(run.view.id, run.view.requestedAtMs);
     run.view.live = { ...run.view.live, requests: { done: 0, total: count } };
     const signal = AbortSignal.any([entry.controller.signal, round.controller.signal]);
-    const queue = watchQueue(machine, this.deps.timings.queuePollMs);
+    // A cloud provider has no admission queue to watch.
+    const queue = machine.cloud ? null : watchQueue(machine, this.deps.timings.queuePollMs);
     const sentAt: number[] = [];
     let finished = 0;
     const outcomes = await Promise.all(
       Array.from({ length: count }, (_unused, k) => {
         sentAt.push(performance.now());
-        return streamChatCompletion(
-          machine.baseUrl,
-          machine.apiKey,
-          { ...body, cancel_id: `${String(body.cancel_id)}-${k + 1}` },
+        return this.open(
+          machine,
+          outgoing,
+          outgoing.cloud ? body : { ...body, cancel_id: `${String(body.cancel_id)}-${k + 1}` },
           {
             signal,
             idleTimeoutMs: this.deps.timings.idleTimeoutMs,
@@ -1765,7 +1824,7 @@ export class SessionManager {
           });
       }),
     );
-    const samples = await queue.stop();
+    const samples = queue ? await queue.stop() : [];
     const first = sentAt[0] ?? run.requestAt;
     const requests: RequestResult[] = outcomes.map(({ outcome, error }, k) => {
       const sendOffsetMs = round3((sentAt[k] ?? first) - first);
@@ -1874,7 +1933,22 @@ export class SessionManager {
     const usage = [...events].reverse().find((e) => e.event.type === 'usage')?.event;
     const timings: Timings | null = usage?.type === 'usage' ? usage.timings : null;
 
-    if (round.warmup) {
+    if (machine.cloud) {
+      const h = outcome.headers;
+      const processing = Number(h['openai-processing-ms']);
+      run.view.server = {
+        timings: null,
+        monitor: null,
+        cloud: {
+          provider: machine.cloud.provider,
+          requestId: h['x-request-id'] ?? h['request-id'] ?? null,
+          processingMs:
+            h['openai-processing-ms'] && Number.isFinite(processing) ? processing : null,
+          usage: (outcome as { usage?: Record<string, unknown> | null }).usage ?? null,
+        },
+      };
+      run.view.modelAfter = machine.cloud.model?.id ?? null;
+    } else if (round.warmup) {
       run.view.server = { timings, monitor: null };
     } else {
       const prompt = entry.session.workload === 'text' ? entry.session.config.prompt : '';
@@ -1936,6 +2010,9 @@ export class SessionManager {
       const { title, hint } = explainNetworkError(outcome.networkError, machine.baseUrl);
       return failed(`${title} ${hint}`);
     }
+    if (outcome.failure === 'http' && machine.cloud) {
+      return failed(cloudFailure(machine.cloud.provider, outcome.status, outcome.errorBody));
+    }
     if (outcome.failure === 'http') {
       const route = {
         path: '/v1/chat/completions',
@@ -1948,9 +2025,10 @@ export class SessionManager {
       return failed(detailOf(outcome.errorBody) || describeRouteFailure(route, machine.baseUrl));
     }
     const inBandError = outcome.timeline.events.find((e) => e.event.type === 'error')?.event;
-    if (inBandError?.type === 'error') return failed(`Unsloth reported: ${inBandError.message}`);
+    const source = machine.cloud ? CLOUD_INFO[machine.cloud.provider].label : 'Unsloth';
+    if (inBandError?.type === 'error') return failed(`${source} reported: ${inBandError.message}`);
     if (!client.sawDone && client.finishReason === null) {
-      return failed('The stream ended before Unsloth said it was done.');
+      return failed(`The stream ended before ${source} said it was done.`);
     }
     return { state: 'done', error: null };
   }

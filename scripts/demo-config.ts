@@ -25,3 +25,30 @@ export const DEMO_MACHINES = [
     color: '#c6dbe0',
   },
 ] as const;
+
+/** Fake cloud providers, raced on the Text tab as references. Their keys only unlock the mocks. */
+export const DEMO_CLOUD_PORTS = [18885, 18886, 18887] as const;
+
+export const DEMO_CLOUDS = [
+  {
+    provider: 'openai',
+    name: 'Mock ChatGPT',
+    model: 'gpt-6-luna',
+    apiKey: 'sk-proj-demo-openai-0000000000000000000001',
+    color: '#86c98f',
+  },
+  {
+    provider: 'anthropic',
+    name: 'Mock Claude',
+    model: 'claude-sonnet-5',
+    apiKey: 'sk-ant-api03-demo-anthropic-000000000000001',
+    color: '#b49cf0',
+  },
+  {
+    provider: 'gemini',
+    name: 'Mock Gemini',
+    model: 'gemini-3.8-flash',
+    apiKey: 'AIzaSyDemoGemini000000000000000000000001',
+    color: '#ef8fb0',
+  },
+] as const;

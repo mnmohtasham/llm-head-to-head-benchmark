@@ -1,5 +1,5 @@
 import type { MachineView } from '@duel/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, messageOf } from './api';
 import type { LogEntry, NewLogEntry } from './components/LogPanel';
 import type { Page } from './components/TopBar';
@@ -84,6 +84,9 @@ export function App() {
     };
   }, []);
 
+  // Cloud models race only on the Text tab; the other tabs need a machine running Unsloth.
+  const local = useMemo(() => machines?.filter((m) => !m.cloud) ?? null, [machines]);
+
   return (
     <div className="app">
       {stale ? (
@@ -96,13 +99,13 @@ export function App() {
       {page === 'text' ? (
         <TextPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'transcribe' ? (
-        <TranscribePage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+        <TranscribePage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'image' ? (
-        <ImagePage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+        <ImagePage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'command' ? (
-        <CommandPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+        <CommandPage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'models' ? (
-        <ModelsPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+        <ModelsPage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : (
         <MachinesPage
           machines={machines}

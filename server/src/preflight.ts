@@ -76,6 +76,18 @@ export async function runPreflight(
   const entries: PreflightMachine[] = await Promise.all(
     machines.map(async (machine) => {
       const base = { id: machine.id, name: machine.name };
+      // A cloud model has no status, tokenizer or slots to read; pre-flight checks its settings.
+      if (machine.cloud) {
+        return {
+          ...base,
+          status: null,
+          error: null,
+          loading: false,
+          promptTokens: null,
+          tokenError: null,
+          cloud: machine.cloud,
+        };
+      }
       if (isLoading(machine.id)) {
         return {
           ...base,

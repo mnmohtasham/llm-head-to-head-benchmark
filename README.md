@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 13 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 14 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -14,7 +14,9 @@ charts and its full setup, exports as JSON, CSV or Markdown, and can be judged i
 Speech-to-text races the same way, with real-time factor and word error rate, and so does image
 generation, with a live step timeline and the images side by side. Throughput mode measures how
 many tokens a machine delivers with several requests at once, and a small agent races video encodes
-and other allowlisted commands. [PLAN.md](PLAN.md) is the full specification.
+and other allowlisted commands. Every race is kept as a JSON result file in a documented format, ready
+to share. Models from OpenAI, Anthropic and Google Gemini can join text races as references, picked
+from each provider's own model list. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -26,7 +28,7 @@ and other allowlisted commands. [PLAN.md](PLAN.md) is the full specification.
 
 ```bash
 npm install
-npm run demo                  # two fake Unsloth machines plus the app, no GPU needed
+npm run demo                  # fake Unsloth machines and cloud providers plus the app, no GPU needed
 npm run dev                   # development with hot reload
 npm run build && npm start    # production build, the one to use for measurements
 ```
@@ -252,6 +254,45 @@ interrupted.
 - A run stops when Unsloth sends nothing for 2 minutes, or after 30 minutes in total.
 - One race runs at a time.
 
+## Cloud models as references
+
+ChatGPT, Claude and Gemini models can race on the **Text** tab next to your machines, to show how
+a local model compares with a hosted one. They are references, not machines: their times include
+the internet and the provider's own queue, and each request is billed to your key.
+
+1. Create an API key with the provider: OpenAI at platform.openai.com under **API keys**,
+   Anthropic in the Claude Console under **API keys**, Google in AI Studio under **Get API key**.
+2. On **Machines**, press **Add cloud model**, pick the provider and paste the key.
+3. Press **Fetch models**. Model Duel asks the provider for the models this key can use and keeps
+   the text models: embedding, image, audio, realtime and moderation models are left out.
+4. Choose a model. The dialog shows its context window, how many tokens it writes at most, whether
+   it thinks and which effort levels it takes. The name follows the model until you type one.
+   **Edit** picks another model later; the provider stays.
+
+On the Text tab, cloud models show with their provider and model and are not picked by default.
+
+- **Measured the same way.** Each provider's stream (OpenAI's Responses API, Anthropic's Messages
+  API, Gemini's `streamGenerateContent`) is turned into the same events as Unsloth's, so first token,
+  first answer word, thinking time, decode speed and token counts mean the same thing. The run's
+  **Measurements** show what the provider billed next to what streamed, and its request id.
+- **Thinking.** **Thinking** and **Reasoning effort** map onto each provider's own controls. A model
+  that always thinks is asked for as little as it allows when Thinking is off, and pre-flight says
+  so. With only cloud models picked, the effort list offers their levels; next to local models,
+  each cloud model gets the nearest level it takes.
+- **Summaries.** Providers stream a summary of the thinking, not all of it, but bill every thinking
+  token. The decode speed then counts all of them from the first streamed token, so read it as
+  approximate; the Measurements say so. Thinking a provider does not show at all is left out of the
+  decode speed.
+- **Sampling.** Only the fields a model's API takes are sent. Newer Claude and Gemini 3 models take
+  none, and OpenAI's reasoning models take temperature and top-p only with effort `none`. The exact
+  request is in the report under **Request sent to …**.
+- **Pre-flight** stops a race when no model is chosen or Max tokens is above what the model writes,
+  and notes the rest. Throughput mode works too; it sends that many requests to the provider at once.
+- Telemetry, energy, the Models tab and the other workloads skip cloud models.
+- **Result files** mark each machine as `local` or `cloud`, with the provider and model.
+- **API address.** Leave it empty for the provider's API. Change it only for a gateway that speaks
+  the same API, or for the fake providers of the demo.
+
 ## Race machines on speech-to-text
 
 The **Transcribe** tab sends the same audio to every machine's Unsloth speech-to-text and compares
@@ -373,6 +414,9 @@ numbers, and the agent builds the ffmpeg argument list itself. Anything else is 
 - The agent needs its token for everything but a bare health check, and runs only its own
   templates on clips in its own folder. It binds to 127.0.0.1 unless you pass `--host`. Its token,
   like the API keys, stays in `data/machines.json`.
+- Cloud API keys are kept the same way. They go only to their own provider's API address, and a
+  saved key is never sent to another provider. **Fetch models** sends the key to Model Duel's
+  server, which asks the provider; the browser never talks to the provider.
 - Unsloth's LAN access is plain HTTP. Anyone on the same network can read the traffic,
   including the key. Use it on a network you trust.
 
@@ -383,8 +427,9 @@ numbers, and the agent builds the ffmpeg argument list itself. Anything else is 
 | `npm run dev`                                             | Vite on port 3000 with hot reload, API on 3001                     |
 | `npm run build`                                           | Builds the client, the controller and the fake Unsloth             |
 | `npm start`                                               | Serves the build. Options: `--port`, `--host`, `--data-dir`        |
-| `npm run demo`                                            | Builds, then starts two fake machines and the app with both added  |
+| `npm run demo`                                            | Builds, then starts two fake machines, three fake cloud providers and the app, all added |
 | `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
+| `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
 | `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
@@ -392,7 +437,7 @@ numbers, and the agent builds the ffmpeg argument list itself. Anything else is 
 | `npm run result-schema`                                    | Rewrites `docs/result-format.schema.json` from the format's definition |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
 | `npm test`                                                | Unit and integration tests                                         |
-| `npm run test:e2e`                                        | Builds, starts the demo on ports 3100, 18891, 18892, runs browser tests |
+| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18913, runs browser tests |
 
 ## The fake Unsloth
 
@@ -454,6 +499,17 @@ Other stream settings are `jitterMs`, `tokensPerChunk`, `keepaliveEveryMs`, `err
 fit), `thinkingInAnswer` (the model skipped its thinking block), `cachedPromptTokens` and
 `draftAcceptRate` (reported prompt cache and speculative decoding numbers).
 
+The demo also starts three fake cloud providers on ports 18885 to 18887, speaking OpenAI's,
+Anthropic's and Gemini's APIs as documented: their model lists (with models Model Duel must leave
+out), their streaming events, usage and error bodies. Each accepts only its demo key. They take
+`startupMs`, `tokenMs`, `thinkingTokens`, `answerTokens` and `failWith` (an HTTP status, answered
+with the provider's error body):
+
+```bash
+curl -X POST http://127.0.0.1:18885/__mock/config -H 'content-type: application/json' \
+     -d '{"failWith": 429}'
+```
+
 Each profile has a model inventory like a real machine: complete and partial quants, an LM Studio
 model behind a `ref:` handle, an MLX or safetensors model, and image models the Models tab leaves
 out.
@@ -510,7 +566,7 @@ out.
 | `shared/`     | Types, validation, the probe classifier, the stream parser and metrics |
 | `server/`     | The controller: Fastify API, Unsloth client, probe, machine store |
 | `client/`     | The React app                                                     |
-| `mock/`       | The fake Unsloth backend                                          |
+| `mock/`       | The fake Unsloth backend and the fake cloud providers             |
 | `agent/`      | The agent that runs allowlisted commands on a machine             |
 | `e2e/`        | Playwright browser tests                                          |
 | `scripts/`    | Build, demo, and the probe and stream recorders                   |

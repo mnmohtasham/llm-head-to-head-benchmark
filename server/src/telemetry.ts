@@ -158,6 +158,8 @@ export class TelemetryHub {
   acquire(machineIds: readonly string[]): () => void {
     const held: Poller[] = [];
     for (const id of new Set(machineIds)) {
+      // Cloud models have no hardware to read.
+      if (this.machines.get(id)?.cloud) continue;
       let poller = this.pollers.get(id);
       if (!poller) {
         poller = new Poller(id, this);

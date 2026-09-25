@@ -5,7 +5,8 @@
   "description": "A fake Unsloth Studio backend for tests and the no-GPU demo.",
   "type": "module",
   "exports": {
-    ".": "./src/server.ts"
+    ".": "./src/server.ts",
+    "./cloud": "./src/cloud.ts"
   },
   "dependencies": {
     "@duel/shared": "*",
