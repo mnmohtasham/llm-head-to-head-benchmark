@@ -468,7 +468,20 @@ test.describe('the report', () => {
       await page.getByTestId('exports').getByRole('link', { name: label }).click();
       return readFile(await (await download).path(), 'utf8');
     };
-    const json = JSON.parse(await exported('JSON')) as {
+    const result = JSON.parse(await exported('Result file')) as {
+      format: string;
+      formatVersion: number;
+      kind: string;
+      machines: Array<{ label: string }>;
+      rounds: Array<{ warmup: boolean; runs: Array<{ metrics: Record<string, unknown> }> }>;
+      sha256: string;
+    };
+    expect(result).toMatchObject({ format: 'model-duel-result', formatVersion: 1, kind: 'text' });
+    expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.rounds.filter((r) => !r.warmup)).toHaveLength(2);
+    expect(result.rounds.at(-1)?.runs[0]?.metrics.decode).toEqual(expect.any(Number));
+    expect(JSON.stringify(result)).not.toContain('127.0.0.1');
+    const json = JSON.parse(await exported('Raw JSON')) as {
       schemaVersion: number;
       rounds: Array<{ runs: Array<{ raw: { events: unknown[] } }> }>;
     };

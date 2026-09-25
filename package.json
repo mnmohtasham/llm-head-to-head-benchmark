@@ -33,7 +33,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test -c e2e/playwright.config.ts",
-    "record": "tsx scripts/record-stream.ts"
+    "record": "tsx scripts/record-stream.ts",
+    "result-schema": "tsx scripts/result-schema.ts",
+    "verify-result": "tsx scripts/verify-result.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

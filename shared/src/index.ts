@@ -11,6 +11,7 @@ export * from './preflight';
 export * from './presets';
 export * from './probe';
 export * from './report';
+export * from './result';
 export * from './secrets';
 export * from './session';
 export * from './sse';

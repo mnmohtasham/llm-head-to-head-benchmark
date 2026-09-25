@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.11, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.12, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -13,7 +13,7 @@ records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 rec
 built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
 2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
-command workload of phase 12, in sections 3, 6 and 7.
+command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1.
 
 ## 0. Decisions so far
 
@@ -556,6 +556,19 @@ the blind vote shows only the answers, sides shuffled per round, records `{round
 the session, and the tally counts per pair of model-and-quant labels across sessions; charts use uPlot.
 Machine setup screen: cards with base URL, API key, name, notes, a Probe button showing versions, GPU and
 engines, model dropdowns with Load buttons and load progress.
+
+### 7.1 Result files
+
+Every finished race is also written as a result file in `data/results/`, in a public, versioned format
+meant for sharing (`format: "model-duel-result"`, `formatVersion: 1`), separate from the session file so
+that the app's own storage can change freely. It holds the settings, the machines' hardware, software,
+model state, exact request and setup table, every round and run with a uniform `metrics` map keyed by
+`metricDefinitions`, the workload details, telemetry, token timelines and raw events, the statistics,
+the scoreboard and the votes. Keys and tokens never enter it; machine addresses and notes are left out,
+and local paths and network addresses in messages and settings are replaced. A SHA-256 over the file's
+canonical JSON (sorted keys, no spaces) detects damaged or edited copies; it is not a signature. The
+format, its privacy rules and its versioning are described in `docs/result-format.md`, with a JSON
+Schema generated from the zod definition in `shared/src/result.ts`. Built in phase 13.
 
 ## 8. Timing discipline
 

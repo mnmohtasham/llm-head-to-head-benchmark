@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: all twelve phases of [ROADMAP.md](ROADMAP.md) are built.** The app registers machines, probes what each one
+**Status: phase 13 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -225,6 +225,22 @@ When the race ends:
   **Reveal** says which was which and adds your votes to a tally per model pair across all your
   races. It needs a race between two machines.
 
+### Result files
+
+Every finished race is also written to `data/results/` as a **result file**: one JSON file with
+the settings, the machines' hardware, software and model settings, every round and run with its
+measurements, the raw token events, telemetry, the statistics and the scoreboard. It is Model
+Duel's public format for sharing results, described in
+[docs/result-format.md](docs/result-format.md) with a JSON Schema beside it. **Result file** in a
+race's report downloads it.
+
+- It never holds API keys or agent tokens, machine addresses or notes, and local paths and network
+  addresses in messages are replaced. Prompts and answers stay, since they are the result: remove a
+  private custom prompt before sharing.
+- Each file carries a SHA-256 checksum of its content. `npm run verify-result -- <file>` checks a
+  file against the format and the checksum.
+- **Raw JSON** downloads the session as the app stores it, for debugging.
+
 Every race is saved in `data/sessions/`, one file each, with the raw timing of every token. The
 **Results log** lists them newest first. **Open** shows a race again and loads its settings, so
 **Start** runs it again. **Delete** removes it. The address changes to the race, so reloading the
@@ -372,6 +388,8 @@ numbers, and the agent builds the ffmpeg argument list itself. Anything else is 
 | `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
+| `npm run verify-result -- <file>`                          | Checks result files against the format and their checksum          |
+| `npm run result-schema`                                    | Rewrites `docs/result-format.schema.json` from the format's definition |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
 | `npm test`                                                | Unit and integration tests                                         |
 | `npm run test:e2e`                                        | Builds, starts the demo on ports 3100, 18891, 18892, runs browser tests |

@@ -72,6 +72,7 @@ import {
 } from './imagegen';
 import { agentHealth, cancelJob, followJob, startJob } from './agent';
 import type { ImageStore } from './imagestore';
+import type { ResultStore } from './results';
 import { watchQueue } from './queue';
 import {
   clearMonitor,
@@ -301,6 +302,8 @@ export class SessionManager {
       telemetry: TelemetryHub;
       audio: AudioStore;
       images: ImageStore;
+      /** Writes the public result file of each finished race. */
+      results: ResultStore;
       /** Loads a machine's chat model again with the settings it had; for image races. */
       restoreText: (machine: StoredMachine, status: ModelStatus) => Promise<RestoreOutcome>;
     },
@@ -323,7 +326,14 @@ export class SessionManager {
     return [...summaries.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  /** A race that has ended but is still saving its files: wait, so what is read is on disk too. */
+  private async settledIfEnding(id: string): Promise<void> {
+    const entry = this.active.get(id);
+    if (entry && entry.session.finishedAt !== null) await entry.done;
+  }
+
   async get(id: string): Promise<SessionView | null> {
+    await this.settledIfEnding(id);
     const live = this.active.get(id)?.session ?? this.recent.get(id);
     if (live) return publicSession(structuredClone(live));
     const stored = await this.deps.sessions.load(id);
@@ -453,6 +463,7 @@ export class SessionManager {
 
   /** The whole session as stored, raw events included, for the JSON export. */
   async getStored(id: string): Promise<StoredSession | null> {
+    await this.settledIfEnding(id);
     const live = this.active.get(id)?.session ?? this.recent.get(id);
     if (live) return structuredClone(live);
     return this.deps.sessions.load(id);
@@ -463,7 +474,12 @@ export class SessionManager {
    * same round replaces the first.
    */
   async vote(id: string, vote: Vote): Promise<SessionView | string> {
-    if (this.active.has(id)) return 'The race is still running.';
+    const entry = this.active.get(id);
+    if (entry) {
+      if (entry.session.finishedAt === null) return 'The race is still running.';
+      // Finished but still being saved: wait, so the vote is not written over.
+      await entry.done;
+    }
     const stored = await this.getStored(id);
     if (!stored) return 'There is no race with that id.';
     if (stored.machines.length !== 2) return 'Blind votes need a race between two machines.';
@@ -477,6 +493,8 @@ export class SessionManager {
       (a, b) => a.round - b.round,
     );
     await this.deps.sessions.save(stored);
+    // Votes are part of the result, so the file follows them.
+    await this.writeResult(stored);
     if (this.recent.has(id)) this.recent.set(id, stored);
     return publicSession(stored);
   }
@@ -490,9 +508,20 @@ export class SessionManager {
       await entry.done;
     }
     this.recent.delete(id);
+    const stored = await this.getStored(id);
     const removed = await this.deps.sessions.remove(id);
     if (removed) await this.deps.images.removeSession(id);
+    if (removed && stored) await this.deps.results.remove(stored);
     return removed ? 'deleted' : 'missing';
+  }
+
+  /** The race as a public result file; a failure is logged, never fatal to the race. */
+  private async writeResult(session: StoredSession): Promise<void> {
+    try {
+      await this.deps.results.write(session);
+    } catch (failure) {
+      this.deps.log.error({ err: failure, sessionId: session.id }, 'could not write the result');
+    }
   }
 
   async close(): Promise<void> {
@@ -1908,6 +1937,7 @@ export class SessionManager {
       this.deps.log.error({ err: failure, sessionId: session.id }, 'could not save the race');
       session.error ??= `The race could not be saved: ${(failure as Error).message}`;
     }
+    await this.writeResult(session);
     this.recent.set(session.id, session);
     while (this.recent.size > KEEP_RECENT) {
       const oldest = this.recent.keys().next().value;
