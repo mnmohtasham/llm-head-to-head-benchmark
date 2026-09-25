@@ -36,8 +36,21 @@ export function ExportLinks({ session }: { session: SessionView }) {
   return (
     <p className="export-links" data-testid="exports">
       <span className="hero-label">Export</span>
-      <a className="btn btn-outline" href={`${base}.json`} download>
-        JSON
+      <a
+        className="btn btn-outline"
+        href={`/api/sessions/${encodeURIComponent(session.id)}/result.json`}
+        download
+        title="Every measurement in Model Duel's public result format, ready to share"
+      >
+        Result file
+      </a>
+      <a
+        className="btn btn-outline"
+        href={`${base}.json`}
+        download
+        title="The session as Model Duel stores it, for debugging"
+      >
+        Raw JSON
       </a>
       <a className="btn btn-outline" href={`${base}.csv`} download>
         CSV

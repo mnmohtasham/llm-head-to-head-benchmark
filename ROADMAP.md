@@ -58,6 +58,8 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 10 | Image generation | Race image generation with a live step timeline and the images side by side | 8 | M | v1.0 |
 | 11 | Throughput mode | Measure aggregate tokens per second under parallel requests | 6 | S | v1.1 |
 | 12 | Agent and command workloads | Run video encodes on each machine through a small agent | 8 | L | v1.2 |
+| 13 | Result files | Keep every race as a shareable JSON result in a documented, versioned format | 8 | S | v1.3 |
+| 14 | Cloud reference models | Race ChatGPT, Claude and Gemini models next to local machines as references | 6 | M | v1.4 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -68,6 +70,8 @@ Milestones:
 - **M2 Trustworthy numbers** (phases 5 to 8, v0.8): results that survive scrutiny and can be shared.
 - **M3 Three workloads** (phases 9 and 10, v1.0): transcription and images on the same machinery. This is 1.0.
 - **M4 Extensions** (phases 11 and 12): throughput testing and command workloads.
+- **M5 Sharing and references** (phases 13 and 14): result files ready for a public results website,
+  and cloud models as reference points. Added on 2026-09-25 at Mani's request, after phase 12.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
 concurrency adds noise (phase 4). Statistics, pre-flight, telemetry and the report (phases 5 to 8) are
@@ -569,6 +573,69 @@ Real-machine script (prerequisites: ffmpeg and the source clip on both machines,
 phase 12 it ran on the RTX machine alone, NVENC and x265; the Mac's macmon step waits for the Mac)
 1. Run the HEVC hardware encode and the x265 software encode on both machines.
 2. Confirm that the Mac's extra telemetry appears when macmon is installed.
+
+Exit checklist
+- [ ] Phase gate passes.
+
+## Phase 13: Result files
+
+**You can** find every finished race as one JSON file with all its details, in a documented and
+versioned public format, ready to be shared on a results website later.
+Needs: 8. Size: S. Cites PLAN.md 7.1.
+
+Scope
+- A result format separate from the session file: `format: "model-duel-result"`, `formatVersion: 1`,
+  settings, machines (hardware, software, model state, the exact request, the setup table), every round
+  and run with a `metrics` map keyed by `metricDefinitions`, the full workload details, telemetry, the
+  token timeline and raw events, the statistics, the scoreboard and blind votes.
+- Written to `data/results/` when a race ends, rewritten after a blind vote, removed with the race, and
+  written at startup for earlier races. Downloadable from the report.
+- Privacy: no keys or tokens, no machine addresses or notes, and local paths and network addresses
+  replaced in messages and settings. Prompts and answers stay.
+- A SHA-256 over canonical JSON, a JSON Schema generated from the zod definition, `docs/result-format.md`,
+  and `npm run verify-result`.
+
+Not in this phase: uploading to a website, signing, anonymising machine names.
+
+Automated tests
+- Unit: the result follows its schema; metrics per run; redaction of paths and addresses; canonical JSON;
+  the committed JSON Schema matches the definition.
+- Integration: a race writes a result that equals the download and passes its checksum; a vote rewrites
+  it; deleting the race removes it; earlier races get theirs at startup.
+- End-to-end: the report's **Result file** downloads a valid file with no machine address in it.
+
+Exit checklist
+- [ ] Phase gate passes.
+
+## Phase 14: Cloud reference models
+
+**You can** add OpenAI, Anthropic and Google Gemini as cloud participants with an API key, pick a model
+from the provider's own list, and race it on the Text tab next to local machines as a reference.
+Needs: 6. Size: M. Cites PLAN.md 2.7.
+
+Scope
+- Cloud participants on the Machines screen: provider, API key (kept like the Unsloth keys), and a model
+  chosen from the provider's model list, which the app fetches and filters to text models.
+- Text races with cloud participants: each provider's streaming API mapped onto the same events, so
+  first token, first answer word, thinking time, decode speed and token counts are measured the same
+  way. Thinking and effort mapped to each provider's own controls; sampling fields each provider
+  accepts are sent, the rest left out and noted.
+- Pre-flight notes that a cloud model's times include the internet and the provider's queue, and that
+  the requests are billed. Telemetry, energy, the Models tab and the other workloads skip cloud
+  participants.
+- Result files and the report name the provider and model.
+
+Not in this phase: cloud transcription and image generation.
+
+Mock additions: fake OpenAI, Anthropic and Gemini endpoints for the model lists and streaming.
+
+Automated tests
+- Unit: each provider's stream parsed into the same events; model list filtering; request bodies per
+  provider and model family.
+- Integration and end-to-end: a race between a mock machine and the three mock providers.
+
+Real-machine script: with Mani's keys, list the models of each provider and race one of each against
+the RTX machine on the Short preset.
 
 Exit checklist
 - [ ] Phase gate passes.

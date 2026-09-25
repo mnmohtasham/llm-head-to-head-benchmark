@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import { AudioStore } from './audio';
 import { ImageStore } from './imagestore';
 import { chatRestorer } from './restore';
+import { ResultStore } from './results';
 import { DEFAULT_LOAD_TIMINGS, LoadManager, type LoadTimings } from './loads';
 import { ModelCatalog } from './models';
 import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
@@ -121,6 +122,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   );
   const sessionStore = new SessionStore(options.dataDir, app.log);
   await sessionStore.init();
+  const results = new ResultStore(options.dataDir, { version, build });
+  // Races from before result files get theirs now, in the background.
+  void results
+    .backfill(
+      (async function* () {
+        for (const summary of sessionStore.summaries()) {
+          const stored = await sessionStore.load(summary.id);
+          if (stored) yield stored;
+        }
+      })(),
+    )
+    .then((written) => {
+      if (written > 0) app.log.info({ written }, 'wrote result files for earlier races');
+    })
+    .catch((error: unknown) => app.log.error({ err: error }, 'could not write earlier results'));
   const sessions = new SessionManager({
     machines: store,
     sessions: sessionStore,
@@ -130,6 +146,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     telemetry,
     audio,
     images,
+    results,
     restoreText: chatRestorer({ catalog, loads, store }),
   });
   registerSessionRoutes(app, {
@@ -138,6 +155,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     isLoading: (id) => loads.isActive(id),
     audio,
     images,
+    results,
   });
   app.addHook('onClose', async () => {
     await loads.close();

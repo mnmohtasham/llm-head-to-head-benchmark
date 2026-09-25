@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
 import { listImageModels, readImageStatus } from '../imagegen';
 import type { ImageStore } from '../imagestore';
+import { resultFileName, type ResultStore } from '../results';
 import {
   platformName,
   runCommandPreflight,
@@ -70,9 +71,10 @@ export function registerSessionRoutes(
     isLoading: (machineId: string) => boolean;
     audio: AudioStore;
     images: ImageStore;
+    results: ResultStore;
   },
 ): void {
-  const { store, sessions, isLoading, audio, images } = deps;
+  const { store, sessions, isLoading, audio, images, results } = deps;
   const preflight = (machines: StoredMachine[], request: PreflightRequest) =>
     request.workload === 'text'
       ? runPreflight(machines, request.config, isLoading)
@@ -245,6 +247,16 @@ export function registerSessionRoutes(
       .header('content-type', 'application/json; charset=utf-8')
       .header('content-disposition', `attachment; filename="${fileName(stored, 'json')}"`)
       .send(`${JSON.stringify(stored, null, 2)}\n`);
+  });
+
+  /** The public result file: every measurement in a stable, shareable shape, with a checksum. */
+  app.get<IdParams>('/api/sessions/:id/result.json', async (request, reply) => {
+    const stored = await sessions.getStored(request.params.id);
+    if (!stored) return fail(reply, 404, 'not_found', NO_SESSION);
+    return reply
+      .header('content-type', 'application/json; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${resultFileName(stored)}"`)
+      .send(`${JSON.stringify(results.build(stored), null, 2)}\n`);
   });
 
   /** The comparison and round tables as the page shows them, one after the other. */
