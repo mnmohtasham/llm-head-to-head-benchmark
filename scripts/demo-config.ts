@@ -26,6 +26,9 @@ export const DEMO_MACHINES = [
   },
 ] as const;
 
+/** A fake results service, where the Results tab's Send button goes in the demo. */
+export const DEMO_SHARE_PORT = 18888;
+
 /** Fake cloud providers, raced on the Text tab as references. Their keys only unlock the mocks. */
 export const DEMO_CLOUD_PORTS = [18885, 18886, 18887] as const;
 

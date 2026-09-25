@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.15, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.16, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -15,7 +15,8 @@ built in phase 8, in section 7. v2.8 records transcription as built in phase 9, 
 2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
 command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
 sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2. v2.15 allows up to 100 rounds summed up by
-median or average (phase 16), in sections 5 and 6.
+median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
+(phase 17), in sections 6 and 7.3.
 
 ## 0. Decisions so far
 
@@ -587,6 +588,11 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   participant answers 400 to a probe and is left out of hosts, status and telemetry.
 - `POST /api/sessions/:id/statistic {statistic: median | mean}` switches a finished race and rewrites
   its result file (phase 16). Session summaries carry `statistic`.
+- Sharing (phase 17): `GET /api/share/settings` (address, masked token, public key, fingerprint,
+  what was sent), `PUT /api/share/settings {endpoint, token?}`, `POST /api/share/preview
+  {sessionId, machineId, options}` answering `{record, sha256}`, and `POST /api/share/send` with the
+  same and the preview's `sha256`. Every non-GET request is refused with 403 when `Origin` names
+  another host or `Sec-Fetch-Site` says `cross-site` or `same-site`.
 - Results (phase 15): `GET /api/runs` answers `{runs}`, one row per machine per finished race,
   newest race first (section 7.2).
 - `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
@@ -662,6 +668,25 @@ column, stars the best value of each metric among the rows shown, lets the viewe
 workload (kept in the browser), and downloads the rows shown as CSV with raw values. Column
 definitions, shared by the page and the CSV, are `runColumns` in the same module.
 
+### 7.3 Sending runs to a results service
+
+Mani plans a public service that collects runs from anyone. Each Results row has a **Send** button
+that sends that run, after a dialog shows the record exactly as it will go; the server builds,
+checks, signs and sends it, and the browser supplies only which run, two options (a display name,
+and whether to include a custom prompt) and the preview's checksum, so nothing but the previewed
+record can leave. The format is `model-duel-run` version 1 (`shared/src/share.ts`, JSON Schema in
+`docs/share-format.schema.json`): race, machine, model and settings as in the Results row, every
+metric with its per-round values, and a submission id stable per sender, race and machine. It
+holds no keys, machine names, addresses, notes, answers, thinking, file names or paths, the OS as
+family and version only, and strings are cleaned of control and direction characters and redacted
+like result files. The envelope adds the SHA-256 of the record's canonical JSON and an Ed25519
+signature over the same bytes, with a key pair made per installation and kept in
+`data/share.json` (mode 600) with the address and optional bearer token. The address must be https
+(http only to loopback, for testing) without credentials; sends time out after 20 seconds, follow
+no redirects, read at most 64 KB of the answer and use only a checked `id`, a `url` on the
+service's host and a short plain-text `message`. `docs/share-api.md` is the contract and the
+security checklist for the service; `mock/src/share.ts` is a working reference.
+
 ## 8. Timing discipline
 
 `performance.now()` only. Stamp first in the data handler, then parse. Parse SSE events, not raw reads, and
@@ -708,7 +733,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: sixteen phases in five milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: seventeen phases in five milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions

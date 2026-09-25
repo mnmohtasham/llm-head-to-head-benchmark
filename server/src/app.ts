@@ -16,6 +16,8 @@ import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
 import { registerRunRoutes } from './routes/runs';
+import { registerShareRoutes } from './routes/share';
+import { ShareStore } from './share';
 import { DeviceRunIndex } from './runs';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
@@ -38,6 +40,8 @@ export interface AppOptions {
   mode?: 'dev' | 'production';
   /** Extra host names the app answers to, besides localhost, IP addresses and this computer's name. */
   allowedHosts?: readonly string[];
+  /** How long to wait for the results service; tests shorten it. */
+  shareTimeouts?: { connectMs: number; totalMs: number };
 }
 
 /** Log paths that could carry a key, blanked even if a future change logs them by mistake. */
@@ -47,6 +51,8 @@ export const REDACTED_LOG_PATHS = [
   'apiKey',
   '*.apiKey',
   'body.apiKey',
+  'body.token',
+  '*.token',
 ];
 
 function hostnameOf(hostHeader: string): string {
@@ -71,6 +77,28 @@ export function isAllowedHost(
   return extra.some((name) => name.toLowerCase() === hostname);
 }
 
+/**
+ * Changes must come from Model Duel's own page or from outside a browser. Browsers name the page
+ * that made a request in `Origin` and, for fetches, `Sec-Fetch-Site`; a request that changes
+ * something is refused when either says another site.
+ */
+export function isSameOriginOrNone(
+  method: string,
+  headers: { origin?: string | undefined; host?: string | undefined; 'sec-fetch-site'?: unknown },
+): boolean {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  const site = headers['sec-fetch-site'];
+  if (site === 'cross-site' || site === 'same-site') return false;
+  const origin = headers.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === headers.host;
+  } catch {
+    // "null", from sandboxed frames and local files.
+    return false;
+  }
+}
+
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const logger =
     options.logger && typeof options.logger === 'object'
@@ -79,6 +107,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger, bodyLimit: 64 * 1024 });
 
   app.addHook('onRequest', async (request, reply) => {
+    // A page on another site may make this browser send requests here; only reads are allowed.
+    if (!isSameOriginOrNone(request.method, request.headers)) {
+      const body: ApiErrorBody = {
+        error: 'forbidden_origin',
+        message: 'Model Duel refuses changes asked for by another web site.',
+      };
+      return reply.code(403).send(body);
+    }
     if (isAllowedHost(request.headers.host, options.allowedHosts)) return;
     const body: ApiErrorBody = {
       error: 'forbidden_host',
@@ -160,6 +196,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     results,
   });
   registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
+  const share = new ShareStore(options.dataDir);
+  await share.init();
+  registerShareRoutes(app, {
+    share,
+    sessions,
+    version,
+    build,
+    ...(options.shareTimeouts ? { timeouts: options.shareTimeouts } : {}),
+  });
   app.addHook('onClose', async () => {
     await backfilled;
     await loads.close();

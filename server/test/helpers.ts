@@ -33,6 +33,7 @@ export async function testApp(
     loadTimings?: Partial<LoadTimings>;
     runTimings?: Partial<RunTimings>;
     telemetry?: Partial<TelemetryOptions>;
+    shareTimeouts?: { connectMs: number; totalMs: number };
   } = {},
 ) {
   const dataDir = options.dataDir ?? (await tempDir());
@@ -61,6 +62,7 @@ export async function testApp(
       ...options.runTimings,
     },
     telemetry: { intervalMs: 50, minBackoffMs: 50, maxBackoffMs: 200, ...options.telemetry },
+    ...(options.shareTimeouts ? { shareTimeouts: options.shareTimeouts } : {}),
   });
   return { app, dataDir, logs };
 }

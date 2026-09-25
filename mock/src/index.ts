@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { startCloudMock, type CloudMockProvider } from './cloud';
+import { startShareMock } from './share';
 import { PROFILE_NAMES, type ProfileName } from './profiles';
 import { startMockServer } from './server';
 
@@ -14,6 +15,7 @@ Usage: npm run mock -- [options]
   --keyless         Accept requests without a key
   --name <text>     Name shown in the startup line
   --cloud <name>    Be a fake cloud provider instead: openai, anthropic or gemini
+  --share           Be a fake results service instead, taking records at /api/runs
 
 Control it at runtime:
   curl -X POST http://127.0.0.1:18881/__mock/config -H 'content-type: application/json' \\
@@ -30,6 +32,7 @@ const { values } = parseArgs({
     keyless: { type: 'boolean', default: false },
     name: { type: 'string' },
     cloud: { type: 'string' },
+    share: { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
 });
@@ -40,7 +43,15 @@ if (values.help) {
 }
 
 const CLOUDS: readonly string[] = ['openai', 'anthropic', 'gemini'];
-if (values.cloud !== undefined) {
+if (values.share) {
+  const service = await startShareMock({ port: Number(values.port), host: values.host });
+  process.stdout.write(`Mock results service taking records at ${service.endpoint}\n`);
+  const stopShare = () => {
+    void service.close().then(() => process.exit(0));
+  };
+  process.on('SIGINT', stopShare);
+  process.on('SIGTERM', stopShare);
+} else if (values.cloud !== undefined) {
   if (!CLOUDS.includes(values.cloud)) {
     process.stderr.write(`Unknown cloud "${values.cloud}". Use ${CLOUDS.join(', ')}.\n`);
     process.exit(2);

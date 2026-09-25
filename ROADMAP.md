@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Sixteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Seventeen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 16 are `v1.1` to `v1.6`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 17 are `v1.1` to `v1.7`.
 
 ## Running a phase
 
@@ -62,6 +62,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 14 | Cloud reference models | Race ChatGPT, Claude and Gemini models next to local machines as references | 6 | M | v1.4 |
 | 15 | Results tab | Filter, sort and download every machine's run from every race in one table | 8 | S | v1.5 |
 | 16 | Long races and averages | Run up to 100 rounds and sum them up by median or average | 5 | S | v1.6 |
+| 17 | Sending runs | Send a run from the Results tab to a public results service, safely | 15 | M | v1.7 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -72,8 +73,9 @@ Milestones:
 - **M2 Trustworthy numbers** (phases 5 to 8, v0.8): results that survive scrutiny and can be shared.
 - **M3 Three workloads** (phases 9 and 10, v1.0): transcription and images on the same machinery. This is 1.0.
 - **M4 Extensions** (phases 11 and 12): throughput testing and command workloads.
-- **M5 Sharing and references** (phases 13 to 16): result files ready for a public results website,
-  cloud models as reference points, one table of every run, and long races summed up either way. Added on 2026-09-25 at Mani's
+- **M5 Sharing and references** (phases 13 to 17): result files ready for a public results website,
+  cloud models as reference points, one table of every run, long races summed up either way, and
+  sending runs to a public results service. Added on 2026-09-25 at Mani's
   request, after phase 12.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
@@ -97,6 +99,7 @@ flowchart LR
   P6 --> P14[14 Cloud]
   P8 --> P15[15 Results tab]
   P5 --> P16[16 Averages]
+  P15 --> P17[17 Sending runs]
 ```
 
 ## Phase 1: Foundation and machines
@@ -703,6 +706,36 @@ Real-machine script: none needed; the numbers come from the rounds already measu
 Exit checklist
 - [ ] Phase gate passes.
 
+## Phase 17: Sending runs
+
+**You can** send one run from the Results tab to a public results service, after seeing exactly
+what goes, with nothing private in it.
+Needs: 15. Size: M. Cites PLAN.md 7.3.
+
+Scope
+- A record format for one machine's run, with a JSON Schema, a checksum and an Ed25519 signature
+  per installation; the contract and a security checklist for the service in `docs/share-api.md`.
+- The service's address and optional token, kept like API keys; a Send button per finished row; a
+  dialog with the record, a display name and a prompt opt-in; a note of what was sent.
+- The server builds, checks, signs and sends; https only; no redirects; a bounded, checked answer.
+- Requests that change anything are refused when a browser says another site made them.
+
+Not in this phase: the service itself, deleting a sent record, sending several rows at once.
+
+Mock additions: a fake results service that checks size, schema, checksum, signature and token.
+
+Automated tests
+- Unit: the record follows its strict schema and leaves out names, addresses, notes, paths and the
+  prompt; stable submission ids; partial runs; display names cleaned; addresses checked.
+- Integration: sending to the fake service, which verifies the signature; resending replaces; a
+  changed record, a refusal, a redirect, a foreign link and a token; cross-site requests refused.
+- End-to-end: set the address, preview, opt the prompt in and out, send, see it sent.
+
+Real-machine script: send a real run from Mani's data to the fake service and read what it got.
+
+Exit checklist
+- [ ] Phase gate passes.
+
 ## Testing across phases
 
 - **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
@@ -730,6 +763,7 @@ Exit checklist
 | 14 | nothing on the machines; an API key from each provider to race |
 | 15 | nothing new |
 | 16 | nothing new |
+| 17 | nothing new; the results service itself comes later |
 
 ## Open questions and when they block
 
@@ -756,6 +790,8 @@ Exit checklist
 | The agent becomes a remote execution hole | 12 | allowlisted templates only, token, LAN only |
 | A cloud key leaks or reaches the wrong provider | 14 | kept like Unsloth keys, never in results or the browser, saved keys used only for their own provider |
 | A provider changes its API or model list | 14 | contracts in one module, fake providers copy them, errors shown in the provider's words |
+| A shared record leaks something private | 17 | a strict schema of allowed fields, redaction, the prompt opt-in, a full preview before sending |
+| A web page makes the app act for it | 17 | cross-site requests that change anything are refused |
 
 ## Phase record template
 

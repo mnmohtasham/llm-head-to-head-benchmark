@@ -2131,3 +2131,39 @@ textarea {
   justify-content: space-between;
   gap: 8px 16px;
 }
+
+.dialog-wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.share-preview summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.share-preview pre {
+  max-height: 40vh;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.row-send {
+  margin-right: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.row-sent {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.dialog-body form {
+  padding: 0;
+}

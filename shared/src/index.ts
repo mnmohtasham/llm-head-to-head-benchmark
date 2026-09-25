@@ -15,6 +15,7 @@ export * from './report';
 export * from './result';
 export * from './runs';
 export * from './secrets';
+export * from './share';
 export * from './session';
 export * from './sse';
 export * from './stats';

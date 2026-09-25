@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 16 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 17 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -17,7 +17,7 @@ many tokens a machine delivers with several requests at once, and a small agent 
 and other allowlisted commands. Every race is kept as a JSON result file in a documented format, ready
 to share. Models from OpenAI, Anthropic and Google Gemini can join text races as references, picked
 from each provider's own model list. The **Results** tab puts every machine's run from every race in
-one table to filter, sort and download. [PLAN.md](PLAN.md) is the full specification.
+one table to filter, sort and download, and sends a run to a public results service when you ask. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -433,11 +433,36 @@ races can be compared: which GPU runs a model fastest, what a quant or a context
   browser; **Reset columns** goes back to the default.
 - **Download CSV** saves the rows and columns shown, with raw numbers and units in the headers.
 - The date opens the race.
+- **Send**, at the start of a row, sends that run to a results service (below).
 
 Unsloth reports the KV cache's type (for example `q8_0`, or the bits on MLX), not how much memory it
 takes, so the table shows the type; "default" means none was set at load. GPU layers shows "auto"
 when Unsloth fitted the layers to the GPU itself, as it does unless told otherwise. Integrated GPUs,
 such as AMD's 780M, report the memory they may share as their GPU memory.
+
+### Send a run to a results service
+
+A results service collects runs from anyone and shows them in a public table. Model Duel sends a run
+there only when you ask, one row at a time.
+
+1. On **Results**, press **Results service** and enter the service's address, the full https
+   address that takes records. Add a token only if the service gave you one.
+2. Press **Send** at the start of a row. The dialog shows the record exactly as it will be sent.
+3. Optionally type a **Name shown publicly**; without one, the service shows only the hardware. For a
+   custom prompt, tick **Include my prompt** only if you want it public.
+4. Press **Send to …**. The row's button then reads **Sent ✓**; sending again replaces the record
+   on the service.
+
+A record holds the hardware, the model and how it was loaded, the race's settings and every
+measurement with its per-round values. It never holds API keys or tokens, machine names, addresses or
+notes, answers or thinking, file names or paths, and never your prompt unless you ticked the box.
+Every record is signed with a key made on this computer, so the service can tell it was not
+changed on the way and let only you replace your records; the private key never leaves
+`data/share.json`. [docs/share-api.md](docs/share-api.md) describes what a service receives, how to
+check it, and what a public service must do to stay safe.
+
+`npm run demo` points **Results service** at a fake one on port 18888, which keeps what it gets at
+`GET http://127.0.0.1:18888/__mock/received`.
 
 ## Security
 
@@ -453,6 +478,12 @@ such as AMD's 780M, report the memory they may share as their GPU memory.
 - Cloud API keys are kept the same way. They go only to their own provider's API address, and a
   saved key is never sent to another provider. **Fetch models** sends the key to Model Duel's
   server, which asks the provider; the browser never talks to the provider.
+- Requests that change anything are refused when a browser says another web site made them, so a
+  web page you visit cannot make Model Duel cancel a race, unload a model or send a record.
+- Sending a record needs your click and a confirmation showing the record. The server builds it,
+  so the page cannot slip anything else in. The results service's address must be https, redirects
+  are not followed, and only a short message, an id and a link on the service's own host are read
+  back. The signing key and the service token stay in `data/share.json` (mode 600).
 - Unsloth's LAN access is plain HTTP. Anyone on the same network can read the traffic,
   including the key. Use it on a network you trust.
 
@@ -466,14 +497,15 @@ such as AMD's 780M, report the memory they may share as their GPU memory.
 | `npm run demo`                                            | Builds, then starts two fake machines, three fake cloud providers and the app, all added |
 | `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
 | `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
+| `npm run mock -- --share --port 18888`                    | Starts a fake results service, taking records at `/api/runs`       |
 | `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
 | `npm run verify-result -- <file>`                          | Checks result files against the format and their checksum          |
-| `npm run result-schema`                                    | Rewrites `docs/result-format.schema.json` from the format's definition |
+| `npm run result-schema`                                    | Rewrites the JSON Schemas in `docs/` from the formats' definitions |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
 | `npm test`                                                | Unit and integration tests                                         |
-| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18913, runs browser tests |
+| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18914, runs browser tests |
 
 ## The fake Unsloth
 

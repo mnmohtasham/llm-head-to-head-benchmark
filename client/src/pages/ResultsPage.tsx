@@ -2,6 +2,7 @@ import {
   KIND_LABELS,
   runColumns,
   runsCsv,
+  shortDate,
   type DeviceRun,
   type MetricKind,
   type RunColumn,
@@ -9,7 +10,8 @@ import {
   type Statistic,
 } from '@duel/shared';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { api, messageOf } from '../api';
+import { api, messageOf, type ShareSettingsView } from '../api';
+import { ShareDialog, ShareSettingsDialog } from '../components/ShareDialogs';
 import { TopBar } from '../components/TopBar';
 
 const KINDS: readonly MetricKind[] = ['text', 'throughput', 'transcribe', 'image', 'command'];
@@ -95,6 +97,9 @@ export function ResultsPage() {
   const [sort, setSort] = useState<Sort>({ id: 'date', dir: 'desc' });
   const [picked, setPicked] = useState<Partial<Record<RunsView, string[] | null>>>({});
   const [statistic, setStatisticState] = useState<Statistic>(savedStatistic);
+  const [share, setShare] = useState<ShareSettingsView | null>(null);
+  const [sharing, setSharing] = useState<DeviceRun | null>(null);
+  const [shareSettingsOpen, setShareSettingsOpen] = useState(false);
   const setStatistic = (next: Statistic) => {
     setStatisticState(next);
     try {
@@ -103,6 +108,19 @@ export function ResultsPage() {
       // Kept until reload.
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    api.shareSettings().then(
+      (view) => {
+        if (!cancelled) setShare(view);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -241,14 +259,24 @@ export function ResultsPage() {
         title="Results"
         current="results"
         actions={
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={download}
-            disabled={sorted.length === 0}
-          >
-            Download CSV
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setShareSettingsOpen(true)}
+              disabled={share === null}
+            >
+              Results service
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={download}
+              disabled={sorted.length === 0}
+            >
+              Download CSV
+            </button>
+          </>
         }
       />
       <main className="main">
@@ -497,8 +525,25 @@ export function ResultsPage() {
                             typeof value === 'number' &&
                             best.get(column.id) === value;
                           if (column.id === 'machine') {
+                            const sent = share?.sent[run.key];
                             return (
                               <th key={column.id} scope="row" className="results-machine">
+                                {SHOWN_STATES.has(run.state) && share ? (
+                                  <button
+                                    type="button"
+                                    className={`btn btn-outline btn-small row-send${sent ? ' row-sent' : ''}`}
+                                    onClick={() => setSharing(run)}
+                                    aria-label={`${sent ? 'Send again' : 'Send'} the run of ${run.machine} from ${shortDate(run.createdAt)}`}
+                                    title={
+                                      sent
+                                        ? `Sent to ${sent.host} on ${new Date(sent.at).toLocaleString()}`
+                                        : 'Send this run to the results service'
+                                    }
+                                    data-testid="row-send"
+                                  >
+                                    {sent ? 'Sent ✓' : 'Send'}
+                                  </button>
+                                ) : null}
                                 {run.machine}
                               </th>
                             );
@@ -538,6 +583,30 @@ export function ResultsPage() {
           </>
         ) : null}
       </main>
+      {sharing && share ? (
+        <ShareDialog
+          key={sharing.key}
+          run={sharing}
+          settings={share}
+          onSent={(key, sent) =>
+            setShare((current) =>
+              current ? { ...current, sent: { ...current.sent, [key]: sent } } : current,
+            )
+          }
+          onSettings={() => {
+            setSharing(null);
+            setShareSettingsOpen(true);
+          }}
+          onClose={() => setSharing(null)}
+        />
+      ) : null}
+      {shareSettingsOpen && share ? (
+        <ShareSettingsDialog
+          settings={share}
+          onSaved={setShare}
+          onClose={() => setShareSettingsOpen(false)}
+        />
+      ) : null}
     </>
   );
 }
