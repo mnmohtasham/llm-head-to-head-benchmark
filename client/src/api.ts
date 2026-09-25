@@ -16,6 +16,8 @@ import type {
   SessionRequest,
   SessionSummary,
   SessionView,
+  ImageModelView,
+  ImageStatus,
   SttStatus,
   Vote,
 } from '@duel/shared';
@@ -117,6 +119,16 @@ export const api = {
       'GET',
       `${machineUrl(id)}/stt`,
     ),
+  imageInfo: (id: string) =>
+    call<{
+      machineId: string;
+      status: ImageStatus | null;
+      error: string | null;
+      models: ImageModelView[] | null;
+      modelsError: string | null;
+    }>('GET', `${machineUrl(id)}/image`),
+  sessionImageUrl: (sessionId: string, runId: string) =>
+    `${sessionUrl(sessionId)}/images/${encodeURIComponent(runId)}`,
   machineHosts: () => call<{ hosts: Record<string, string> }>('GET', '/api/machines/hosts'),
   settings: () => call<{ telemetry: boolean }>('GET', '/api/settings'),
   setTelemetry: (on: boolean) =>

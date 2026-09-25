@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.8, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.9, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -11,7 +11,8 @@ sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phas
 records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5. v2.6
 records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 records the report as
 built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
-6 and 9.
+6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
+2.5, 4.3, 6 and 9.
 
 ## 0. Decisions so far
 
@@ -191,21 +192,46 @@ Behaviours that matter:
 
 ### 2.5 Image generation
 
-- `POST /api/inference/images/load` with `{model_path, gguf_filename, model_kind, memory_mode,
-  speed_mode, transformer_quant, text_encoder_quant, cpu_offload}` returns `DiffusionStatusResponse`
-  (`engine: diffusers | sd_cpp`, `device`, `dtype`, `gguf_variant`, `speed_optims[]`, `offload_policy`,
-  `transformer_quant`). Also `GET .../images/load-progress`, `GET .../images/status`,
-  `POST .../images/unload`.
-- `POST /api/inference/images/generate` with `{prompt, negative_prompt, width, height, steps, guidance,
-  seed, batch_size}` blocks until done and returns `{images: [GalleryImage]}` where each record has `id`,
-  `url`, `seed`, `steps`, `guidance`, `width`, `height`, `model`, `model_kind`, `gguf_filename`,
-  `transformer_quant`. Image bytes: `GET /api/inference/images/gallery/{id}/file`.
-- `GET /api/inference/images/generate-progress` gives `{active, step, total_steps, fraction, eta_seconds}`.
-  Polled at 10 Hz for the per-step timeline.
+Verified against the backend source (`routes/inference.py`, `models/inference.py`,
+`core/inference/diffusion.py`, `gpu_arbiter.py`) and the RTX machine on 2026-09-25. All image routes
+are under `/api/inference/images/` only.
+
+- `POST .../load` with `{model_path, gguf_filename, model_kind, memory_mode, speed_mode, transformer_quant,
+  text_encoder_quant, cpu_offload, ...}`. A GGUF image model is named by `gguf_filename`, the file inside the
+  repo, which `GET /api/models/gguf-variants` lists; there is no `gguf_variant` field. The route **returns at
+  once** with the status of whatever is resident; the load runs in a thread, so poll
+  `GET .../load-progress` (`{phase: null|downloading|finalizing|ready|error, bytes_downloaded,
+  bytes_total, fraction, error}`) until `ready` or `error`. A model that is not on disk is **downloaded**,
+  so pre-flight must check the files first. Loading the same model again rebuilds it; there is no
+  already-loaded shortcut. 409 for a load in flight, active training, or `gpu_busy` from another account.
+- **GPU hand-off:** a GPU image load evicts the chat model (llama-server) as the load starts, even if the
+  load then fails. Nothing reloads it; an explicit `POST /api/inference/load` brings it back and evicts the
+  image model in turn. STT is not part of this hand-off.
+- `GET .../status` (`DiffusionStatusResponse`): `loaded, repo_id, family, base_repo, device, dtype,
+  model_kind, gguf_filename, gguf_variant, cpu_offload, offload_policy, vae_tiling, memory_mode,
+  speed_mode` (the effective one), `speed_optims[]` (those that engaged), `text_encoder_quant,
+  transformer_quant, attention_backend, transformer_cache, workflows, engine: diffusers|sd_cpp,
+  native_mode, fallback_reason`, and `resolved`, a map of `{value, requested, source, status, reason}` per
+  setting. Another account's model shows as `{loaded: true, yours: false}`.
+- `POST .../generate` with `{prompt, negative_prompt, width, height, steps, guidance, seed, batch_size}`:
+  width and height 256 to 2752 in steps of 16 (the family may cap lower), steps 1 to 100 (default 9),
+  guidance 0 to 20 (default 0), seed 0 to 2^53-1 (-1 is refused; null picks one). It blocks until the PNGs
+  are saved and returns `{images: [GalleryImage]}` with `id, url, seed, steps, guidance, width, height,
+  model, gguf_filename, transformer_quant, created_at, ...` and **no timing fields**. A second generate
+  queues behind the first. 409 "No diffusion model is loaded."; 500 on failure, with an OOM hint.
+  `POST .../generate/cancel` cancels.
+- `GET .../generate-progress` gives `{active, step, total_steps, fraction, eta_seconds}`. `step` rises once
+  per denoising step. After the last step it stays at `total_steps` through the VAE decode, then reads
+  0 of 0 while the PNGs are saved, then `active` turns false. `total_steps` grows by `steps` when an out of
+  memory error splits the batch. Polled at 10 Hz for the per-step timeline.
+- Image bytes: `GET .../gallery/{id}/file`, always PNG.
+- Image routes make no monitor rows (only the OpenAI-shaped route does), so every image time is measured
+  by Model Duel.
 - The OpenAI-shaped `POST /v1/images/generations` has no steps or seed control, so it is not used.
-- Engine differs by platform: diffusers on CUDA and ROCm; on Apple Silicon diffusers on MPS by default,
-  native sd.cpp only with `UNSLOTH_DIFFUSION_SD_CPP_MPS=1`. `speed_mode: off` is the bit-identical
-  baseline; any other value is a fairness knob that must match on both sides.
+- Engine: diffusers on CUDA, ROCm and XPU; sd.cpp only for GGUF on CPU, or on Apple Silicon with
+  `UNSLOTH_DIFFUSION_SD_CPP_MPS=1`. `speed_mode: off` is the bit-identical baseline; `eager`, `default` and
+  `max` add optimisations and compilation, so they must match on both sides. Unset, GGUF runs `default`.
+- The RTX machine has FLUX.2-klein-9B GGUF Q4_K_M and Qwen-Image-2.1 GGUF Q8_0 and Q4_K_M on disk.
 
 ### 2.6 Telemetry
 
@@ -353,6 +379,29 @@ decode tail (end minus last step); seconds per image at the chosen batch size; e
 Quality: side by side with identical seeds. Metal and CUDA produce different pixels even with the same
 seed, so this is a sanity check, not a diff.
 
+As built in phase 10:
+
+- Config: repo and GGUF file (the same on every machine), prompt preset or custom prompt, negative
+  prompt, width and height (256 to 2048, multiples of 16), steps (default 9), guidance (default 0), seed
+  (default 42), memory mode (default auto), speed mode (default off), and whether to load the chat model
+  again afterwards (default on). One image per run.
+- Pre-flight: the file is checked on disk through `gguf-variants` (or the local list for a pipeline);
+  missing is an error, uncheckable a warning. The chat model a load will push out is a **note**, a level
+  that informs without needing "race anyway". Different platforms, or different resolved settings when
+  the model is already resident everywhere, are a warning. Speed modes other than off get a note.
+- Each round: `images/status`, and `images/load` only when the resident model, file, memory mode or speed
+  mode differ; then load-progress until ready. The warm-up makes a two-step image at the same size. Then
+  a round trip and `images/generate`, with `generate-progress` read every 100 ms on fresh connections;
+  each reading is placed at the middle of its request. The image is fetched from the gallery after the
+  timing ends and kept in `data/images/<session>/<run>.png`.
+- Metrics: time per image (request to answer), time to first step, steps per second between the first
+  and last step readings, decode and save (answer minus the last step reading), load time, energy per
+  image, and mean power while denoising. A run whose `total_steps` grew was split for memory and is
+  flagged.
+- After the rounds, and after a cancel too, each machine whose chat model was pushed out gets it back
+  through the load manager, with Model Duel's last load settings for it or the ones its status showed.
+  Cancel answers once the rounds stop, without waiting for that reload.
+
 ### 4.4 Telemetry and energy
 
 Poll per section 2.6 during every run and for five seconds before and after as baseline. Derived: peak
@@ -437,6 +486,10 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   contentType, seconds}`; `GET /api/audio/clip.wav` serves the bundled clip; `GET /api/machines/:id/stt`
   answers a machine's STT status. `POST /api/preflight` and `POST /api/sessions` take `workload`, which
   defaults to `text`.
+- Images (phase 10): `GET /api/machines/:id/image` answers the image status and the image models on disk
+  with their complete GGUF files; `GET /api/sessions/:id/images/:runId` serves a kept image. Sessions are
+  schema version 7, with `image` on each run and `imageBefore`, `imageAfter` and `restore` in the
+  provenance.
 - SSE messages as built in phase 4: `snapshot {session}`, `delta {round, runs: [{machineId, state,
   reasoning, answer, live}]}` every 50 ms, `run {round, run}` when one machine finishes, and
   `finished {session}`. A snapshot and the deltas after it never repeat text: joining flushes pending
@@ -487,7 +540,9 @@ reasoning phase of N tokens, usage and timings in the final chunk, `context_trun
 dropped connections, in-band error frames, tool frames, keep-alive comments, thinking sent as answer text,
 monitor rows and cancel by id, STT with per-engine availability by profile (no whisper.cpp on the Mac
 profile), loads that refuse models not on disk, idle unload, a processing delay per audio second by
-profile and engine, and transcripts with deterministic word errors, image progress at a fixed steps per second, and telemetry that ramps during
+profile and engine, and transcripts with deterministic word errors, image loads that answer at once and finish in the
+background, the chat and image hand-off, step progress that follows Unsloth's phases, a failing load,
+and a PNG per seed, image progress at a fixed steps per second, and telemetry that ramps during
 runs. It can also replay recorded fixtures with their original timing. `npm run demo` starts two mocks on
 different ports plus the app.
 
@@ -524,7 +579,9 @@ testable app.
    transcription runs the slow transformers path. The RTX machine: yes, its `gguf` engine is available and has
    `large-v3-turbo` downloaded (read 2026-09-25). The Lenovo and the Mac: not yet read.
 3. Which image model? The same repo and quant must exist on both machines. Is `speed_mode: off` acceptable
-   as the baseline?
+   as the baseline? The RTX machine has FLUX.2-klein-9B Q4_K_M and Qwen-Image-2.1 Q8_0 and
+   Q4_K_M as GGUF, plus the unsloth FLUX.2-klein-9B and Qwen-Image-2.1-FP8 pipelines (read 2026-09-25).
+   Model Duel defaults to speed mode off.
 4. Bundled public-domain audio and text, or your own files with a reference transcript?
 5. Unsloth version on each machine (About screen), so the probe result can be checked against it.
 

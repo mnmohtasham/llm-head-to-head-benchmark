@@ -6,7 +6,6 @@ import {
   findEntry,
   healthBody,
   hardwareBody,
-  imageStatusBody,
   initialLoaded,
   loadResponseBody,
   localModelsBody,
@@ -22,6 +21,19 @@ import {
   type ProfileName,
   type ProfileState,
 } from './profiles';
+import {
+  DEFAULT_IMAGE,
+  galleryPng,
+  galleryRecord,
+  imageStatusBody,
+  imageTimes,
+  loadProgressBody,
+  newGalleryId,
+  newImageState,
+  progressBody,
+  settleLoad,
+  type ImageMockConfig,
+} from './images';
 import {
   DEFAULT_STT,
   expireIdle,
@@ -74,6 +86,8 @@ export interface MockConfig {
   stream: StreamConfig;
   /** How speech-to-text loads and transcribes. */
   stt: SttMockConfig;
+  /** How image models load and how fast they denoise. */
+  image: ImageMockConfig;
 }
 
 export interface MockOptions {
@@ -133,6 +147,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     gpuBusy: false,
     stream: { ...DEFAULT_STREAM },
     stt: { ...DEFAULT_STT },
+    image: { ...DEFAULT_IMAGE },
   };
   let config: MockConfig = structuredClone(initial);
   /** Chat requests served since the last reset, for `stream.speedFactors`. */
@@ -153,6 +168,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   const monitor: MonitorEntry[] = [];
   const cancels = new Map<string, () => void>();
   let stt = newSttState();
+  let image = newImageState();
 
   const app = Fastify({ logger: false, forceCloseConnections: true, bodyLimit: 1024 * 1024 });
   app.addContentTypeParser(
@@ -213,6 +229,8 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     state.telemetryReads = 0;
     state.activity = 0;
     stt = newSttState();
+    image.generating?.cancel();
+    image = newImageState();
   };
 
   route('GET', '/api/health', false, (_request, _reply, auth) =>
@@ -230,7 +248,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     expireIdle(stt, config.stt);
     return sttBody(profile(), stt);
   });
-  route('GET', '/api/inference/images/status', true, () => imageStatusBody());
+  route('GET', '/api/inference/images/status', true, () => imageStatusBody(profile(), image));
   route('GET', '/api/train/hardware', true, () => telemetryBody(profile(), state));
   route('GET', '/api/models/local', true, () => localModelsBody(profile()));
   route('GET', '/api/models/gguf-variants', true, (request, reply) => {
@@ -320,8 +338,11 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       return loadResponseBody(current, 'already_loaded');
     }
 
-    // Like Unsloth, the previous model leaves memory before the new one loads.
+    // Like Unsloth, the previous model leaves memory before the new one loads, image models too.
     state.loaded = null;
+    image.generating?.cancel();
+    image.loaded = null;
+    image.loading = null;
     const durationMs = config.loadMs ?? profile().loadMs;
     const failure = config.failNextLoad;
     config.failNextLoad = null;
@@ -581,6 +602,137 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     return { text: heard.text };
   });
 
+  const detail = (reply: FastifyReply, status: number, message: string) =>
+    reply.code(status).send({ detail: message });
+
+  /** Starts an image load in the background and answers at once, like Unsloth. */
+  route('POST', '/api/inference/images/load', true, (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const modelPath = text(body.model_path) ?? '';
+    const entry = findEntry(profile(), modelPath);
+    if (!entry || entry.nLayers > 0) {
+      return detail(
+        reply,
+        400,
+        `Could not detect a supported image model family for ${modelPath}.`,
+      );
+    }
+    const filename = text(body.gguf_filename);
+    if (filename) {
+      const files = variantsBody(profile(), entry.loadId)?.variants as
+        Array<{ filename: string; downloaded: boolean }> | undefined;
+      const file = files?.find((f) => f.filename.toLowerCase() === filename.toLowerCase());
+      if (!file?.downloaded) {
+        return detail(reply, 400, `${filename} is not on disk, and the mock does not download.`);
+      }
+    }
+    if (image.loading) return detail(reply, 409, 'A diffusion load is already in progress.');
+    // The GPU goes to the image model: the chat model is pushed out as the load starts.
+    settlePending?.({ kind: 'cancelled' });
+    state.loaded = null;
+    state.pending = null;
+    cachedPrompts.length = 0;
+    image.generating?.cancel();
+    image.loaded = null;
+    image.loadError = null;
+    const failure = config.image.failNextLoad;
+    config.image.failNextLoad = null;
+    image.loading = {
+      repoId: entry.loadId,
+      ggufFilename: filename,
+      memoryMode: text(body.memory_mode) ?? 'auto',
+      speedMode: text(body.speed_mode) ?? (filename ? 'default' : 'off'),
+      startedAt: Date.now(),
+      durationMs: imageTimes(profile(), config.image).loadMs,
+      fails: failure,
+    };
+    return imageStatusBody(profile(), image);
+  });
+
+  route('GET', '/api/inference/images/load-progress', true, () => loadProgressBody(image));
+  route('GET', '/api/inference/images/generate-progress', true, () => progressBody(image));
+
+  route('POST', '/api/inference/images/generate', true, async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const width = int(body.width, 1024);
+    const height = int(body.height, 1024);
+    const steps = int(body.steps, 9);
+    const side = (v: number) => v >= 256 && v <= 2752 && v % 16 === 0;
+    if (!side(width) || !side(height) || steps < 1 || steps > 100) {
+      return reply.code(422).send({ detail: 'Invalid width, height or steps.' });
+    }
+    if (typeof body.seed === 'number' && (body.seed < 0 || !Number.isInteger(body.seed))) {
+      return reply.code(422).send({ detail: 'seed must be between 0 and 2^53 - 1.' });
+    }
+    // One generation at a time: later ones wait their turn.
+    const before = image.queue;
+    let release = () => undefined as void;
+    image.queue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await before;
+    try {
+      settleLoad(image);
+      const loaded = image.loaded;
+      if (!loaded) return detail(reply, 409, 'No diffusion model is loaded.');
+      const times = imageTimes(profile(), config.image);
+      const scale = (width * height) / (1024 * 1024);
+      let cancelled = false;
+      const current = {
+        total: steps,
+        step: 0,
+        phase: 'steps' as 'steps' | 'decode' | 'save',
+        cancel: () => {
+          cancelled = true;
+        },
+      };
+      image.generating = current;
+      state.activeStreams += 1;
+      try {
+        for (let i = 0; i < steps && !cancelled; i += 1) {
+          await sleep(times.stepMs * scale);
+          current.step = i + 1;
+        }
+        if (!cancelled) {
+          current.phase = 'decode';
+          await sleep(times.decodeMs * scale);
+          current.phase = 'save';
+          await sleep(20);
+        }
+      } finally {
+        state.activeStreams -= 1;
+        if (image.generating === current) image.generating = null;
+      }
+      if (cancelled) return detail(reply, 409, 'Diffusion generation was cancelled.');
+      const seed = typeof body.seed === 'number' ? body.seed : Math.floor(Math.random() * 2 ** 31);
+      const id = newGalleryId();
+      image.gallery.set(id, { seed, width, height, png: null });
+      return { images: [galleryRecord(id, body, seed, loaded)] };
+    } finally {
+      release();
+    }
+  });
+
+  route('POST', '/api/inference/images/generate/cancel', true, () => {
+    const running = image.generating;
+    running?.cancel();
+    return { cancelled: running !== null };
+  });
+
+  route('GET', '/api/inference/images/gallery/:id/file', true, (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = image.gallery.get(id);
+    if (!entry) return detail(reply, 404, 'Image not found.');
+    return reply.type('image/png').send(galleryPng(entry));
+  });
+
+  route('POST', '/api/inference/images/unload', true, () => {
+    image.generating?.cancel();
+    image.loaded = null;
+    image.loading = null;
+    return imageStatusBody(profile(), image);
+  });
+
   /** Unsloth clears the caller's own rows; the mock has only one caller. */
   route('DELETE', '/api/inference/monitor', true, () => {
     const cleared = monitor.length;
@@ -613,10 +765,13 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   // Control routes for tests and manual poking. Not part of Unsloth.
   app.get('/__mock/config', async () => config);
   app.post('/__mock/config', async (request, reply) => {
-    const patch = (request.body ?? {}) as Partial<Omit<MockConfig, 'routes' | 'stream' | 'stt'>> & {
+    const patch = (request.body ?? {}) as Partial<
+      Omit<MockConfig, 'routes' | 'stream' | 'stt' | 'image'>
+    > & {
       routes?: Record<string, RouteOverride | null>;
       stream?: Partial<StreamConfig>;
       stt?: Partial<SttMockConfig>;
+      image?: Partial<ImageMockConfig>;
     };
     if (patch.profile !== undefined && !PROFILE_NAMES.includes(patch.profile)) {
       return reply
@@ -628,13 +783,14 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       if (override === null) delete routes[path];
       else routes[path] = override;
     }
-    const { routes: _ignored, stream, stt: speech, ...rest } = patch;
+    const { routes: _ignored, stream, stt: speech, image: images, ...rest } = patch;
     config = {
       ...config,
       ...rest,
       routes,
       stream: { ...config.stream, ...stream },
       stt: { ...config.stt, ...speech },
+      image: { ...config.image, ...images },
     } as MockConfig;
     if (patch.profile !== undefined) resetModels();
     return config;

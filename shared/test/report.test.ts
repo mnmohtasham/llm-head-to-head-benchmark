@@ -39,6 +39,9 @@ function race(): SessionView {
       request: { model: 'org/Model-A' },
       sttBefore: null,
       sttAfter: null,
+      imageBefore: null,
+      imageAfter: null,
+      restore: null,
     },
     {
       machineId: 'slow',
@@ -51,6 +54,9 @@ function race(): SessionView {
       request: { model: 'org/Model-B' },
       sttBefore: null,
       sttAfter: null,
+      imageBefore: null,
+      imageAfter: null,
+      restore: null,
     },
   ];
   return session;

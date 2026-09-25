@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
 import type { RunEnergy, TelemetrySample } from './telemetry';
+import type { ImageResult } from './images';
 import type { TranscriptionResult } from './transcribe';
 import { detailOf } from './probe';
 import type { SseMessage } from './sse';
@@ -453,6 +454,8 @@ export interface LiveMetrics {
   chunks: number;
   /** From the chunk count, until the final usage arrives. */
   decodeTokPerSec: number | null;
+  /** Image runs: the denoising step reached, while the image is made. */
+  steps?: { done: number; total: number } | null;
 }
 
 export interface RunView {
@@ -491,6 +494,8 @@ export interface RunView {
   requestedAtMs: number | null;
   /** The transcription workload's result; null for text. */
   transcription: TranscriptionResult | null;
+  /** The image workload's result; null otherwise. */
+  image: ImageResult | null;
 }
 
 export interface RunTelemetry {

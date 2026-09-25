@@ -1,5 +1,6 @@
 import type { MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
+import { imagePrompt } from './images';
 import { PRESETS } from './presets';
 import { LIBRISPEECH_CLIP } from './transcribe';
 import {
@@ -156,6 +157,30 @@ const ROUND_CELLS = {
           text: done ? `${formatValue(t?.rtf ?? null, '×')} real time` : '',
         },
         { value: wer, text: wer === null ? '' : `WER ${formatValue(wer, '%')}` },
+      ];
+    },
+  },
+  image: {
+    names: ['time (ms)', 'speed (steps/s)', 'first step (ms)'],
+    cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
+      const done = run?.state === 'done';
+      const image = done ? (run?.image ?? null) : null;
+      const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
+      return [
+        done
+          ? { value: image?.totalMs ?? null, text: formatMsValue(image?.totalMs ?? null) }
+          : { value: state, text: state },
+        {
+          value: image?.stepsPerSec ?? null,
+          text: done ? formatValue(image?.stepsPerSec ?? null, 'steps/s') : '',
+        },
+        {
+          value: image?.firstStepMs ?? null,
+          text:
+            image?.firstStepMs === null || !image
+              ? ''
+              : `first step ${formatMsValue(image.firstStepMs)}`,
+        },
       ];
     },
   },
@@ -329,12 +354,100 @@ const STT_SETUP: readonly SetupSpec[] = [
   ),
 ];
 
+const image = (p: MachineProvenance) => p.imageAfter;
+
+/** Image setup: what was asked for, and the settings Unsloth resolved to. */
+const IMAGE_SETUP: readonly SetupSpec[] = [
+  {
+    key: 'image-model',
+    label: 'Model',
+    matters: true,
+    pick: (p, s) => text(image(p)?.repoId ?? (s.workload === 'image' ? s.config.model : null)),
+  },
+  {
+    key: 'image-file',
+    label: 'File',
+    matters: true,
+    pick: (p, s) =>
+      text(
+        image(p)?.ggufFilename?.split('/').pop() ??
+          (s.workload === 'image' ? (s.config.ggufFilename ?? 'diffusers pipeline') : null),
+      ),
+  },
+  { key: 'image-engine', label: 'Engine', matters: true, pick: (p) => text(image(p)?.engine) },
+  {
+    key: 'image-fallback',
+    label: 'Why this engine',
+    matters: false,
+    pick: (p) =>
+      text(image(p)?.fallbackReason ?? (image(p)?.engine === 'sd_cpp' ? 'native sd.cpp' : null)),
+  },
+  { key: 'image-device', label: 'Device', matters: true, pick: (p) => text(image(p)?.device) },
+  { key: 'image-dtype', label: 'Precision', matters: true, pick: (p) => text(image(p)?.dtype) },
+  {
+    key: 'image-speed',
+    label: 'Speed mode that ran',
+    matters: true,
+    pick: (p) => {
+      const s = image(p);
+      if (!s) return 'n/a';
+      const optims = s.speedOptims.length > 0 ? ` (${s.speedOptims.join(', ')})` : '';
+      return `${text(s.speedMode)}${optims}`;
+    },
+  },
+  {
+    key: 'image-quant',
+    label: 'Transformer quantisation',
+    matters: true,
+    pick: (p) => (image(p) ? (image(p)?.transformerQuant ?? 'none, as stored') : 'n/a'),
+  },
+  {
+    key: 'image-te-quant',
+    label: 'Text encoder quantisation',
+    matters: true,
+    pick: (p) => (image(p) ? (image(p)?.textEncoderQuant ?? 'none') : 'n/a'),
+  },
+  {
+    key: 'image-offload',
+    label: 'Memory mode and offload',
+    matters: true,
+    pick: (p) =>
+      image(p) ? `${text(image(p)?.memoryMode)}, offload ${text(image(p)?.offloadPolicy)}` : 'n/a',
+  },
+  {
+    key: 'image-attention',
+    label: 'Attention',
+    matters: false,
+    pick: (p) => (image(p) ? (image(p)?.attentionBackend ?? 'default') : 'n/a'),
+  },
+  {
+    key: 'image-restore',
+    label: 'Chat model afterwards',
+    matters: false,
+    pick: (p) => {
+      const r = p.restore;
+      if (!r) return p.statusBefore?.activeModel ? 'left unloaded' : 'none was loaded';
+      return r.state === 'loaded'
+        ? `${r.model} loaded again`
+        : r.state === 'failed'
+          ? `reload failed: ${r.error ?? 'unknown'}`
+          : `${r.model} left unloaded`;
+    },
+  },
+  ...SETUP.filter((spec) => ['unsloth', 'gpu', 'os', 'ram', 'notes', 'address'].includes(spec.key)),
+];
+
 /** What each machine ran, from the snapshot taken with the race. */
 export function setupTable(session: SessionView): TableModel {
   const provenance = session.machines.map(
     (machine) => session.provenance.find((p) => p.machineId === machine.id) ?? null,
   );
-  const specs = session.workload === 'transcribe' ? STT_SETUP : SETUP;
+  const specs =
+    session.workload === 'transcribe'
+      ? STT_SETUP
+      : session.workload === 'image'
+        ? IMAGE_SETUP
+        : SETUP;
   return {
     title: 'Setup',
     columns: ['Setting', ...session.machines.map((m) => m.name)],
@@ -381,6 +494,15 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
     joulesPerMinute: {
       noun: 'Energy per audio minute',
       win: (w, r) => `${w} uses ${r}× less energy per audio minute`,
+    },
+    imageTime: { noun: 'Time per image', win: (w, r) => `${w} makes an image ${r}× faster` },
+    stepsPerSec: {
+      noun: 'Denoising speed',
+      win: (w, r) => `${w} runs ${r}× more denoising steps per second`,
+    },
+    energyPerImage: {
+      noun: 'Energy per image',
+      win: (w, r) => `${w} uses ${r}× less energy per image`,
     },
   };
 
@@ -522,6 +644,19 @@ export function toMarkdown(session: SessionView): string {
       `- ${cfg.prefill === 'cold' ? 'Cold' : 'Warm'} prefill: ${cfg.prefill === 'cold' ? "a fresh line started each round's prompt and the seed was sent, so no cached prompt helped" : 'the same prompt every round without a seed, so later rounds could reuse the cache'}`,
       `- Sampling: temperature ${sampling.temperature}, top-p ${sampling.topP}, top-k ${sampling.topK}, min-p ${sampling.minP}, repetition penalty ${sampling.repetitionPenalty}${cfg.prefill === 'cold' ? `, seed ${sampling.seed}` : ''}`,
     );
+  } else if (session.workload === 'image') {
+    const cfg = session.config;
+    const prompt = imagePrompt(cfg);
+    lines.push(
+      '## Settings',
+      '',
+      `- Prompt: "${mdEscape(prompt)}"${cfg.negativePrompt ? `, negative "${mdEscape(cfg.negativePrompt)}"` : ''}`,
+      `- Model ${cfg.model}${cfg.ggufFilename ? `, file ${cfg.ggufFilename}` : ', diffusers pipeline'}`,
+      `- ${cfg.width}×${cfg.height}, ${cfg.steps} steps, guidance ${cfg.guidance}, seed ${cfg.seed}, one image per run`,
+      `- Memory mode ${cfg.memoryMode}, speed mode ${cfg.speedMode} asked for${cfg.speedMode === 'off' ? ', the bit-identical baseline' : ''}`,
+      '- Step times come from polling Unsloth ten times a second, so they are good to about 100 ms. The decode time runs from the last step to the answer and includes saving the image.',
+      '- The same seed gives different pixels on Apple Silicon and on CUDA, so the images are a sanity check, not a comparison.',
+    );
   } else {
     const cfg = session.config;
     lines.push(
@@ -543,9 +678,11 @@ export function toMarkdown(session: SessionView): string {
     '',
     '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
     `- A machine wins a row only when its median is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
-    session.workload === 'transcribe'
-      ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
-      : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
+    session.workload === 'image'
+      ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
+      : session.workload === 'transcribe'
+        ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
+        : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
     '- Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, read twice a second and added up over the run.',
     '',
     'Made with Model Duel.',

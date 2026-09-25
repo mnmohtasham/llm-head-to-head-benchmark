@@ -4,15 +4,16 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 9 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 10 of [ROADMAP.md](ROADMAP.md), milestone M3.** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
 check that stops races that would not be fair. Every machine's GPU, power, CPU, RAM and
 temperature show live, and every run gets its energy. A finished race reads as a scoreboard with
 charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
-Speech-to-text races the same way, with real-time factor and word error rate. The image benchmark
-comes next. [PLAN.md](PLAN.md) is the full specification.
+Speech-to-text races the same way, with real-time factor and word error rate, and so does image
+generation, with a live step timeline and the images side by side. Throughput mode and a command
+agent come next. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -258,6 +259,41 @@ ICASSP 2015, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 utterances were decoded from the corpus's FLAC to 16 kHz mono WAV and joined end to end, with no
 other change. The file is `server/assets/librispeech-6930-75918.wav`.
 
+## Race machines on image generation
+
+The **Image** tab sends the same prompt, size, steps and seed to every machine's Unsloth image
+generation.
+
+1. Pick the machines. Each chip says which image model is in memory, or which chat model is.
+2. Pick the model and, for a GGUF model, the quant. The list holds the image models on the picked
+   machines' disks; "(on 1 of 2)" marks one some machines lack. Pre-flight stops a file that is not
+   fully downloaded, because loading it would start a download.
+3. Pick a prompt, the size, steps, guidance and seed. Unsloth's defaults are 9 steps and guidance
+   0, which suit distilled models such as FLUX.2 klein.
+4. **Speed mode** stays **Off** unless you want Unsloth's optimisations: Off is the baseline that
+   gives the same pixels every time. The others compile the model during the first images, so keep
+   the warm-up on.
+5. **Start**. The image model loads where it is not in memory, and that time is kept apart.
+
+**Unsloth gives the GPU to one kind of model at a time:** loading the image model unloads the
+chat model on that machine. Pre-flight says which. With **Load each machine's chat model again
+after the race** on, Model Duel loads it back with the settings it had once the race is over, even
+after a cancel, and the setup table says whether that worked.
+
+Each pane shows the step it is on while it runs, then:
+
+- **Speed** in denoising steps per second, and **time per image** from request to answer.
+- The **time to first step** (reading the prompt), and the **decode and save** after the last
+  step.
+- The image itself, kept in `data/images/` so the race still shows it later.
+
+Unsloth reports no timing for images, so Model Duel reads its progress about ten times a second,
+and step times are good to about 100 ms. The chart shows each machine's steps against time. The
+setup lists what each machine resolved to: engine, device, precision, speed mode and the
+optimisations that engaged, quantisation and offload. Apple Silicon and CUDA resolve differently,
+and the same seed gives different pixels on them, so pre-flight warns and the images are a sanity
+check rather than a comparison.
+
 ## Security
 
 - The app has no login. It binds to 127.0.0.1 unless you pass `--host`, and then prints a
@@ -325,6 +361,16 @@ curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/
      -d '{"stt": {"loadMs": 2000, "msPerAudioSecond": 40, "idleUnloadMs": 10000}}'
 ```
 
+Image generation has a load time, a time per step at 1024 by 1024 (smaller images take
+proportionally less), a decode time, and a load that fails. Loading an image model unloads the
+mock's chat model and the other way round, as in Unsloth. Its images are coloured shapes that
+depend only on the seed.
+
+```bash
+curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
+     -d '{"image": {"loadMs": 3000, "stepMs": 200, "decodeMs": 500, "failNextLoad": "Out of memory"}}'
+```
+
 Other stream settings are `jitterMs`, `tokensPerChunk`, `keepaliveEveryMs`, `errorMessage`,
 `toolFrames` (Unsloth's UI frames, which clients must ignore), `truncated` (the prompt was cut to
 fit), `thinkingInAnswer` (the model skipped its thinking block), `cachedPromptTokens` and
@@ -370,6 +416,10 @@ out.
   Transformers engine. Unsloth's `scripts/build_whisper_cpp.sh` builds the faster engine.
 - **"… is not downloaded for gguf on …"**: download that speech model in Unsloth Studio on that
   machine, or pick one it has. Model Duel never starts a download during a race.
+- **"… is not fully downloaded on …"** on the Image tab: download that quant in Unsloth Studio,
+  or pick one the machine has.
+- **The chat model is gone after an image race**: loading an image model unloads it. Turn on
+  **Load each machine's chat model again after the race**, or load it on the **Models** tab.
 - **"… cannot run GGUF speech models"**: that machine will use Transformers, so the race compares
   engines as well as hardware. Build whisper.cpp there, or pick **Transformers** for every machine.
 - **Browser tests find no browser**: run `npx playwright install chromium`, or set

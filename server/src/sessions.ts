@@ -22,6 +22,12 @@ import {
   withNonce,
   wordErrorRate,
   audioLabel,
+  imagePrompt,
+  imageRequestBody,
+  stepMetrics,
+  type ImageConfig,
+  type ModelStatus,
+  type RestoreOutcome,
   type RunPhases,
   type TranscribeConfig,
   type WorkloadConfig,
@@ -52,6 +58,14 @@ import { cancelOnMachine, readMonitorRow } from './monitor';
 import { measureRtt } from './rtt';
 import { resolveAudio, warmupAudio, type Audio, type AudioStore } from './audio';
 import {
+  cancelImage,
+  ensureImageModel,
+  fetchGalleryImage,
+  generateImage,
+  readImageStatus,
+} from './imagegen';
+import type { ImageStore } from './imagestore';
+import {
   clearMonitor,
   ensureSttModel,
   readSttStatus,
@@ -70,6 +84,8 @@ export interface RunTimings {
   flushEveryMs: number;
   /** Telemetry recorded before the first and after the last run, as a baseline. */
   telemetryBaselineMs: number;
+  /** How often an image's progress is read: its step times are good to about this much. */
+  imagePollMs: number;
 }
 
 export const DEFAULT_RUN_TIMINGS: RunTimings = {
@@ -77,6 +93,7 @@ export const DEFAULT_RUN_TIMINGS: RunTimings = {
   totalTimeoutMs: 30 * 60_000,
   flushEveryMs: 50,
   telemetryBaselineMs: 5000,
+  imagePollMs: 100,
 };
 
 /** Finished sessions kept in memory, so the page does not wait for the disk right after a race. */
@@ -141,6 +158,11 @@ interface ActiveSession {
   phases: Map<string, { phases: RunPhases; outputTokens: number | null }>;
   /** The audio of a transcription session, resolved once before the first round. */
   audio: Audio | null;
+  /** Machines where this session asked for an image load, which pushed the chat model out. */
+  imageLoads: boolean[];
+  /** Resolves when the rounds are over, before any chat model is loaded again. */
+  roundsOver: Promise<void>;
+  endRounds: () => void;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -196,6 +218,12 @@ const audioRunLabel = (config: TranscribeConfig): RunLabel => ({
   thinking: false,
   reasoningEffort: null,
 });
+const imageRunLabel = (config: ImageConfig): RunLabel => ({
+  prompt: imagePrompt(config),
+  maxTokens: 0,
+  thinking: false,
+  reasoningEffort: null,
+});
 
 function newRun(machine: StoredMachine, config: RunLabel): StoredRun {
   return {
@@ -227,6 +255,7 @@ function newRun(machine: StoredMachine, config: RunLabel): StoredRun {
     timeline: null,
     requestedAtMs: null,
     transcription: null,
+    image: null,
     raw: null,
   };
 }
@@ -254,6 +283,9 @@ export class SessionManager {
       isLoading: (machineId: string) => boolean;
       telemetry: TelemetryHub;
       audio: AudioStore;
+      images: ImageStore;
+      /** Loads a machine's chat model again with the settings it had; for image races. */
+      restoreText: (machine: StoredMachine, status: ModelStatus) => Promise<RestoreOutcome>;
     },
   ) {}
 
@@ -305,7 +337,9 @@ export class SessionManager {
     const workload: WorkloadConfig =
       request.workload === 'text'
         ? { workload: 'text', config: { ...request.config } }
-        : { workload: 'transcribe', config: structuredClone(request.config) };
+        : request.workload === 'transcribe'
+          ? { workload: 'transcribe', config: structuredClone(request.config) }
+          : { workload: 'image', config: structuredClone(request.config) };
     const session: StoredSession = {
       ...workload,
       schemaVersion: SESSION_SCHEMA_VERSION,
@@ -344,7 +378,13 @@ export class SessionManager {
       starts: new Map(),
       phases: new Map(),
       audio: null,
+      imageLoads: machines.map(() => false),
+      roundsOver: Promise.resolve(),
+      endRounds: () => undefined,
     };
+    entry.roundsOver = new Promise((resolve) => {
+      entry.endRounds = resolve;
+    });
     this.active.set(id, entry);
     entry.done = this.execute(entry).catch(async (error: unknown) => {
       this.deps.log.error({ err: error, sessionId: id }, 'race stopped by an error');
@@ -362,12 +402,18 @@ export class SessionManager {
     if (!entry) return this.get(id);
     entry.controller.abort();
     // Also ask Unsloth by id, in case a dropped connection is noticed late.
-    await Promise.allSettled(
-      (entry.current?.runs ?? [])
-        .filter((run) => run.requestAt !== null && run.view.finishedAt === null)
-        .map((run) => cancelOnMachine(run.machine, entry.current?.cancelId ?? run.view.id)),
+    const inFlight = (entry.current?.runs ?? []).filter(
+      (run) => run.requestAt !== null && run.view.finishedAt === null,
     );
-    await entry.done;
+    await Promise.allSettled(
+      inFlight.map((run) =>
+        entry.session.workload === 'image'
+          ? cancelImage(run.machine)
+          : cancelOnMachine(run.machine, entry.current?.cancelId ?? run.view.id),
+      ),
+    );
+    // An image race still loads the chat models again after this, so do not wait for that.
+    await entry.roundsOver;
     return this.get(id);
   }
 
@@ -405,7 +451,9 @@ export class SessionManager {
   async remove(id: string): Promise<'deleted' | 'running' | 'missing'> {
     if (this.active.has(id)) return 'running';
     this.recent.delete(id);
-    return (await this.deps.sessions.remove(id)) ? 'deleted' : 'missing';
+    const removed = await this.deps.sessions.remove(id);
+    if (removed) await this.deps.images.removeSession(id);
+    return removed ? 'deleted' : 'missing';
   }
 
   async close(): Promise<void> {
@@ -436,6 +484,9 @@ export class SessionManager {
       request: null,
       sttBefore: null,
       sttAfter: null,
+      imageBefore: null,
+      imageAfter: null,
+      restore: null,
     };
   }
 
@@ -563,6 +614,24 @@ export class SessionManager {
       entry.models[index] = session.config.model;
       return;
     }
+    if (session.workload === 'image') {
+      if (this.deps.isLoading(machine.id)) {
+        entry.unready[index] =
+          `A model is loading on ${machine.name}. Wait for it to finish, then start again.`;
+        return;
+      }
+      // The chat model is read first, so it can be loaded again after the race.
+      const [chat, image] = await Promise.all([readModelStatus(machine), readImageStatus(machine)]);
+      provenance.statusBefore = chat.status;
+      provenance.imageBefore = image.status;
+      if (!image.status) {
+        entry.unready[index] =
+          `${machine.name} cannot generate images: ${image.error ?? 'no answer'}.`;
+        return;
+      }
+      entry.models[index] = session.config.model;
+      return;
+    }
     if (this.deps.isLoading(machine.id)) {
       entry.unready[index] =
         `A model is loading on ${machine.name}. Wait for it to finish, then start again.`;
@@ -630,7 +699,12 @@ export class SessionManager {
         }
         this.attachTelemetry(entry);
       }
+      entry.endRounds();
+      if (session.workload === 'image' && session.config.restoreText) {
+        await this.restoreChatModels(entry);
+      }
     } finally {
+      entry.endRounds();
       releaseTelemetry?.();
       clearInterval(timer);
       entry.lag.disable();
@@ -674,10 +748,47 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Loads each machine's chat model again, where this race's image load pushed it out, with the
+   * settings it had. Runs even after a cancel, since the machine is left without its chat model.
+   */
+  private async restoreChatModels(entry: ActiveSession): Promise<void> {
+    const targets = entry.machines
+      .map((machine, i) => ({ machine, provenance: entry.session.provenance[i] }))
+      .filter(
+        (t, i): t is { machine: StoredMachine; provenance: MachineProvenance } =>
+          entry.imageLoads[i] === true && !!t.provenance?.statusBefore?.activeModel,
+      );
+    if (targets.length === 0) return;
+    this.setProgress(entry, 'restoring', null);
+    await Promise.all(
+      targets.map(async ({ machine, provenance }) => {
+        try {
+          provenance.restore = await this.deps.restoreText(
+            machine,
+            provenance.statusBefore as ModelStatus,
+          );
+        } catch (error) {
+          provenance.restore = {
+            model: provenance.statusBefore?.activeModel ?? 'the chat model',
+            quant: provenance.statusBefore?.quant ?? null,
+            state: 'failed',
+            error: (error as Error).message,
+            durationMs: null,
+          };
+        }
+      }),
+    );
+  }
+
   private async runRound(entry: ActiveSession, index: number, warmup: boolean): Promise<void> {
     const { session, controller } = entry;
     if (session.workload === 'transcribe') {
       await this.runTranscribeRound(entry, session.config, index, warmup);
+      return;
+    }
+    if (session.workload === 'image') {
+      await this.runImageRound(entry, session.config, index, warmup);
       return;
     }
     const signal = controller.signal;
@@ -795,6 +906,238 @@ export class SessionManager {
     this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
     entry.current = null;
     await this.deps.sessions.save(session);
+  }
+
+  /**
+   * An image round: every machine gets the image model loaded if it is not (which pushes its chat
+   * model out), a round-trip check, then the same prompt and seed together or in turns. The
+   * warm-up makes a two-step image at the same size, which also triggers any compilation.
+   */
+  private async runImageRound(
+    entry: ActiveSession,
+    config: ImageConfig,
+    index: number,
+    warmup: boolean,
+  ): Promise<void> {
+    const { session, controller } = entry;
+    const signal = controller.signal;
+    const view: StoredRound = {
+      index,
+      startedAt: null,
+      finishedAt: null,
+      sendSkewMs: null,
+      order: [],
+      nonce: null,
+      runs: entry.machines.map((machine) => newRun(machine, imageRunLabel(config))),
+      loopLagMs: null,
+      flags: [],
+    };
+    const round: LiveRound = {
+      view,
+      warmup,
+      lag: monitorEventLoopDelay({ resolution: 10 }),
+      cancelId: randomUUID(),
+      controller: new AbortController(),
+      truncatedBy: null,
+      runs: entry.machines.map((machine, i) => ({
+        view: view.runs[i] as StoredRun,
+        machine,
+        provenance: session.provenance[i] as MachineProvenance,
+        unsentReasoning: '',
+        unsentAnswer: '',
+        requestAt: null,
+        firstTokenAt: null,
+        lastTokenAt: null,
+      })),
+    };
+    for (const [i, run] of round.runs.entries()) run.view.modelBefore = entry.models[i] ?? null;
+    if (warmup) session.warmup = view;
+    else session.rounds.push(view);
+    entry.current = round;
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+
+    for (const [i, run] of round.runs.entries()) {
+      const why = entry.unready[i];
+      if (why) this.finishRun(entry, round, run, 'failed', why);
+    }
+    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+
+    this.setProgress(entry, 'loading', warmup ? null : index);
+    const loads = new Map<string, number | null>();
+    await Promise.all(
+      ready.map(async (run) => {
+        const i = entry.machines.indexOf(run.machine);
+        const loaded = await ensureImageModel(run.machine, config, {
+          signal,
+          timeoutMs: this.deps.timings.totalTimeoutMs,
+          onLoad: () => {
+            entry.imageLoads[i] = true;
+          },
+        });
+        if (loaded.error) this.finishRun(entry, round, run, 'failed', loaded.error);
+        else loads.set(run.view.id, loaded.loadMs);
+      }),
+    );
+    const sending = ready.filter((run) => run.view.finishedAt === null);
+    if (!warmup && sending.length > 0) {
+      this.setProgress(entry, 'rtt', index);
+      const rtts = await Promise.all(
+        sending.map((run) => measureRtt(run.machine.baseUrl, { signal })),
+      );
+      sending.forEach((run, i) => {
+        run.view.rtt = rtts[i] ?? null;
+      });
+    }
+    if (!signal.aborted && sending.length > 0) {
+      this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
+      round.lag.enable();
+      view.startedAt = new Date().toISOString();
+      const body = imageRequestBody(
+        warmup ? { ...config, steps: Math.min(config.steps, 2) } : config,
+      );
+      const send = (run: LiveRun) =>
+        this.sendImage(entry, round, run, body, loads.get(run.view.id) ?? null);
+      if (session.plan.sequencing === 'concurrent') {
+        const pending = sending.map((run) => send(run));
+        view.order = sending.map((run) => run.machine.id);
+        const first = Math.min(...sending.map((run) => run.requestAt ?? 0));
+        const last = Math.max(...sending.map((run) => run.requestAt ?? 0));
+        view.sendSkewMs = round3(last - first);
+        for (const run of sending) run.view.sendOffsetMs = round3((run.requestAt ?? 0) - first);
+        await Promise.all(pending);
+      } else {
+        const order = abbaOrder(sending, warmup ? 0 : index);
+        view.order = order.map((run) => run.machine.id);
+        for (const run of order) run.view.state = 'queued';
+        for (const run of order) {
+          if (signal.aborted) break;
+          await send(run);
+        }
+      }
+      round.lag.disable();
+      view.loopLagMs = lagOf(round.lag);
+    }
+    for (const run of round.runs) {
+      if (signal.aborted) this.finishRun(entry, round, run, 'cancelled', null);
+    }
+    view.finishedAt = new Date().toISOString();
+    if (!warmup) {
+      const names = new Map(session.machines.map((m) => [m.id, m.name]));
+      view.flags = roundFlags(view.runs, names, view.loopLagMs);
+      const splits = view.runs.filter((run) => run.image && run.image.totalSteps > run.image.steps);
+      for (const run of splits) {
+        view.flags.push({
+          kind: 'split',
+          machineId: run.machineId,
+          text: `${run.machineName} ran short of memory and made the image in parts, so its steps took longer.`,
+        });
+      }
+    }
+    this.flush(entry);
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    entry.current = null;
+    await this.deps.sessions.save(session);
+  }
+
+  /** Sends the prompt to one machine, follows its steps, and keeps the image it made. */
+  private async sendImage(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    body: Record<string, unknown>,
+    loadMs: number | null,
+  ): Promise<void> {
+    const { machine } = run;
+    if (!round.warmup) run.provenance.request ??= body;
+    run.view.state = 'streaming';
+    run.view.live = { ...run.view.live, steps: { done: 0, total: Number(body.steps) || 0 } };
+    run.requestAt = performance.now();
+    run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
+    entry.starts.set(run.view.id, run.view.requestedAtMs);
+    const outcome = await generateImage(machine, body, {
+      signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
+      timeoutMs: this.deps.timings.totalTimeoutMs,
+      pollMs: this.deps.timings.imagePollMs,
+      onStep: (done, total) => {
+        run.view.live = { ...run.view.live, steps: { done, total } };
+      },
+    });
+    if (outcome.cancelled) {
+      this.finishRun(entry, round, run, 'cancelled', null);
+      return;
+    }
+    if (outcome.error) {
+      this.finishRun(entry, round, run, 'failed', `${machine.name}: ${outcome.error}`);
+      return;
+    }
+    if (outcome.status !== 200) {
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'failed',
+        detailOf(outcome.body) || `The image request answered HTTP ${outcome.status ?? 'nothing'}.`,
+      );
+      return;
+    }
+    const totalMs = outcome.endAt - outcome.requestAt;
+    const first = ((outcome.body as { images?: unknown[] } | null)?.images?.[0] ?? {}) as {
+      id?: unknown;
+      seed?: unknown;
+      width?: unknown;
+      height?: unknown;
+    };
+    const galleryId = typeof first.id === 'string' ? first.id : null;
+    const steps = Number(body.steps) || 0;
+    const metrics = stepMetrics(outcome.timeline, Math.max(outcome.totalSteps, steps), totalMs);
+    // The image and the settings that served are read after the timing is done.
+    const [png, after] = await Promise.all([
+      galleryId && !round.warmup ? fetchGalleryImage(machine, galleryId) : Promise.resolve(null),
+      round.warmup ? Promise.resolve(null) : readImageStatus(machine),
+    ]);
+    const stored = png
+      ? await this.deps.images.save(entry.session.id, run.view.id, png).catch(() => false)
+      : false;
+    if (after?.status) run.provenance.imageAfter = after.status;
+    const num = (v: unknown) => (typeof v === 'number' ? v : null);
+    run.view.image = {
+      galleryId,
+      stored,
+      width: num(first.width),
+      height: num(first.height),
+      seed: num(first.seed),
+      steps,
+      loadMs: loadMs === null ? null : round3(loadMs),
+      timeline: outcome.timeline,
+      totalSteps: Math.max(outcome.totalSteps, steps),
+      firstStepMs: metrics.firstStepMs === null ? null : round3(metrics.firstStepMs),
+      lastStepMs: metrics.lastStepMs === null ? null : round3(metrics.lastStepMs),
+      stepsPerSec: metrics.stepsPerSec,
+      decodeTailMs: metrics.decodeTailMs === null ? null : round3(metrics.decodeTailMs),
+      resolutionMs: metrics.resolutionMs,
+      totalMs: round3(totalMs),
+      engine: after?.status?.engine ?? null,
+      device: after?.status?.device ?? null,
+      dtype: after?.status?.dtype ?? null,
+      speedMode: after?.status?.speedMode ?? null,
+    };
+    run.view.live = {
+      ...run.view.live,
+      elapsedMs: totalMs,
+      steps: { done: steps, total: Math.max(outcome.totalSteps, steps) },
+    };
+    run.view.loopLagMs = lagOf(round.lag);
+    const start = performance.timeOrigin + outcome.requestAt;
+    entry.phases.set(run.view.id, {
+      phases: {
+        start,
+        firstToken: metrics.firstStepMs === null ? null : start + metrics.firstStepMs,
+        lastToken: metrics.lastStepMs === null ? null : start + metrics.lastStepMs,
+        end: start + totalMs,
+      },
+      outputTokens: null,
+    });
+    this.finishRun(entry, round, run, 'done', null);
   }
 
   /**

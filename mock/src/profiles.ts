@@ -281,6 +281,22 @@ export const PROFILES: Record<ProfileName, Profile> = {
         quants: [{ quant: 'Q4_K_M', sizeGb: 4.2, downloaded: true }],
       },
       {
+        loadId: 'unsloth/FLUX.2-klein-9B-GGUF',
+        modelId: 'unsloth/FLUX.2-klein-9B-GGUF',
+        displayName: 'FLUX.2-klein-9B-GGUF',
+        source: 'hf_cache',
+        format: 'gguf',
+        task: 'text-to-image',
+        nativeContext: 0,
+        nLayers: 0,
+        supportsReasoning: false,
+        sizeGb: 5.6,
+        quants: [
+          { quant: 'Q8_0', sizeGb: 10.0, downloaded: false },
+          { quant: 'Q4_K_M', sizeGb: 5.6, downloaded: true },
+        ],
+      },
+      {
         loadId: 'unsloth/gemma-4-12B-it-qat-GGUF',
         modelId: 'unsloth/gemma-4-12B-it-qat-GGUF',
         displayName: 'gemma-4-12B-it-qat-GGUF',
@@ -667,37 +683,6 @@ export function loadResponseBody(
     native_context_length: m.entry.nativeContext,
     supports_reasoning: m.entry.supportsReasoning,
     is_mlx: m.entry.format === 'mlx',
-  };
-}
-
-export function imageStatusBody(): Record<string, unknown> {
-  return {
-    loaded: false,
-    repo_id: null,
-    family: null,
-    base_repo: null,
-    device: null,
-    dtype: null,
-    model_kind: null,
-    gguf_filename: null,
-    gguf_variant: null,
-    cpu_offload: false,
-    offload_policy: null,
-    vae_tiling: false,
-    memory_mode: null,
-    speed_mode: null,
-    speed_optims: [],
-    text_encoder_quant: null,
-    transformer_quant: null,
-    attention_backend: null,
-    transformer_cache: null,
-    workflows: [],
-    conditioning: null,
-    engine: null,
-    native_mode: null,
-    fallback_reason: null,
-    supports_lora: false,
-    supports_controlnet: false,
   };
 }
 

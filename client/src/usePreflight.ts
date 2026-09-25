@@ -48,6 +48,7 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
     issues,
     errors: issues.filter((issue) => issue.level === 'error'),
     warnings: issues.filter((issue) => issue.level === 'warning'),
+    notes: issues.filter((issue) => issue.level === 'note'),
     /** Nothing checked yet, an error, or warnings the user has not accepted. */
     stops:
       current === null ||
