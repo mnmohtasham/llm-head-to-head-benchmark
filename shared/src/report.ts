@@ -1,5 +1,6 @@
 import { metricKind, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
+import { CLOUD_INFO } from './cloud';
 import { TEMPLATE_INFO } from './commands';
 import { imagePrompt } from './images';
 import { PRESETS } from './presets';
@@ -272,13 +273,28 @@ interface SetupSpec {
 }
 
 const SETUP: readonly SetupSpec[] = [
-  { key: 'model', label: 'Model', matters: true, pick: (p) => text(p.statusBefore?.activeModel) },
-  { key: 'quant', label: 'Quant', matters: true, pick: (p) => text(p.statusBefore?.quant) },
+  {
+    key: 'model',
+    label: 'Model',
+    matters: true,
+    pick: (p) => text(p.statusBefore?.activeModel ?? p.cloud?.model?.id),
+  },
+  {
+    key: 'quant',
+    label: 'Quant',
+    matters: true,
+    pick: (p) => (p.cloud ? 'the provider’s' : text(p.statusBefore?.quant)),
+  },
   {
     key: 'backend',
     label: 'Backend',
     matters: true,
-    pick: (p) => (p.statusBefore ? backendLabel(p.statusBefore.backend) : 'n/a'),
+    pick: (p) =>
+      p.cloud
+        ? `${CLOUD_INFO[p.cloud.provider].label} API, cloud`
+        : p.statusBefore
+          ? backendLabel(p.statusBefore.backend)
+          : 'n/a',
   },
   {
     key: 'context',

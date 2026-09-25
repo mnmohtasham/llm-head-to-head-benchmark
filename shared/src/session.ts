@@ -17,6 +17,7 @@ import {
   type SttStatus,
   type TranscribeConfig,
 } from './transcribe';
+import type { CloudConfig } from './cloud';
 import {
   commandConfigSchema,
   TEMPLATE_INFO,
@@ -161,6 +162,8 @@ export interface MachineProvenance {
   restore: RestoreOutcome | null;
   /** The agent's health before a command session: its ffmpeg, encoders and clips. */
   agent: AgentHealth | null;
+  /** A cloud reference model: the provider and the model, with what it accepts. */
+  cloud?: CloudConfig | null;
 }
 
 export interface RestoreOutcome {

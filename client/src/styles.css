@@ -1948,3 +1948,24 @@ textarea {
 .field .size-inputs input:not([type='checkbox']) {
   width: 96px;
 }
+
+.state-cloud {
+  color: var(--accent);
+}
+
+.cloud-facts {
+  margin: 0;
+  font-size: 14px;
+}
+
+.fetch-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.fetch-row select {
+  flex: 1 1 220px;
+  min-width: 0;
+}

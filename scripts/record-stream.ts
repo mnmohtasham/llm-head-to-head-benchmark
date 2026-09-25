@@ -68,6 +68,7 @@ async function pickMachine(): Promise<StoredMachine> {
       apiKey: values.key ?? process.env.UNSLOTH_API_KEY ?? null,
       agentUrl: null,
       agentToken: null,
+      cloud: null,
       createdAt: now,
       updatedAt: now,
     };

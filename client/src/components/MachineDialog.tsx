@@ -242,24 +242,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
           {errors.notes ? <p className="field-error">{errors.notes}</p> : null}
         </div>
 
-        <fieldset className="field">
-          <legend>Colour</legend>
-          <div className="swatches">
-            {MACHINE_COLORS.map((swatch) => (
-              <label key={swatch} className="swatch" title={MACHINE_COLOR_NAMES[swatch]}>
-                <input
-                  type="radio"
-                  name={`${id}-color`}
-                  value={swatch}
-                  checked={color === swatch}
-                  onChange={() => setColor(swatch)}
-                />
-                <span className="swatch-fill" style={{ background: swatch }} aria-hidden="true" />
-                <span className="sr-only">{MACHINE_COLOR_NAMES[swatch]}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <ColorField name={`${id}-color`} color={color} onChange={setColor} />
 
         {formError ? (
           <p className="form-error" role="alert">
@@ -277,5 +260,37 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         </div>
       </form>
     </dialog>
+  );
+}
+
+/** The colour a machine gets in charts and panes. */
+export function ColorField({
+  name,
+  color,
+  onChange,
+}: {
+  name: string;
+  color: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <fieldset className="field">
+      <legend>Colour</legend>
+      <div className="swatches">
+        {MACHINE_COLORS.map((swatch) => (
+          <label key={swatch} className="swatch" title={MACHINE_COLOR_NAMES[swatch]}>
+            <input
+              type="radio"
+              name={name}
+              value={swatch}
+              checked={color === swatch}
+              onChange={() => onChange(swatch)}
+            />
+            <span className="swatch-fill" style={{ background: swatch }} aria-hidden="true" />
+            <span className="sr-only">{MACHINE_COLOR_NAMES[swatch]}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }

@@ -1,6 +1,7 @@
 import {
   interpretMessage,
   SseParser,
+  type ChatEvent,
   type NetworkError,
   type RunTimeline,
   type SseMessage,
@@ -19,7 +20,27 @@ export interface StreamOutcome {
   errorBody: unknown;
   failure: StreamFailure | null;
   networkError: NetworkError | null;
+  /** Response headers that name the request or time it, when the server sends them. */
+  headers: Record<string, string>;
 }
+
+/** Where to post, and how to read the stream: Unsloth's OpenAI chat stream, or a cloud provider's. */
+export interface StreamTarget {
+  url: string;
+  headers: Record<string, string>;
+  /** Turns each SSE message into chat events; Unsloth's reader when left out. */
+  interpret?: (message: SseMessage) => ChatEvent[];
+  /** Events once the stream has ended, for providers that end without saying so. */
+  end?: () => ChatEvent[];
+}
+
+/** Headers worth keeping from an answer: request ids and server-side processing time. */
+const KEPT_HEADERS = [
+  'openai-processing-ms',
+  'x-request-id',
+  'request-id',
+  'x-gemini-service-tier',
+];
 
 export interface StreamOptions {
   signal: AbortSignal;
@@ -44,6 +65,23 @@ export async function streamChatCompletion(
   body: Record<string, unknown>,
   options: StreamOptions,
 ): Promise<StreamOutcome> {
+  return streamSse(
+    {
+      url: `${baseUrl}/v1/chat/completions`,
+      headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+    },
+    body,
+    options,
+  );
+}
+
+/** Posts a streaming request to any target and stamps each read as it arrives. */
+export async function streamSse(
+  target: StreamTarget,
+  body: Record<string, unknown>,
+  options: StreamOptions,
+): Promise<StreamOutcome> {
+  const interpret = target.interpret ?? interpretMessage;
   const agent = new Agent({ connect: { timeout: 10_000 }, keepAliveTimeout: 1000 });
   const total = AbortSignal.timeout(options.totalTimeoutMs);
   const signal = AbortSignal.any([options.signal, total]);
@@ -52,12 +90,13 @@ export async function streamChatCompletion(
   const headers: Record<string, string> = {
     accept: 'text/event-stream',
     'content-type': 'application/json',
+    ...target.headers,
   };
-  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  const kept: Record<string, string> = {};
 
   const take = (messages: SseMessage[]) => {
     for (const message of messages) {
-      for (const event of interpretMessage(message)) {
+      for (const event of interpret(message)) {
         const timed: TimedEvent = { t: message.t, read: message.read, event };
         events.push(timed);
         options.onEvent?.(timed);
@@ -72,7 +111,7 @@ export async function streamChatCompletion(
   let headersAt: number | null = null;
   const requestAt = performance.now();
   try {
-    const response = await request(`${baseUrl}/v1/chat/completions`, {
+    const response = await request(target.url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -83,6 +122,10 @@ export async function streamChatCompletion(
     });
     headersAt = performance.now();
     status = response.statusCode;
+    for (const name of KEPT_HEADERS) {
+      const value = response.headers[name];
+      if (typeof value === 'string') kept[name] = value;
+    }
     if (status !== 200) {
       const text = await response.body.text();
       try {
@@ -98,7 +141,13 @@ export async function streamChatCompletion(
         options.onRead?.(bytes, t);
         take(parser.push(bytes, t));
       }
-      take(parser.end(performance.now()));
+      const ended = performance.now();
+      take(parser.end(ended));
+      for (const event of target.end?.() ?? []) {
+        const timed: TimedEvent = { t: ended, read: parser.readCount, event };
+        events.push(timed);
+        options.onEvent?.(timed);
+      }
     }
   } catch (error) {
     const code = (error as { code?: string }).code ?? '';
@@ -118,5 +167,6 @@ export async function streamChatCompletion(
     errorBody,
     failure,
     networkError,
+    headers: kept,
   };
 }

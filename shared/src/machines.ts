@@ -1,5 +1,6 @@
 import type { PreflightIssue } from './preflight';
 import { z } from 'zod';
+import { CLOUD_PROVIDERS, type CloudConfig } from './cloud';
 import type { AgentHealth } from './commands';
 import type { ProbeReport } from './probe';
 
@@ -38,6 +39,37 @@ const apiKey = z.string().trim().max(500, 'That key is too long.');
 const agentUrl = z.string().trim().max(300, 'That address is too long.');
 const agentToken = z.string().trim().max(500, 'That token is too long.');
 
+/** A model as a provider's list gave it, chosen by the user; the server checks its shape. */
+export const cloudModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  label: z.string().max(200),
+  contextWindow: z.number().nullable(),
+  maxOutput: z.number().nullable(),
+  thinking: z.enum(['always', 'optional', 'none']),
+  thinkingStyle: z
+    .enum([
+      'openai-effort',
+      'anthropic-adaptive',
+      'anthropic-enabled',
+      'gemini-level',
+      'gemini-budget',
+    ])
+    .nullable(),
+  efforts: z.array(z.string().max(20)).max(10),
+  sampling: z.object({
+    temperature: z.boolean(),
+    topP: z.boolean(),
+    topK: z.boolean(),
+    seed: z.boolean(),
+  }),
+});
+
+/** A cloud participant: which provider, and the model picked from its list. */
+export const cloudSchema = z.object({
+  provider: z.enum(CLOUD_PROVIDERS),
+  model: cloudModelSchema.nullable(),
+});
+
 export const machineCreateSchema = z.object({
   name,
   baseUrl,
@@ -47,6 +79,8 @@ export const machineCreateSchema = z.object({
   /** The Model Duel agent on this machine, for command workloads; empty for none. */
   agentUrl: agentUrl.optional(),
   agentToken: agentToken.optional(),
+  /** Makes this a cloud reference model instead of a machine running Unsloth. */
+  cloud: cloudSchema.optional(),
 });
 export type MachineCreateInput = z.infer<typeof machineCreateSchema>;
 
@@ -61,6 +95,8 @@ export const machineUpdateSchema = z.object({
   agentUrl: agentUrl.nullable().optional(),
   /** As for the API key: leave out or "" to keep, null to remove. */
   agentToken: agentToken.nullable().optional(),
+  /** For a cloud participant: another model from its provider's list. */
+  cloud: cloudSchema.optional(),
 });
 export type MachineUpdateInput = z.infer<typeof machineUpdateSchema>;
 
@@ -88,6 +124,8 @@ export interface MachineView {
   hasApiKey: boolean;
   apiKeyMasked: string | null;
   agentUrl: string | null;
+  /** Set for a cloud reference model; null for a machine running Unsloth. */
+  cloud: CloudConfig | null;
   hasAgentToken: boolean;
   agentTokenMasked: string | null;
   createdAt: string;

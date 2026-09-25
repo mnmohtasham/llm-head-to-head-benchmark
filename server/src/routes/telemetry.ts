@@ -33,7 +33,13 @@ export function registerTelemetryRoutes(
   app.get<{ Querystring: { machines?: string } }>(
     '/api/telemetry/stream',
     async (request, reply) => {
-      const known = new Set(store.list().map((m) => m.id));
+      // Cloud models have no hardware to read.
+      const known = new Set(
+        store
+          .list()
+          .filter((m) => !m.cloud)
+          .map((m) => m.id),
+      );
       const wanted = request.query.machines?.split(',').filter((id) => known.has(id)) ?? [...known];
       reply.hijack();
       const raw = reply.raw;

@@ -147,6 +147,31 @@ describe('the data folder on startup', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  it('opens a machines file from before cloud models and agents, as local machines', async () => {
+    const dataDir = await tempDir();
+    const saved = {
+      id: '11111111-2222-4333-8444-555555555555',
+      name: 'Old RTX',
+      baseUrl: 'http://192.168.1.20:8888',
+      notes: '',
+      color: '#e8a33d',
+      apiKey: 'sk-unsloth-old-machine-000000000000001',
+      createdAt: '2026-09-20T10:00:00.000Z',
+      updatedAt: '2026-09-20T10:00:00.000Z',
+    };
+    await writeFile(
+      path.join(dataDir, 'machines.json'),
+      JSON.stringify({ schemaVersion: 1, machines: [saved] }),
+    );
+    const app = await buildApp({ dataDir });
+    const [view] = (await app.inject({ method: 'GET', url: '/api/machines' })).json<
+      MachineView[]
+    >();
+    expect(view).toMatchObject({ name: 'Old RTX', cloud: null, agentUrl: null, hasApiKey: true });
+    await app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
   it('refuses to start on a damaged or newer machines file instead of overwriting it', async () => {
     const dataDir = await tempDir();
     const file = path.join(dataDir, 'machines.json');

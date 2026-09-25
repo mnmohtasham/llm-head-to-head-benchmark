@@ -1,7 +1,7 @@
 {
   "$id": "urn:model-duel:schema:result:1",
   "title": "Model Duel result",
-  "description": "One benchmark race between machines running Unsloth Studio: settings, machines, every round and run with its measurements, and the statistics. See docs/result-format.md.",
+  "description": "One benchmark race between machines running Unsloth Studio, and cloud models as references: settings, machines, every round and run with its measurements, and the statistics. See docs/result-format.md.",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
@@ -122,6 +122,30 @@
           },
           "color": {
             "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["local", "cloud"]
+          },
+          "cloud": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "required": ["provider", "model"],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "hardware": {
             "type": "object",

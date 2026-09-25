@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { DEMO_MACHINES } from '../../scripts/demo-config';
-import { E2E_MOCK_PORTS } from '../ports';
+import { E2E_MOCK_PORTS, E2E_UNUSED_PORT } from '../ports';
 
 // Phase 1 demo script: add two machines, probe them, break one, fix it, edit, export, delete.
 const [MAC, LINUX] = DEMO_MACHINES;
@@ -81,10 +81,10 @@ test('an address where nothing listens gets a plain-language error, and can be d
   page,
 }) => {
   await page.goto('/');
-  await addMachine(page, 'Nowhere', '127.0.0.1:18899');
+  await addMachine(page, 'Nowhere', `127.0.0.1:${E2E_UNUSED_PORT}`);
   const nowhere = card(page, 'Nowhere');
   await expect(nowhere.getByTestId('cap-reachable')).toHaveAttribute('data-status', 'error');
-  await expect(nowhere).toContainText('Nothing is listening at 127.0.0.1:18899.');
+  await expect(nowhere).toContainText(`Nothing is listening at 127.0.0.1:${E2E_UNUSED_PORT}.`);
 
   await nowhere.getByRole('button', { name: 'Delete' }).click();
   const confirm = page.getByRole('dialog', { name: 'Delete machine' });

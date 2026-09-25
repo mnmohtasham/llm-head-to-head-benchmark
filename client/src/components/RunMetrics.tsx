@@ -1,4 +1,4 @@
-import { thinkingMissing, type RunView } from '@duel/shared';
+import { CLOUD_INFO, cloudUsage, thinkingMissing, type RunView } from '@duel/shared';
 import { formatMsValue, formatRate } from '../format';
 
 export type Row = [label: string, measured: string, reported: string];
@@ -30,6 +30,10 @@ export function RunMetrics({ run }: { run: RunView }) {
   if (!c) return null;
   const t = run.server?.timings ?? null;
   const m = run.server?.monitor ?? null;
+  // A cloud provider reports tokens, not timings.
+  const cloud = run.server?.cloud ?? null;
+  const usage = cloud ? cloudUsage(cloud.provider, cloud.usage) : null;
+  const reporter = cloud ? CLOUD_INFO[cloud.provider].label : 'Unsloth';
   const serverDecode = t?.predictedPerSecond ?? m?.tokPerSec ?? null;
   const tokens = (value: number | null | undefined) =>
     value === null || value === undefined ? 'n/a' : value.toLocaleString('en-US');
@@ -38,8 +42,9 @@ export function RunMetrics({ run }: { run: RunView }) {
     : 'n/a';
 
   // llama-server counts only the prompt tokens it had to process; the cached ones are separate.
-  const serverPrompt =
-    t?.promptN !== null && t?.promptN !== undefined
+  const serverPrompt = usage
+    ? usage.prompt
+    : t?.promptN !== null && t?.promptN !== undefined
       ? t.promptN + (t.cacheN ?? 0)
       : (m?.promptTokens ?? null);
   const draftN = t?.draftN ?? null;
@@ -74,9 +79,9 @@ export function RunMetrics({ run }: { run: RunView }) {
     [
       'Output tokens',
       `${tokens(c.outputTokens ?? c.chunks)}${c.outputTokens === null ? ' chunks' : ''}`,
-      tokens(t?.predictedN ?? m?.completionTokens),
+      tokens(usage ? usage.output : (t?.predictedN ?? m?.completionTokens)),
     ],
-    ['Cached prompt tokens', tokens(c.cachedTokens), tokens(t?.cacheN)],
+    ['Cached prompt tokens', tokens(c.cachedTokens), tokens(usage ? usage.cached : t?.cacheN)],
     ['Speculative drafts accepted', 'n/a', drafts],
     ['Chunk gaps: mean / median / p95 / max', gaps, 'n/a'],
     ['Chunks', `${c.chunks}, of which ${c.coalescedChunks} arrived together`, 'n/a'],
@@ -107,7 +112,7 @@ export function RunMetrics({ run }: { run: RunView }) {
             <tr>
               <th scope="col">Metric</th>
               <th scope="col">Measured by Model Duel</th>
-              <th scope="col">Reported by Unsloth</th>
+              <th scope="col">Reported by {reporter}</th>
             </tr>
           </thead>
           <tbody>
@@ -122,11 +127,30 @@ export function RunMetrics({ run }: { run: RunView }) {
         </table>
       </div>
       <ul className="metrics-notes">
-        <li>
-          Model Duel measures from the moment the request leaves this computer, so its times include
-          the network. Unsloth measures on the machine itself.
-        </li>
-        {network !== null ? (
+        {cloud ? (
+          <li data-testid="cloud-note">
+            {reporter} is a cloud reference: Model Duel measures from the moment the request leaves
+            this computer, so its times include the internet and {reporter}&apos;s own queue, and{' '}
+            {reporter} reports no timings of its own.
+            {cloud.processingMs !== null
+              ? ` Its processing-time header said ${formatMsValue(cloud.processingMs)}.`
+              : ''}
+            {cloud.requestId ? ` Request id ${cloud.requestId}.` : ''}
+          </li>
+        ) : (
+          <li>
+            Model Duel measures from the moment the request leaves this computer, so its times
+            include the network. Unsloth measures on the machine itself.
+          </li>
+        )}
+        {cloud && usage?.reasoning ? (
+          <li data-testid="cloud-reasoning">
+            {run.reasoning
+              ? `${reporter} streamed a summary of its thinking, not all of it, but billed all ${tokens(usage.reasoning)} thinking tokens. The decode speed counts them over the time from the first streamed token, so read it as approximate.`
+              : `${reporter} thought for ${tokens(usage.reasoning)} tokens it did not show. They are billed, but left out of the decode speed, which counts only the tokens that streamed.`}
+          </li>
+        ) : null}
+        {cloud ? null : network !== null ? (
           <li data-testid="network-share">
             The network and request handling add {formatMsValue(network)} to the first token.
           </li>
@@ -176,8 +200,8 @@ export function RunMetrics({ run }: { run: RunView }) {
         {cached > 0 ? (
           <li data-testid="prompt-cache">
             {tokens(cached)} of {tokens(c.promptTokens ?? serverPrompt)} prompt tokens came from
-            Unsloth&apos;s prompt cache, so the first token came sooner than it would for a new
-            prompt.
+            {cloud ? `${reporter}’s` : 'Unsloth’s'} prompt cache, so the first token came sooner
+            than it would for a new prompt.
           </li>
         ) : null}
         {thinkingMissing(run.thinking, c) ? (

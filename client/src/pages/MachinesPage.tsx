@@ -3,6 +3,8 @@ import { useCallback, useState, type Dispatch, type SetStateAction } from 'react
 import { api, messageOf } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
+import { CloudCard } from '../components/CloudCard';
+import { CloudDialog, type CloudFormValues } from '../components/CloudDialog';
 import { MachineCard } from '../components/MachineCard';
 import { MachineDialog, type MachineFormValues } from '../components/MachineDialog';
 import { TelemetrySwitch } from '../components/TelemetryChips';
@@ -10,7 +12,8 @@ import { TopBar } from '../components/TopBar';
 import { useNow } from '../useNow';
 import { useTelemetry } from '../useTelemetry';
 
-type DialogState = { mode: 'add' } | { mode: 'edit'; machine: MachineView } | null;
+type DialogState =
+  { mode: 'add' } | { mode: 'add-cloud' } | { mode: 'edit'; machine: MachineView } | null;
 
 function describeProbe(report: ProbeReport): string {
   if (report.overall === 'ok') {
@@ -36,7 +39,8 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
   const [deleting, setDeleting] = useState<MachineView | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const now = useNow();
-  const telemetry = useTelemetry((machines ?? []).map((m) => m.id));
+  const local = (machines ?? []).filter((m) => !m.cloud);
+  const telemetry = useTelemetry(local.map((m) => m.id));
 
   const probe = useCallback(
     async (machine: MachineView) => {
@@ -72,7 +76,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
   );
 
   const probeAll = () => {
-    for (const machine of machines ?? []) void probe(machine);
+    for (const machine of local) void probe(machine);
   };
 
   const save = async (values: MachineFormValues) => {
@@ -95,6 +99,28 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
     void probe(created);
   };
 
+  const saveCloud = async (values: CloudFormValues) => {
+    if (dialog?.mode === 'edit') {
+      const updated = await api.updateMachine(dialog.machine.id, {
+        ...values,
+        notes: dialog.machine.notes,
+      });
+      setMachines((list) => list?.map((m) => (m.id === updated.id ? updated : m)) ?? [updated]);
+      setDialog(null);
+      addLog({ machineName: updated.name, color: updated.color, tone: 'info', text: 'Saved.' });
+      return;
+    }
+    const created = await api.createMachine(values);
+    setMachines((list) => [...(list ?? []), created]);
+    setDialog(null);
+    addLog({
+      machineName: created.name,
+      color: created.color,
+      tone: 'info',
+      text: `Added ${values.cloud.model.id} as a cloud reference.`,
+    });
+  };
+
   const remove = async () => {
     if (!deleting) return;
     await api.deleteMachine(deleting.id);
@@ -112,7 +138,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
         current="machines"
         actions={
           <>
-            {machines && machines.length > 0 ? (
+            {local.length > 0 ? (
               <button
                 type="button"
                 className="btn btn-outline"
@@ -122,6 +148,13 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
                 Probe all
               </button>
             ) : null}
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setDialog({ mode: 'add-cloud' })}
+            >
+              Add cloud model
+            </button>
             <button type="button" className="btn btn-primary" onClick={openAdd}>
               Add machine
             </button>
@@ -132,7 +165,8 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
       <main className="main">
         <p className="subbar">
           Each machine runs Unsloth Studio. A probe checks that Model Duel can reach it, that the
-          API key works, and what the machine can run.
+          API key works, and what the machine can run. Cloud models from OpenAI, Anthropic and
+          Google race on the Text tab as a reference.
         </p>
 
         {loadError ? (
@@ -142,7 +176,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
         ) : null}
         {machines === null && !loadError ? <p className="loading">Loading machines…</p> : null}
         {machines && machines.length === 0 ? <EmptyState onAdd={openAdd} /> : null}
-        {machines && machines.length > 0 ? (
+        {local.length > 0 ? (
           <section className="panel telemetry-panel" aria-label="Live hardware">
             <TelemetrySwitch enabled={telemetry.enabled} onError={setTelemetryError} />
             {telemetryError ? <p className="field-error">{telemetryError}</p> : null}
@@ -150,29 +184,46 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
         ) : null}
         {machines && machines.length > 0 ? (
           <div className="machine-grid">
-            {machines.map((machine) => (
-              <MachineCard
-                key={machine.id}
-                machine={machine}
-                probing={probing.has(machine.id)}
-                now={now}
-                onProbe={() => void probe(machine)}
-                onEdit={() => setDialog({ mode: 'edit', machine })}
-                onDelete={() => setDeleting(machine)}
-                telemetry={{
-                  enabled: telemetry.enabled,
-                  status: telemetry.statuses[machine.id],
-                  sample: telemetry.latest[machine.id],
-                }}
-              />
-            ))}
+            {machines.map((machine) =>
+              machine.cloud ? (
+                <CloudCard
+                  key={machine.id}
+                  machine={{ ...machine, cloud: machine.cloud }}
+                  onEdit={() => setDialog({ mode: 'edit', machine })}
+                  onDelete={() => setDeleting(machine)}
+                />
+              ) : (
+                <MachineCard
+                  key={machine.id}
+                  machine={machine}
+                  probing={probing.has(machine.id)}
+                  now={now}
+                  onProbe={() => void probe(machine)}
+                  onEdit={() => setDialog({ mode: 'edit', machine })}
+                  onDelete={() => setDeleting(machine)}
+                  telemetry={{
+                    enabled: telemetry.enabled,
+                    status: telemetry.statuses[machine.id],
+                    sample: telemetry.latest[machine.id],
+                  }}
+                />
+              ),
+            )}
           </div>
         ) : null}
 
         <LogPanel machines={machines ?? []} entries={log} />
       </main>
 
-      {dialog ? (
+      {dialog?.mode === 'add-cloud' || (dialog?.mode === 'edit' && dialog.machine.cloud) ? (
+        <CloudDialog
+          key={dialog.mode === 'edit' ? dialog.machine.id : 'add-cloud'}
+          machine={dialog.mode === 'edit' ? dialog.machine : null}
+          usedColors={(machines ?? []).map((m) => m.color)}
+          onSubmit={saveCloud}
+          onClose={() => setDialog(null)}
+        />
+      ) : dialog ? (
         <MachineDialog
           key={dialog.mode === 'edit' ? dialog.machine.id : 'add'}
           machine={dialog.mode === 'edit' ? dialog.machine : null}
@@ -184,7 +235,11 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
       {deleting ? (
         <ConfirmDialog
           title="Delete machine"
-          message={`Delete ${deleting.name}? Its saved API key and last probe are removed from this computer. Unsloth on that machine is not touched.`}
+          message={
+            deleting.cloud
+              ? `Delete ${deleting.name}? Its saved API key is removed from this computer. Races it ran keep their results.`
+              : `Delete ${deleting.name}? Its saved API key and last probe are removed from this computer. Unsloth on that machine is not touched.`
+          }
           confirmLabel="Delete"
           onConfirm={remove}
           onClose={() => setDeleting(null)}

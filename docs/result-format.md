@@ -39,10 +39,11 @@ sharing results, for example on a public results website. The app's own session 
 | Field | Meaning |
 | --- | --- |
 | `index`, `label`, `color` | The machine's position, the name the user gave it, and its colour in the app. |
+| `kind`, `cloud` | `local` for a machine running Unsloth, `cloud` for a provider's model raced as a reference. For a cloud model, `cloud` has `provider` (`openai`, `anthropic` or `gemini`) and `model` (the provider's model id), and `hardware`, `software` and `state` are empty. Files from before cloud models have neither field. |
 | `hardware` | `os`, `backend` (for example `cuda`), `memoryTotalGb`, and `gpus` with `name` and `memoryGb`, from the machine's last probe. |
 | `software` | Unsloth, Unsloth Studio and llama.cpp versions. |
 | `state` | What the machine's own routes said: `textBefore`/`textAfter` (the chat model's status), `sttBefore`/`sttAfter`, `imageBefore`/`imageAfter`, `restore` (the chat model loaded again after an image race) and `agent` (the command agent's health). Each is `null` when it does not apply. |
-| `request` | The exact request body the machine received, without keys. |
+| `request` | The exact request body the machine received, without keys: for a cloud model, the body of the provider's own API. |
 | `setup` | The report's setup table for this machine: `key`, `label`, `value` and `differs` (true when a setting that matters differs between the machines). |
 
 ## Rounds and runs
@@ -61,7 +62,7 @@ their requests left), `nonce` (the fresh line that opened a cold-prefill prompt)
 | `rtt` | Round trips just before the round: `samplesMs` and `medianMs`. |
 | `loopLagMs` | How late the controller's event loop ran: large values make the timings suspect. |
 | `metrics` | The run's value for each key in `metricDefinitions`, or `null`. |
-| `details` | Everything measured, by workload: `client` (the stream as Model Duel timed it), `server` (Unsloth's own timings and monitor row), `transcription`, `image`, `throughput` and `command`. The ones that do not apply are `null`. |
+| `details` | Everything measured, by workload: `client` (the stream as Model Duel timed it), `server` (Unsloth's own timings and monitor row; for a cloud model, `server.cloud` with the provider's `usage`, `requestId` and `processingMs`), `transcription`, `image`, `throughput` and `command`. The ones that do not apply are `null`. |
 | `text` | Text runs: `reasoning` (the thinking) and `answer`. |
 | `telemetry` | Hardware samples around the run and the energy they add up to (`energy`), when telemetry was on. |
 | `timeline` | Text runs: `[ms since the request, tokens so far, 1 while thinking]`. |
@@ -98,7 +99,8 @@ overlap (at least two rounds each); otherwise `tie`, or `none` with fewer than t
 
 Taken out before a file is written:
 
-- API keys and agent tokens. They never enter a session in the first place.
+- API keys, cloud keys included, and agent tokens. They never enter a session in the first place,
+  and anything shaped like a key in a message is replaced with `<key>`.
 - Machine addresses and notes.
 - Local paths and network addresses inside messages, statuses and settings: home folders become
   `~`, other absolute paths keep only their file name after `<path>/`, and URLs and IP addresses

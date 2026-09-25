@@ -123,8 +123,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const sessionStore = new SessionStore(options.dataDir, app.log);
   await sessionStore.init();
   const results = new ResultStore(options.dataDir, { version, build });
-  // Races from before result files get theirs now, in the background.
-  void results
+  // Races from before result files get theirs now, in the background; closing waits for them.
+  const backfilled = results
     .backfill(
       (async function* () {
         for (const summary of sessionStore.summaries()) {
@@ -158,6 +158,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     results,
   });
   app.addHook('onClose', async () => {
+    await backfilled;
     await loads.close();
     await sessions.close();
     telemetry.close();

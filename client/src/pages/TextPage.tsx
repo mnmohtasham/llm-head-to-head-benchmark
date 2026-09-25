@@ -1,10 +1,12 @@
 import {
+  CLOUD_INFO,
   DEFAULT_SAMPLING,
   MAX_CONCURRENCY,
   PRESETS,
   REASONING_EFFORTS,
   sessionRequestSchema,
   textConfigSchema,
+  type CloudModel,
   type MachineStatusView,
   type MachineView,
   type ModelStatus,
@@ -53,6 +55,13 @@ function commonEfforts(statuses: ModelStatus[]): string[] {
     ),
   );
   return (first ?? []).filter((level) => rest.every((levels) => levels.includes(level)));
+}
+
+/** Effort levels any of these cloud models takes; each gets the nearest level it offers. */
+function cloudEfforts(models: CloudModel[]): string[] {
+  return REASONING_EFFORTS.filter(
+    (level) => level !== 'none' && models.some((m) => m.efforts.includes(level)),
+  );
 }
 
 interface Props {
@@ -141,7 +150,11 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     );
   }, [machines]);
 
-  const machineKey = (machines ?? []).map((m) => m.id).join(',');
+  // Cloud models have no status to read.
+  const machineKey = (machines ?? [])
+    .filter((m) => !m.cloud)
+    .map((m) => m.id)
+    .join(',');
   useEffect(() => {
     for (const id of machineKey.split(',').filter(Boolean)) {
       api.machineStatus(id).then(
@@ -161,20 +174,32 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     }
   }, [machineKey]);
 
-  // Race every machine that has a model, once every status is in.
+  // Race every machine that has a model, once every status is in. Cloud models, which cost
+  // money, join only when picked, unless there is nothing else.
   useEffect(() => {
     if (selected !== null || !machines?.length) return;
-    if (!machines.every((m) => statuses[m.id])) return;
-    const ready = machines.filter((m) => statuses[m.id]?.status?.activeModel).map((m) => m.id);
-    setSelected(ready.length > 0 ? ready : machines.slice(0, 1).map((m) => m.id));
+    const local = machines.filter((m) => !m.cloud);
+    if (!local.every((m) => statuses[m.id])) return;
+    const ready = local.filter((m) => statuses[m.id]?.status?.activeModel).map((m) => m.id);
+    const fallback = local[0] ?? machines.find((m) => m.cloud?.model) ?? machines[0];
+    setSelected(ready.length > 0 ? ready : fallback ? [fallback.id] : []);
   }, [selected, machines, statuses]);
 
   const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
   const chosenStatuses = chosen.map((m) => statuses[m.id]?.status ?? null);
   const loaded = chosenStatuses.filter((s): s is ModelStatus => !!s?.activeModel);
-  const canThink = loaded.some((s) => s.supportsReasoning);
-  const alwaysThinks = loaded.length > 0 && loaded.every((s) => s.reasoningAlwaysOn);
-  const effortLevels = commonEfforts(loaded);
+  const cloudModels = chosen
+    .map((m) => m.cloud?.model)
+    .filter((model): model is CloudModel => !!model);
+  const answering = loaded.length + cloudModels.length;
+  const canThink =
+    loaded.some((s) => s.supportsReasoning) || cloudModels.some((m) => m.thinking !== 'none');
+  const alwaysThinks =
+    answering > 0 &&
+    loaded.every((s) => s.reasoningAlwaysOn) &&
+    cloudModels.every((m) => m.thinking === 'always');
+  // Local models set the levels when there are any; cloud models take the nearest they offer.
+  const effortLevels = loaded.length > 0 ? commonEfforts(loaded) : cloudEfforts(cloudModels);
   const effortValue = effort ?? (effortLevels.includes('low') ? 'low' : '');
 
   // The config the form describes, or the reason it cannot be sent yet.
@@ -294,9 +319,12 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         key: m.id,
         machine: m,
         run: null,
-        model: statuses[m.id]?.status?.activeModel ?? null,
+        model: m.cloud
+          ? (m.cloud.model?.id ?? null)
+          : (statuses[m.id]?.status?.activeModel ?? null),
       }));
-  const telemetry = useTelemetry(panes.map((pane) => pane.key));
+  const cloudIds = new Set((machines ?? []).filter((m) => m.cloud).map((m) => m.id));
+  const telemetry = useTelemetry(panes.map((pane) => pane.key).filter((id) => !cloudIds.has(id)));
   const columns = Math.min(Math.max(panes.length, 1), 4);
 
   const votable =
@@ -380,6 +408,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               onToggle={toggle}
               running={running}
               describe={(m) => {
+                if (m.cloud) {
+                  return `${CLOUD_INFO[m.cloud.provider].label} · ${m.cloud.model?.id ?? 'no model chosen'}`;
+                }
                 const s = statuses[m.id];
                 return s
                   ? s.error
@@ -452,7 +483,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 <span className="field-label" id="thinking-label">
                   Thinking
                 </span>
-                {loaded.length === 0 ? (
+                {answering === 0 ? (
                   <p className="field-hint">Pick a machine with a model loaded.</p>
                 ) : alwaysThinks ? (
                   <p className="field-hint">These models always think.</p>
@@ -492,6 +523,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                       </option>
                     ))}
                   </select>
+                  {cloudModels.length > 0 ? (
+                    <p className="field-hint">Cloud models take the nearest level they offer.</p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -591,6 +625,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               </div>
               <p className="field-hint">
                 Every field is sent to every machine. The seed goes out with cold prefill only.
+                {cloudModels.length > 0
+                  ? ' Cloud models get only the fields their API takes, and newer ones none.'
+                  : ''}
               </p>
             </details>
             <PlanFields plan={plan} running={running} sharing={sharing} />
@@ -612,6 +649,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
               warnings={preflight.warnings}
+              notes={preflight.notes}
               action={slotShortcut}
               clear="All clear: the machines match and the prompt fits."
               details={chosen
@@ -653,11 +691,15 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 machine={pane.machine}
                 modelName={pane.model}
                 run={pane.run}
-                telemetry={{
-                  enabled: telemetry.enabled,
-                  status: telemetry.statuses[pane.key],
-                  sample: telemetry.latest[pane.key],
-                }}
+                telemetry={
+                  cloudIds.has(pane.key)
+                    ? undefined
+                    : {
+                        enabled: telemetry.enabled,
+                        status: telemetry.statuses[pane.key],
+                        sample: telemetry.latest[pane.key],
+                      }
+                }
               />
             ))}
           </div>

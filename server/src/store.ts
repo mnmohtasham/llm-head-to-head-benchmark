@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   MACHINE_COLORS,
   type AgentProbe,
+  type CloudConfig,
   type LoadJob,
   type ProbeRaw,
   type ProbeReport,
@@ -22,6 +23,8 @@ export interface StoredMachine {
   /** The Model Duel agent on this machine, and its token; null when there is none. */
   agentUrl: string | null;
   agentToken: string | null;
+  /** A cloud reference model: the provider and model. Its key is `apiKey`, its API `baseUrl`. */
+  cloud: CloudConfig | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -44,6 +47,7 @@ export interface NewMachine {
   apiKey: string | null;
   agentUrl?: string | null;
   agentToken?: string | null;
+  cloud?: CloudConfig | null;
 }
 
 export interface MachinePatch {
@@ -56,6 +60,7 @@ export interface MachinePatch {
   /** As for the key: undefined keeps, null removes, a string replaces. */
   agentUrl?: string | null | undefined;
   agentToken?: string | null | undefined;
+  cloud?: CloudConfig | undefined;
 }
 
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -164,6 +169,7 @@ export class MachineStore {
       ...m,
       agentUrl: m.agentUrl ?? null,
       agentToken: m.agentToken ?? null,
+      cloud: m.cloud ?? null,
     }));
   }
 
@@ -232,6 +238,7 @@ export class MachineStore {
       apiKey: input.apiKey,
       agentUrl: input.agentUrl ?? null,
       agentToken: input.agentToken ?? null,
+      cloud: input.cloud ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -258,6 +265,7 @@ export class MachineStore {
       apiKey,
       agentUrl: patch.agentUrl === undefined ? current.agentUrl : patch.agentUrl,
       agentToken: patch.agentToken === undefined ? current.agentToken : patch.agentToken,
+      cloud: patch.cloud === undefined ? current.cloud : patch.cloud,
       updatedAt: new Date().toISOString(),
     };
     this.machines[index] = next;

@@ -1,5 +1,7 @@
 import {
   classifyProbe,
+  CLOUD_INFO,
+  CLOUD_PROVIDERS,
   DEFAULT_AGENT_PORT,
   machineCreateSchema,
   machineUpdateSchema,
@@ -13,9 +15,11 @@ import {
   type ProbeSummary,
 } from '@duel/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { z } from 'zod';
 import { runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
 import type { MachineStore, StoredMachine, StoredProbe } from '../store';
 import { agentHealth } from '../agent';
+import { listCloudModels } from '../cloud';
 import { hostKeys } from '../hosts';
 
 interface IdParams {
@@ -40,6 +44,14 @@ function validationError(
     fields[field] ??= issue.message;
   }
   return send(reply, 400, { error: 'validation', message: 'Some fields need attention.', fields });
+}
+
+/** A machine's address; a cloud provider's API is HTTPS unless the address says otherwise. */
+function machineAddress(input: string, cloud: boolean) {
+  const typed = input.trim();
+  return normalizeBaseUrl(
+    cloud && !/^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? `https://${typed}` : typed,
+  );
 }
 
 /** An agent address as typed, with the agent's port by default; "" means none. */
@@ -74,6 +86,7 @@ export function toView(machine: StoredMachine, probe: StoredProbe | undefined): 
     hasApiKey: machine.apiKey !== null,
     apiKeyMasked: maskApiKey(machine.apiKey),
     agentUrl: machine.agentUrl,
+    cloud: machine.cloud,
     hasAgentToken: machine.agentToken !== null,
     agentTokenMasked: maskApiKey(machine.agentToken),
     createdAt: machine.createdAt,
@@ -104,7 +117,43 @@ export function registerMachineRoutes(
   app.get('/api/machines', async () => store.list().map(view));
 
   /** Which machines are the same computer, so a race can suggest that they take turns. */
-  app.get('/api/machines/hosts', async () => ({ hosts: await hostKeys(store.list()) }));
+  app.get('/api/machines/hosts', async () => ({
+    // Cloud models share their provider's address but not a computer.
+    hosts: await hostKeys(store.list().filter((m) => !m.cloud)),
+  }));
+
+  /**
+   * A provider's text models for a key: the one typed in the form, or a saved participant's. The
+   * key is used for this request only and never sent back.
+   */
+  app.post('/api/cloud/models', async (request, reply) => {
+    const parsed = z
+      .object({
+        provider: z.enum(CLOUD_PROVIDERS),
+        apiKey: z.string().trim().max(500).optional(),
+        baseUrl: z.string().trim().max(300).optional(),
+        machineId: z.string().optional(),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) return validationError(reply, parsed.error.issues);
+    const found = parsed.data.machineId ? store.get(parsed.data.machineId) : undefined;
+    // A saved key goes only to its own provider.
+    const saved = found?.cloud?.provider === parsed.data.provider ? found : undefined;
+    const typedUrl = parsed.data.baseUrl ? normalizeBaseUrl(parsed.data.baseUrl, 443) : null;
+    if (typedUrl && !typedUrl.ok) {
+      return validationError(reply, [{ path: ['baseUrl'], message: typedUrl.error }]);
+    }
+    const baseUrl =
+      (typedUrl?.ok ? typedUrl.url : null) ??
+      saved?.baseUrl ??
+      CLOUD_INFO[parsed.data.provider].baseUrl;
+    const apiKey = parsed.data.apiKey || saved?.apiKey || null;
+    const listed = await listCloudModels(parsed.data.provider, baseUrl, apiKey);
+    if (listed.error !== null) {
+      return send(reply, 502, { error: 'cloud', message: listed.error });
+    }
+    return { models: listed.models };
+  });
 
   app.get<IdParams>('/api/machines/:id', async (request, reply) => {
     const machine = store.get(request.params.id);
@@ -114,11 +163,12 @@ export function registerMachineRoutes(
   app.post('/api/machines', async (request, reply) => {
     const parsed = machineCreateSchema.safeParse(request.body);
     if (!parsed.success) return validationError(reply, parsed.error.issues);
-    const url = normalizeBaseUrl(parsed.data.baseUrl);
+    const url = machineAddress(parsed.data.baseUrl, parsed.data.cloud !== undefined);
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
     const agent = agentAddress(parsed.data.agentUrl);
     if (agent !== null && typeof agent === 'object') return validationError(reply, [agent]);
     const machine = await store.create({
+      cloud: parsed.data.cloud ?? null,
       name: parsed.data.name,
       baseUrl: url.url,
       notes: parsed.data.notes ?? '',
@@ -134,7 +184,19 @@ export function registerMachineRoutes(
   app.put<IdParams>('/api/machines/:id', async (request, reply) => {
     const parsed = machineUpdateSchema.safeParse(request.body);
     if (!parsed.success) return validationError(reply, parsed.error.issues);
-    const url = normalizeBaseUrl(parsed.data.baseUrl);
+    const current = store.get(request.params.id);
+    // The saved key belongs to one provider, or to Unsloth, so the kind of participant stays.
+    if (current && parsed.data.cloud && current.cloud?.provider !== parsed.data.cloud.provider) {
+      return validationError(reply, [
+        {
+          path: ['cloud'],
+          message: current.cloud
+            ? 'A cloud model keeps its provider. Add another one for a different provider.'
+            : 'A machine cannot become a cloud model. Add the cloud model on its own.',
+        },
+      ]);
+    }
+    const url = machineAddress(parsed.data.baseUrl, Boolean(current?.cloud ?? parsed.data.cloud));
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
     const { apiKey, agentToken } = parsed.data;
     const agent =
@@ -148,6 +210,7 @@ export function registerMachineRoutes(
       apiKey: apiKey === null ? null : apiKey ? apiKey : undefined,
       agentUrl: agent,
       agentToken: agentToken === null ? null : agentToken ? agentToken : undefined,
+      cloud: parsed.data.cloud,
     });
     if (!result) return notFound(reply);
     options.onMachineChanged?.(result.machine.id);
@@ -168,6 +231,12 @@ export function registerMachineRoutes(
   app.post<IdParams>('/api/machines/:id/probe', async (request, reply) => {
     const machine = store.get(request.params.id);
     if (!machine) return notFound(reply);
+    if (machine.cloud) {
+      return send(reply, 400, {
+        error: 'cloud',
+        message: 'A cloud model has nothing to probe. Fetch its models to check the key.',
+      });
+    }
     const raw = sanitizeProbe(
       await runProbe(machine.baseUrl, machine.apiKey, options.probeTimeouts),
       machine.apiKey,
