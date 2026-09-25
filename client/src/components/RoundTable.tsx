@@ -1,59 +1,9 @@
-import type { RoundView, RunView, SessionView } from '@duel/shared';
+import { roundTable, type SessionView } from '@duel/shared';
 import type { CSSProperties } from 'react';
-import { formatMsValue, formatRate, formatSeconds } from '../format';
-
-function cell(run: RunView | undefined): string {
-  if (!run) return 'n/a';
-  if (run.state !== 'done') return run.state === 'queued' ? 'waiting' : run.state;
-  const c = run.client;
-  const first =
-    c?.firstAnswerMs === null || c?.firstAnswerMs === undefined
-      ? 'no answer'
-      : `${formatSeconds(c.firstAnswerMs)} s`;
-  return `${first} · ${formatRate(c?.decodeTokPerSec, 'tok/s')}`;
-}
-
-function Row({
-  session,
-  round,
-  label,
-  selected,
-  onSelect,
-}: {
-  session: SessionView;
-  round: RoundView;
-  label: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <tr className={selected ? 'round-selected' : undefined} data-testid="round-row">
-      <th scope="row">
-        <button type="button" className="round-pick" onClick={onSelect} aria-pressed={selected}>
-          {label}
-        </button>
-      </th>
-      {session.machines.map((machine) => {
-        const run = round.runs.find((r) => r.machineId === machine.id);
-        return (
-          <td key={machine.id} data-machine={machine.name}>
-            {cell(run)}
-            {run?.rtt?.medianMs !== null && run?.rtt?.medianMs !== undefined ? (
-              <span className="cell-detail">RTT {formatMsValue(run.rtt.medianMs)}</span>
-            ) : null}
-          </td>
-        );
-      })}
-      <td className="round-flags">
-        {round.flags.length === 0 ? '' : round.flags.map((flag) => flag.text).join(' ')}
-      </td>
-    </tr>
-  );
-}
 
 /**
- * One row per round: each machine's first answer word, speed and round trip. Picking a row shows
- * that round in the panes above.
+ * One row per round from the shared table model: each machine's first answer word, speed and
+ * round trip. Picking a row shows that round in the panes and charts.
  */
 export function RoundTable({
   session,
@@ -65,6 +15,8 @@ export function RoundTable({
   shown: number;
   onShow: (index: number) => void;
 }) {
+  const table = roundTable(session);
+  const machines = session.machines;
   return (
     <section className="panel rounds" aria-labelledby="rounds-title" data-testid="rounds">
       <h2 id="rounds-title" className="section-title">
@@ -75,7 +27,7 @@ export function RoundTable({
           <thead>
             <tr>
               <th scope="col">Round</th>
-              {session.machines.map((machine) => (
+              {machines.map((machine) => (
                 <th
                   scope="col"
                   key={machine.id}
@@ -89,25 +41,38 @@ export function RoundTable({
             </tr>
           </thead>
           <tbody>
-            {session.warmup ? (
-              <Row
-                session={session}
-                round={session.warmup}
-                label="Warm-up, not counted"
-                selected={shown === -1}
-                onSelect={() => onShow(-1)}
-              />
-            ) : null}
-            {session.rounds.map((round) => (
-              <Row
-                key={round.index}
-                session={session}
-                round={round}
-                label={`Round ${round.index + 1}`}
-                selected={shown === round.index}
-                onSelect={() => onShow(round.index)}
-              />
-            ))}
+            {table.rows.map((row) => {
+              const index = row.key === 'warmup' ? -1 : Number(row.key.slice('round-'.length));
+              const selected = shown === index;
+              return (
+                <tr
+                  key={row.key}
+                  className={selected ? 'round-selected' : undefined}
+                  data-testid="round-row"
+                >
+                  <th scope="row">
+                    <button
+                      type="button"
+                      className="round-pick"
+                      onClick={() => onShow(index)}
+                      aria-pressed={selected}
+                    >
+                      {row.label}
+                    </button>
+                  </th>
+                  {machines.map((machine, i) => {
+                    const [first, speed, rtt] = row.cells.slice(i * 3, i * 3 + 3);
+                    return (
+                      <td key={machine.id} data-machine={machine.name}>
+                        {[first?.text, speed?.text].filter((part) => part).join(' · ')}
+                        {rtt?.text ? <span className="cell-detail">{rtt.text}</span> : null}
+                      </td>
+                    );
+                  })}
+                  <td className="round-flags">{row.cells[row.cells.length - 1]?.text}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

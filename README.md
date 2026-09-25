@@ -4,14 +4,14 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 7 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 8 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
 check that stops races that would not be fair. Every machine's GPU, power, CPU, RAM and
-temperature show live, and every run gets its energy. The report with charts arrives in phase 8,
-and the transcription and image benchmarks after that. [PLAN.md](PLAN.md) is the full
-specification.
+temperature show live, and every run gets its energy. A finished race reads as a scoreboard with
+charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
+The transcription and image benchmarks come next. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -185,6 +185,24 @@ When the race ends:
   part of the prompt came from Unsloth's prompt cache.
 - **Setup** lists what each machine ran: model, quant, backend, context, speculative decoding,
   KV cache, thinking, versions and GPU. Differences that change the comparison are marked.
+
+### The report
+
+- The **Scoreboard** puts the race into sentences, such as "Linux decodes 1.85× faster". It
+  covers only what does not depend on how much each model wrote: time to first token, decode
+  speed, characters per second, prompt processing and tokens per joule. The winner gate applies,
+  so a close result reads as a tie.
+- **Charts** show the round in the panes: tokens against time for each machine, with the
+  thinking lighter and filled, and GPU power against token rate when telemetry was on.
+- **Setup** lists everything the result depends on, with differences marked, and under it the
+  exact request each machine received.
+- **Export** gives the race as **JSON** (the whole session, with the timing of every token and
+  telemetry sample), **CSV** (the comparison and round tables) or **Markdown** (a summary that
+  reads on its own). None of them contains an API key.
+- **Blind vote** shows each round's two answers side by side in a random order, with nothing on
+  the page that names a machine, and asks which is better. After every round has a vote,
+  **Reveal** says which was which and adds your votes to a tally per model pair across all your
+  races. It needs a race between two machines.
 
 Every race is saved in `data/sessions/`, one file each, with the raw timing of every token. The
 **Results log** lists them newest first. **Open** shows a race again and loads its settings, so

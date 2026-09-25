@@ -32,11 +32,14 @@ import {
   type FormEvent,
 } from 'react';
 import { api, ApiError, messageOf, type PresetView } from '../api';
+import { BlindVote } from '../components/BlindVote';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import { RunMetrics } from '../components/RunMetrics';
+import { RaceCharts } from '../components/RaceCharts';
 import { RoundTable } from '../components/RoundTable';
 import { RunPane } from '../components/RunPane';
+import { ExportLinks, Scoreboard } from '../components/Scoreboard';
 import { SessionList } from '../components/SessionList';
 import { SetupTable } from '../components/SetupTable';
 import { StatsTable } from '../components/StatsTable';
@@ -188,6 +191,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     error: string | null;
   } | null>(null);
   const [raceAnyway, setRaceAnyway] = useState(false);
+  /** The blind vote hides everything that could name a machine. */
+  const [blind, setBlind] = useState(false);
   const preflightRequest = useRef(0);
   /** The round shown in the panes; null follows the newest. -1 is the warm-up. */
   const [shownRound, setShownRound] = useState<number | null>(null);
@@ -536,6 +541,30 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const counted = session?.rounds.some((r) => r.runs.some((run) => run.state === 'done')) ?? false;
   const manyRounds = (session?.rounds.length ?? 0) > 1 || session?.warmup !== null;
   const columns = Math.min(Math.max(panes.length, 1), 4);
+
+  const votable =
+    session !== null &&
+    !running &&
+    session.machines.length === 2 &&
+    session.rounds.some((r) => r.runs.every((run) => run.answer.length > 0));
+  if (blind && session) {
+    return (
+      <>
+        <TopBar title="Blind vote" current="text" />
+        <main className="main">
+          <BlindVote
+            key={session.id}
+            session={session}
+            onClose={(updated) => {
+              if (updated) setSession(updated);
+              setBlind(false);
+              refreshSummaries();
+            }}
+          />
+        </main>
+      </>
+    );
+  }
 
   return (
     <>
@@ -993,6 +1022,14 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           </div>
         ) : null}
 
+        {session && !running && counted ? <Scoreboard session={session} /> : null}
+        {session && !running && round && counted ? (
+          <RaceCharts
+            session={session}
+            round={round}
+            label={roundIndex === -1 ? 'warm-up' : `round ${(roundIndex ?? 0) + 1}`}
+          />
+        ) : null}
         {session &&
         !running &&
         counted &&
@@ -1026,6 +1063,21 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
             )
           : null}
         {session && !running ? <SetupTable session={session} /> : null}
+        {session && !running ? (
+          <div className="report-actions">
+            <ExportLinks session={session} />
+            {votable ? (
+              <button type="button" className="btn btn-outline" onClick={() => setBlind(true)}>
+                Blind vote
+              </button>
+            ) : null}
+            {session.votes.length > 0 ? (
+              <span className="muted">
+                {session.votes.length} blind {session.votes.length === 1 ? 'vote' : 'votes'} cast
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <SessionList
           sessions={summaries}

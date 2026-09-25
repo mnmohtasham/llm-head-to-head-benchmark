@@ -8,14 +8,16 @@ import {
   type TextConfig,
   type TimedEvent,
 } from './chat';
+import { labelVotes, type LabeledVote } from './blind';
 import type { ModelStatus } from './models';
 
 /**
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
- * full sampling and per-round nonce; version 4 telemetry. Older files are migrated on read.
+ * full sampling and per-round nonce; version 4 telemetry; version 5 blind votes and each run's
+ * token timeline. Older files are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 4;
+export const SESSION_SCHEMA_VERSION = 5;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -78,6 +80,16 @@ export interface MachineProvenance {
   request: Record<string, unknown> | null;
 }
 
+/** A blind vote on one round's two answers; the machines were hidden until it was cast. */
+export interface Vote {
+  round: number;
+  /** Machine ids as the two answers were shown, left and right. */
+  left: string;
+  right: string;
+  choice: 'left' | 'right' | 'tie';
+  at: string;
+}
+
 export interface RoundFlag {
   /** The machine it concerns, or null for the whole round. */
   machineId: string | null;
@@ -129,6 +141,8 @@ export interface SessionView {
   progress: SessionProgress;
   /** Whether hardware was polled during the session. */
   telemetry: { enabled: boolean };
+  /** Blind votes on the answers, one per round at most. */
+  votes: Vote[];
   provenance: MachineProvenance[];
   loopLagMs: { max: number; p99: number } | null;
 }
@@ -160,6 +174,8 @@ export interface SessionSummary {
   state: SessionState;
   prompt: string;
   rounds: number;
+  /** Blind votes cast on this session, with the models named. */
+  votes: LabeledVote[];
   machines: Array<{
     id: string;
     name: string;
@@ -242,7 +258,13 @@ export function migrateSession(value: StoredSession): StoredSession {
     nonce: r.nonce ?? null,
     loopLagMs: r.loopLagMs ?? value.loopLagMs ?? null,
     flags: r.flags ?? [],
-    runs: r.runs.map((run) => ({ ...run, rtt: run.rtt ?? null, telemetry: run.telemetry ?? null })),
+    runs: r.runs.map((run) => ({
+      ...run,
+      rtt: run.rtt ?? null,
+      telemetry: run.telemetry ?? null,
+      timeline: run.timeline ?? null,
+      requestedAtMs: run.requestedAtMs ?? null,
+    })),
   });
   return {
     ...value,
@@ -264,6 +286,7 @@ export function migrateSession(value: StoredSession): StoredSession {
     warmup: old.warmup ? round(old.warmup) : null,
     progress: old.progress ?? { phase: 'finished', round: null },
     telemetry: old.telemetry ?? { enabled: false },
+    votes: old.votes ?? [],
     rounds: (old.rounds ?? []).map(round),
   };
 }
@@ -292,6 +315,7 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
     state: session.state,
     prompt: session.config.prompt.slice(0, 160),
     rounds: session.rounds.length,
+    votes: labelVotes(session),
     machines: session.machines.map((machine) => {
       const runs = session.rounds
         .map((round) => round.runs.find((r) => r.machineId === machine.id))
@@ -323,4 +347,31 @@ export function backendLabel(backend: ModelStatus['backend']): string {
   if (backend === 'gguf') return 'GGUF';
   if (backend === 'mlx') return 'MLX';
   return backend ?? 'unknown';
+}
+
+/** At most this many points per run in the race chart's timeline. */
+export const TIMELINE_POINTS = 400;
+
+/** Tokens against time from a run's events, thinned evenly, keeping the last point. */
+export function tokenTimeline(
+  events: ReadonlyArray<{ t: number; event: { type: string } }>,
+  requestAt: number,
+): Array<[number, number, 0 | 1]> {
+  const points: Array<[number, number, 0 | 1]> = [];
+  let count = 0;
+  for (const { t, event } of events) {
+    if (event.type !== 'reasoning' && event.type !== 'content') continue;
+    count += 1;
+    points.push([Math.round((t - requestAt) * 10) / 10, count, event.type === 'reasoning' ? 1 : 0]);
+  }
+  if (points.length <= TIMELINE_POINTS) return points;
+  const step = points.length / TIMELINE_POINTS;
+  const thinned: Array<[number, number, 0 | 1]> = [];
+  for (let i = 0; i < TIMELINE_POINTS - 1; i += 1) {
+    const point = points[Math.floor(i * step)];
+    if (point) thinned.push(point);
+  }
+  const last = points[points.length - 1];
+  if (last) thinned.push(last);
+  return thinned;
 }
