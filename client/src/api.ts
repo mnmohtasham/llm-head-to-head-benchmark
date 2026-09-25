@@ -10,14 +10,24 @@ import type {
   MachineView,
   PairTally,
   PreflightIssue,
+  PreflightRequest,
   PreflightResult,
   ProbeSummary,
   SessionRequest,
   SessionSummary,
   SessionView,
-  TextConfig,
+  SttStatus,
   Vote,
 } from '@duel/shared';
+
+/** Audio stored on the Model Duel computer for a transcription race. */
+export interface UploadedAudio {
+  id: string;
+  name: string;
+  bytes: number;
+  contentType: string;
+  seconds: number | null;
+}
 
 export interface PresetView {
   id: string;
@@ -102,6 +112,11 @@ export const api = {
   listModels: (id: string, refresh = false) =>
     call<MachineModelsView>('GET', `${machineUrl(id)}/models${refresh ? '?refresh=1' : ''}`),
   machineStatus: (id: string) => call<MachineStatusView>('GET', `${machineUrl(id)}/status`),
+  sttStatus: (id: string) =>
+    call<{ machineId: string; status: SttStatus | null; error: string | null }>(
+      'GET',
+      `${machineUrl(id)}/stt`,
+    ),
   machineHosts: () => call<{ hosts: Record<string, string> }>('GET', '/api/machines/hosts'),
   settings: () => call<{ telemetry: boolean }>('GET', '/api/settings'),
   setTelemetry: (on: boolean) =>
@@ -117,8 +132,33 @@ export const api = {
   health: () => call<HealthInfo>('GET', '/api/health'),
   startSession: (request: SessionRequest) => call<SessionView>('POST', '/api/sessions', request),
   presets: () => call<{ presets: PresetView[] }>('GET', '/api/presets'),
-  preflight: (machineIds: string[], config: TextConfig) =>
-    call<PreflightResult>('POST', '/api/preflight', { machineIds, config }),
+  preflight: (request: PreflightRequest) =>
+    call<PreflightResult>('POST', '/api/preflight', request),
+  /** Sends the file as it is; the server keeps it under its hash. */
+  uploadAudio: async (file: File): Promise<UploadedAudio> => {
+    let response: Response;
+    try {
+      response = await fetch(`/api/audio?name=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        headers: { 'content-type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+    } catch {
+      throw new ApiError('The Model Duel server is not answering. Is it still running?', 0);
+    }
+    const data = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      const error = (data ?? {}) as Partial<ApiErrorBody>;
+      throw new ApiError(
+        response.status === 413
+          ? 'That file is too large: the limit is 256 MB.'
+          : (error.message ?? `The upload failed with HTTP ${response.status}.`),
+        response.status,
+      );
+    }
+    return data as UploadedAudio;
+  },
+  clipUrl: '/api/audio/clip.wav',
   listSessions: () => call<{ sessions: SessionSummary[] }>('GET', '/api/sessions'),
   getSession: (id: string) => call<SessionView>('GET', sessionUrl(id)),
   cancelSession: (id: string) => call<SessionView>('POST', `${sessionUrl(id)}/cancel`),

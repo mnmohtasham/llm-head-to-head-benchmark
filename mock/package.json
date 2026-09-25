@@ -8,9 +8,7 @@
     ".": "./src/server.ts"
   },
   "dependencies": {
+    "@duel/shared": "*",
     "fastify": "^5.12.5"
-  },
-  "devDependencies": {
-    "@duel/shared": "*"
   }
 }

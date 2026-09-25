@@ -2,7 +2,7 @@ import type { RunView } from './chat';
 
 export type Better = 'lower' | 'higher' | null;
 export type MetricUnit =
-  'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text' | 'J' | 'tok/J' | 'W' | '%' | 'GB';
+  'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text' | 'J' | 'tok/J' | 'W' | '%' | 'GB' | '×';
 
 export interface MetricSpec {
   key: string;
@@ -135,3 +135,87 @@ export const METRICS: readonly MetricSpec[] = [
     pick: (r) => r.client?.finishReason ?? (r.state === 'done' ? null : r.state),
   },
 ];
+
+const energyPerAudioMinute = (r: RunView): number | null => {
+  const joules = r.telemetry?.energy.energyJ ?? null;
+  const seconds = r.transcription?.audioSeconds ?? null;
+  return joules === null || !seconds ? null : joules / (seconds / 60);
+};
+
+/** The metrics of a transcription race. */
+export const TRANSCRIBE_METRICS: readonly MetricSpec[] = [
+  {
+    key: 'rtf',
+    label: 'Real-time factor',
+    unit: '×',
+    better: 'higher',
+    pick: (r) => r.transcription?.rtf,
+  },
+  {
+    key: 'processing',
+    label: 'Processing time',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.transcription?.processingMs,
+  },
+  {
+    key: 'processingServer',
+    label: 'Processing time, Unsloth',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.transcription?.serverProcessingMs,
+  },
+  {
+    key: 'wer',
+    label: 'Word error rate',
+    unit: '%',
+    better: 'lower',
+    pick: (r) => (r.transcription?.wer ? r.transcription.wer.wer * 100 : null),
+  },
+  {
+    key: 'upload',
+    label: 'Upload time',
+    unit: 'ms',
+    better: null,
+    pick: (r) => r.transcription?.uploadMs,
+  },
+  {
+    key: 'load',
+    label: 'Model load time',
+    unit: 'ms',
+    better: null,
+    pick: (r) => r.transcription?.loadMs,
+  },
+  {
+    key: 'energy',
+    label: 'Energy per run, approx.',
+    unit: 'J',
+    better: 'lower',
+    pick: (r) => r.telemetry?.energy.energyJ,
+  },
+  {
+    key: 'joulesPerMinute',
+    label: 'Energy per audio minute, approx.',
+    unit: 'J',
+    better: 'lower',
+    pick: energyPerAudioMinute,
+  },
+  {
+    key: 'peakGpu',
+    label: 'Peak GPU',
+    unit: '%',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakGpuPct,
+  },
+  {
+    key: 'peakMemory',
+    label: 'Peak GPU memory or RAM',
+    unit: 'GB',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakVramGb ?? r.telemetry?.energy.peakRamGb,
+  },
+];
+
+export function metricsFor(workload: 'text' | 'transcribe'): readonly MetricSpec[] {
+  return workload === 'transcribe' ? TRANSCRIBE_METRICS : METRICS;
+}

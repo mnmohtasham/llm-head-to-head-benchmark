@@ -22,7 +22,7 @@ function isStoredSession(value: unknown): value is StoredSession {
     typeof s.createdAt === 'string' &&
     typeof s.state === 'string' &&
     !!s.config &&
-    typeof s.config.prompt === 'string' &&
+    typeof s.config === 'object' &&
     Array.isArray(s.machines) &&
     Array.isArray(s.rounds) &&
     Array.isArray(s.provenance)

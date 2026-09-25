@@ -24,6 +24,7 @@ export function formatValue(value: number | null, unit: MetricUnit): string {
   if (unit === 'ms') return formatMsValue(value);
   if (unit === 'tokens') return Math.round(value).toLocaleString('en-US');
   if (unit === 'tok/J') return `${value.toFixed(3)} tok/J`;
-  if (unit === '%') return `${Math.round(value)}%`;
+  if (unit === '%') return value < 10 ? `${value.toFixed(1)}%` : `${Math.round(value)}%`;
+  if (unit === '×') return `${value.toFixed(1)}×`;
   return formatRate(value, unit);
 }

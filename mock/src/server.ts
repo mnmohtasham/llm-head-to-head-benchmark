@@ -15,7 +15,6 @@ import {
   PROFILES,
   propsBody,
   statusBody,
-  sttBody,
   systemBody,
   telemetryBody,
   variantsBody,
@@ -23,6 +22,21 @@ import {
   type ProfileName,
   type ProfileState,
 } from './profiles';
+import {
+  DEFAULT_STT,
+  expireIdle,
+  newSttState,
+  parseMultipart,
+  processingMs,
+  servedEngine,
+  STT_DOWNLOADED,
+  STT_ENGINES,
+  sttBody,
+  sttLoadMs,
+  transcriptFor,
+  type SttEngine,
+  type SttMockConfig,
+} from './stt';
 
 /** Changes one route's behaviour, for tests. Keyed by path without the query string. */
 export interface RouteOverride {
@@ -58,6 +72,8 @@ export interface MockConfig {
   gpuBusy: boolean;
   /** How chat completions stream. */
   stream: StreamConfig;
+  /** How speech-to-text loads and transcribes. */
+  stt: SttMockConfig;
 }
 
 export interface MockOptions {
@@ -116,6 +132,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     memoryWarning: null,
     gpuBusy: false,
     stream: { ...DEFAULT_STREAM },
+    stt: { ...DEFAULT_STT },
   };
   let config: MockConfig = structuredClone(initial);
   /** Chat requests served since the last reset, for `stream.speedFactors`. */
@@ -135,8 +152,14 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   const log: MockRequestRecord[] = [];
   const monitor: MonitorEntry[] = [];
   const cancels = new Map<string, () => void>();
+  let stt = newSttState();
 
-  const app = Fastify({ logger: false, forceCloseConnections: true });
+  const app = Fastify({ logger: false, forceCloseConnections: true, bodyLimit: 1024 * 1024 });
+  app.addContentTypeParser(
+    /^multipart\/form-data/,
+    { parseAs: 'buffer', bodyLimit: 512 * 1024 * 1024 },
+    (_request, body, done) => done(null, body),
+  );
   const profile = () => PROFILES[config.profile];
 
   const authOf = (request: FastifyRequest): AuthResult => {
@@ -156,7 +179,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
 
   /** Registers an Unsloth route with overrides, latency and (optionally) the key check. */
   const route = (
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     protectedRoute: boolean,
     handler: (request: FastifyRequest, reply: FastifyReply, auth: AuthResult) => unknown,
@@ -189,6 +212,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     state.pending = null;
     state.telemetryReads = 0;
     state.activity = 0;
+    stt = newSttState();
   };
 
   route('GET', '/api/health', false, (_request, _reply, auth) =>
@@ -202,7 +226,10 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   route('GET', '/api/inference/status', true, () => statusBody(profile(), state));
   route('GET', '/v1/models', true, () => modelsBody(profile(), state));
   route('GET', '/v1/props', true, () => propsBody(profile(), state));
-  route('GET', '/api/inference/audio/stt/status', true, () => sttBody(profile()));
+  route('GET', '/api/inference/audio/stt/status', true, () => {
+    expireIdle(stt, config.stt);
+    return sttBody(profile(), stt);
+  });
   route('GET', '/api/inference/images/status', true, () => imageStatusBody());
   route('GET', '/api/train/hardware', true, () => telemetryBody(profile(), state));
   route('GET', '/api/models/local', true, () => localModelsBody(profile()));
@@ -438,6 +465,129 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     return { input_tokens: words + 4, model: model.entry.modelId };
   });
 
+  /** Loads a speech model, as Unsloth's STT sidecar does; the mock never downloads. */
+  const loadSpeechModel = async (
+    model: string,
+    wanted: SttEngine,
+    device: string,
+  ): Promise<{ status: number; detail: string } | null> => {
+    const engine = servedEngine(profile(), wanted);
+    if (!engine) return { status: 400, detail: `The ${wanted} engine is not available here.` };
+    if (!STT_DOWNLOADED[engine].includes(model)) {
+      return {
+        status: 400,
+        detail: `${model} is not downloaded for ${engine}, and the mock does not download.`,
+      };
+    }
+    if (stt.loading) return { status: 409, detail: 'A speech model is already loading.' };
+    if (stt.loaded?.model === model && stt.loaded.engine === engine) return null;
+    stt.loaded = null;
+    stt.loading = { model, engine, device };
+    await sleep(sttLoadMs(profile(), config.stt));
+    stt.loaded = stt.loading;
+    stt.loading = null;
+    stt.lastUsedAt = Date.now();
+    return null;
+  };
+
+  route('POST', '/api/inference/audio/stt/load', true, async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const model = text(body.model) ?? 'small';
+    const engine = (STT_ENGINES as readonly string[]).includes(String(body.engine))
+      ? (body.engine as SttEngine)
+      : 'transformers';
+    const device = text(body.device) ?? 'auto';
+    const failed = await loadSpeechModel(model, engine, device);
+    if (failed) return reply.code(failed.status).send({ detail: failed.detail });
+    return { status: 'loaded', model, engine: stt.loaded?.engine ?? engine, device };
+  });
+
+  route('POST', '/api/inference/audio/stt/unload', true, () => {
+    stt.loaded = null;
+    return { status: 'unloaded' };
+  });
+
+  route('POST', '/v1/audio/transcriptions', true, async (request, reply) => {
+    const body = request.body;
+    const parts = Buffer.isBuffer(body)
+      ? parseMultipart(body, String(request.headers['content-type'] ?? ''))
+      : null;
+    const file = parts?.find((part) => part.name === 'file');
+    if (!parts || !file)
+      return openAiError(reply, 400, 'Send the audio as the multipart field "file".');
+    const field = (name: string) => parts.find((part) => part.name === name)?.data.toString('utf8');
+    expireIdle(stt, config.stt);
+    const model = field('model') ?? stt.loaded?.model ?? 'small';
+    if (!stt.loaded || stt.loaded.model !== model) {
+      const failed = await loadSpeechModel(model, stt.loaded?.engine ?? 'transformers', 'auto');
+      if (failed) return openAiError(reply, failed.status, failed.detail);
+    }
+    const loaded = stt.loaded;
+    if (!loaded) return openAiError(reply, 409, 'The speech model is not loaded.');
+    const heard = transcriptFor(profile(), loaded.engine, file.data);
+    const ms = processingMs(profile(), loaded.engine, heard.seconds, config.stt);
+    const started = Date.now();
+    const entry: MonitorEntry = {
+      id: randomBytes(8).toString('hex'),
+      endpoint: '/v1/audio/transcriptions',
+      method: 'POST',
+      model: loaded.model,
+      via_api_key: true,
+      prompt_preview: file.filename ?? 'audio',
+      reply_preview: '',
+      status: 'streaming',
+      started_at: started / 1000,
+      updated_at: started / 1000,
+      finished_at: null,
+      duration_ms: null,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      ttft_ms: null,
+      tok_per_sec: null,
+      prompt_tok_per_sec: null,
+      decode_ms: null,
+      stop_reason: null,
+    } as MonitorEntry;
+    monitor.unshift(entry);
+    if (monitor.length > 100) monitor.pop();
+    state.activeStreams += 1;
+    try {
+      await sleep(ms);
+    } finally {
+      state.activeStreams -= 1;
+    }
+    const finished = Date.now();
+    Object.assign(entry, {
+      status: 'done',
+      reply_preview: heard.text.slice(0, 120),
+      updated_at: finished / 1000,
+      finished_at: finished / 1000,
+      duration_ms: finished - started,
+    });
+    stt.lastUsedAt = finished;
+    const language = field('language') ?? 'en';
+    const format = field('response_format') ?? 'json';
+    if (format === 'text') return reply.type('text/plain').send(heard.text);
+    if (format === 'verbose_json') {
+      return {
+        task: 'transcribe',
+        language,
+        duration: Number(heard.seconds.toFixed(3)),
+        text: heard.text,
+        segments: [],
+      };
+    }
+    return { text: heard.text };
+  });
+
+  /** Unsloth clears the caller's own rows; the mock has only one caller. */
+  route('DELETE', '/api/inference/monitor', true, () => {
+    const cleared = monitor.length;
+    monitor.length = 0;
+    return { cleared };
+  });
+
   route('GET', '/api/inference/monitor', true, () => {
     const active = monitor.filter((m) => m.status === 'streaming').length;
     return {
@@ -463,9 +613,10 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   // Control routes for tests and manual poking. Not part of Unsloth.
   app.get('/__mock/config', async () => config);
   app.post('/__mock/config', async (request, reply) => {
-    const patch = (request.body ?? {}) as Partial<Omit<MockConfig, 'routes' | 'stream'>> & {
+    const patch = (request.body ?? {}) as Partial<Omit<MockConfig, 'routes' | 'stream' | 'stt'>> & {
       routes?: Record<string, RouteOverride | null>;
       stream?: Partial<StreamConfig>;
+      stt?: Partial<SttMockConfig>;
     };
     if (patch.profile !== undefined && !PROFILE_NAMES.includes(patch.profile)) {
       return reply
@@ -477,8 +628,14 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       if (override === null) delete routes[path];
       else routes[path] = override;
     }
-    const { routes: _ignored, stream, ...rest } = patch;
-    config = { ...config, ...rest, routes, stream: { ...config.stream, ...stream } } as MockConfig;
+    const { routes: _ignored, stream, stt: speech, ...rest } = patch;
+    config = {
+      ...config,
+      ...rest,
+      routes,
+      stream: { ...config.stream, ...stream },
+      stt: { ...config.stt, ...speech },
+    } as MockConfig;
     if (patch.profile !== undefined) resetModels();
     return config;
   });

@@ -1,10 +1,10 @@
 import { thinkingMissing, type RunView } from '@duel/shared';
 import { formatMsValue, formatRate } from '../format';
 
-type Row = [label: string, measured: string, reported: string];
+export type Row = [label: string, measured: string, reported: string];
 
 /** Energy and peaks from telemetry, all approximate; nothing when telemetry was off. */
-function energyRows(run: RunView): Row[] {
+export function energyRows(run: RunView): Row[] {
   const e = run.telemetry?.energy;
   if (!e) return [];
   const value = (v: number | null, unit: string, digits = 1) =>

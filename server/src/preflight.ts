@@ -1,12 +1,17 @@
 import {
   newNonce,
   preflightIssues,
+  transcribePreflightIssues,
   withNonce,
   type PreflightMachine,
   type PreflightResult,
+  type SttPreflightMachine,
   type TextConfig,
+  type TranscribeConfig,
 } from '@duel/shared';
+import { describeAudio, type AudioStore } from './audio';
 import { readModelStatus } from './models';
+import { readSttStatus } from './stt';
 import { resolvePrompt } from './presets';
 import type { StoredMachine } from './store';
 import { UnslothClient } from './unsloth';
@@ -87,5 +92,35 @@ export async function runPreflight(
     issues: preflightIssues(entries, config),
     promptTokens: Object.fromEntries(entries.map((e) => [e.id, e.promptTokens])),
     promptWords: prompt.split(/\s+/).filter(Boolean).length,
+  };
+}
+
+/** The checks for a transcription race: each machine's speech-to-text, and the audio itself. */
+export async function runTranscribePreflight(
+  machines: readonly StoredMachine[],
+  config: TranscribeConfig,
+  isLoading: (machineId: string) => boolean,
+  store: AudioStore,
+): Promise<PreflightResult> {
+  const [audio, entries] = await Promise.all([
+    describeAudio(config.audio, store),
+    Promise.all(
+      machines.map(async (machine): Promise<SttPreflightMachine> => {
+        const base = { id: machine.id, name: machine.name };
+        if (isLoading(machine.id)) return { ...base, stt: null, error: null, loading: true };
+        const read = await readSttStatus(machine);
+        return { ...base, stt: read.status, error: read.error, loading: false };
+      }),
+    ),
+  ]);
+  const issues = transcribePreflightIssues(entries, config);
+  if (typeof audio === 'string')
+    issues.unshift({ level: 'error', code: 'audio', machineId: null, text: audio });
+  return {
+    checkedAt: new Date().toISOString(),
+    issues,
+    promptTokens: {},
+    promptWords: 0,
+    audio: typeof audio === 'string' ? null : audio,
   };
 }

@@ -13,4 +13,5 @@ export * from './session';
 export * from './sse';
 export * from './stats';
 export * from './telemetry';
+export * from './transcribe';
 export * from './url';

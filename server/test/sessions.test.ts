@@ -515,7 +515,7 @@ describe('saved races', () => {
     expect(text).not.toContain(LINUX_KEY);
     expect(text).not.toContain(MAC_KEY);
     const stored = JSON.parse(text) as StoredSession;
-    expect(stored.schemaVersion).toBe(5);
+    expect(stored.schemaVersion).toBe(6);
     const run = stored.rounds[0]?.runs[0];
     const raw = run?.raw;
     expect(raw?.events.length).toBeGreaterThan(20);
@@ -710,7 +710,8 @@ describe('rounds', () => {
     await ctx.app.close();
     ctx = await testApp({ dataDir: ctx.dataDir });
     const view = await getSession(original.id);
-    expect(view.schemaVersion).toBe(5);
+    expect(view.schemaVersion).toBe(6);
+    expect(view.workload).toBe('text');
     expect(view.plan).toEqual({ rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' });
     expect(view.warmup).toBeNull();
     expect(view.rounds).toHaveLength(1);

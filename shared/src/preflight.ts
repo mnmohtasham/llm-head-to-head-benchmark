@@ -1,6 +1,7 @@
 import type { TextConfig } from './chat';
 import type { ModelStatus } from './models';
 import { backendLabel, speculativeOn } from './session';
+import { STT_MODELS, type SttStatus, type TranscribeConfig } from './transcribe';
 
 /** What pre-flight knows about one machine just before a race. */
 export interface PreflightMachine {
@@ -32,7 +33,12 @@ export interface PreflightIssue {
     | 'speculative'
     | 'kv-cache'
     | 'gpu-memory'
-    | 'tokens';
+    | 'tokens'
+    | 'audio'
+    | 'no-stt'
+    | 'stt-engine'
+    | 'stt-model'
+    | 'stt-download';
   machineId: string | null;
   text: string;
 }
@@ -44,6 +50,8 @@ export interface PreflightResult {
   promptTokens: Record<string, number | null>;
   /** Words in the prompt that will be sent, before any nonce. */
   promptWords: number;
+  /** The audio a transcription race will send. */
+  audio?: { name: string; seconds: number | null; bytes: number } | null;
 }
 
 const n = (value: number) => value.toLocaleString('en-US');
@@ -152,6 +160,94 @@ export function preflightIssues(
       null,
       `Speculative decoding is on for every machine, so tokens arrive in groups and speed depends on how many drafts each model keeps. Load with speculative decoding off for a like-for-like race.`,
     );
+  }
+  return issues;
+}
+
+/** What pre-flight knows about one machine's speech-to-text before a transcription race. */
+export interface SttPreflightMachine {
+  id: string;
+  name: string;
+  stt: SttStatus | null;
+  error: string | null;
+  /** A text model is loading on the machine. */
+  loading: boolean;
+}
+
+/**
+ * The checks before a transcription race. A model that is not downloaded is an error, because
+ * loading it would start a download of up to a few gigabytes in the middle of the race.
+ */
+export function transcribePreflightIssues(
+  machines: readonly SttPreflightMachine[],
+  config: Pick<TranscribeConfig, 'model' | 'engine'>,
+): PreflightIssue[] {
+  const issues: PreflightIssue[] = [];
+  const error = (code: PreflightIssue['code'], machineId: string | null, text: string) =>
+    issues.push({ level: 'error', code, machineId, text });
+  const warning = (code: PreflightIssue['code'], machineId: string | null, text: string) =>
+    issues.push({ level: 'warning', code, machineId, text });
+  const served = new Map<string, string>();
+  for (const m of machines) {
+    if (m.error) {
+      error('unreachable', m.id, `${m.name} is not answering: ${m.error}`);
+      continue;
+    }
+    if (m.loading) {
+      error('loading', m.id, `A model is loading on ${m.name}. Wait for it to finish.`);
+      continue;
+    }
+    const stt = m.stt;
+    if (!stt?.available) {
+      error('no-stt', m.id, `${m.name} has no speech-to-text in this Unsloth.`);
+      continue;
+    }
+    if (stt.loading) {
+      error('loading', m.id, `A speech model is loading on ${m.name}. Wait for it to finish.`);
+      continue;
+    }
+    let engine: string = config.engine;
+    if (!stt.engines[config.engine].available) {
+      if (config.engine === 'gguf' && stt.engines.transformers.available) {
+        engine = 'transformers';
+        warning(
+          'stt-engine',
+          m.id,
+          `${m.name} cannot run GGUF speech models (whisper.cpp is not built), so it will use transformers instead.`,
+        );
+      } else {
+        error('stt-engine', m.id, `${m.name} cannot run the ${config.engine} engine.`);
+        continue;
+      }
+    }
+    served.set(m.id, engine);
+    const offered = stt.engines[engine as keyof SttStatus['engines']];
+    const curated =
+      (STT_MODELS as readonly string[]).includes(config.model) || /^qwen3-asr-/.test(config.model);
+    if (curated && offered.models.length > 0 && !offered.models.includes(config.model)) {
+      error(
+        'stt-model',
+        m.id,
+        `The ${engine} engine on ${m.name} does not offer ${config.model}. It offers ${offered.models.join(', ')}.`,
+      );
+      continue;
+    }
+    const inMemory = stt.loadedModel === config.model && stt.loadedEngine === engine;
+    if (!inMemory && !offered.downloaded.includes(config.model)) {
+      error(
+        'stt-download',
+        m.id,
+        `${config.model} is not downloaded for ${engine} on ${m.name}${offered.downloaded.length > 0 ? ` (it has ${offered.downloaded.join(', ')})` : ''}. Download it in Unsloth Studio first, so the race does not start a download.`,
+      );
+    }
+  }
+  const engines = new Set(served.values());
+  if (engines.size > 1) {
+    const each = machines
+      .filter((m) => served.has(m.id))
+      .map((m) => `${m.name} uses ${served.get(m.id)}`)
+      .join(', ');
+    warning('stt-engine', null, `The machines use different engines: ${each}.`);
   }
   return issues;
 }

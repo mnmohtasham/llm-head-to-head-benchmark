@@ -1,140 +1,43 @@
 import {
-  DEFAULT_PLAN,
   DEFAULT_SAMPLING,
-  hasErrors,
-  hasWarnings,
-  MAX_ROUNDS,
   PRESETS,
   REASONING_EFFORTS,
   sessionRequestSchema,
   textConfigSchema,
-  type PrefillMode,
-  type PreflightIssue,
-  type PreflightResult,
-  type PresetId,
   type MachineStatusView,
   type MachineView,
   type ModelStatus,
-  type RoundView,
+  type PrefillMode,
+  type PresetId,
   type RunView,
-  type SessionProgress,
-  type SessionStreamMessage,
-  type SessionSummary,
   type SessionView,
-  type TextConfig,
 } from '@duel/shared';
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-} from 'react';
-import { api, ApiError, messageOf, type PresetView } from '../api';
+import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { api, messageOf, type PresetView } from '../api';
 import { BlindVote } from '../components/BlindVote';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
+import {
+  MachinePicker,
+  PlanFields,
+  PreflightPanel,
+  ProgressLine,
+  RaceReport,
+  sharedHost,
+  usePlan,
+} from '../components/RaceParts';
 import { RunMetrics } from '../components/RunMetrics';
-import { RaceCharts } from '../components/RaceCharts';
-import { RoundTable } from '../components/RoundTable';
 import { RunPane } from '../components/RunPane';
-import { ExportLinks, Scoreboard } from '../components/Scoreboard';
 import { SessionList } from '../components/SessionList';
-import { SetupTable } from '../components/SetupTable';
-import { StatsTable } from '../components/StatsTable';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
 import { formatMsValue, formatRate } from '../format';
+import { usePreflight } from '../usePreflight';
+import { useRace } from '../useRace';
 import { useTelemetry } from '../useTelemetry';
 
 const DEFAULT_PROMPT =
   'Explain in about 150 words why memory bandwidth limits how fast a local language model writes text.';
-
-const SESSION_HASH = /^#\/text\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
-
-function sessionIdFromHash(): string | null {
-  return SESSION_HASH.exec(window.location.hash)?.[1] ?? null;
-}
-
-/** The race named in the address, `#/text/<id>`, so a reload or a shared link opens it again. */
-function useRouteSessionId(): string | null {
-  const [id, setId] = useState(sessionIdFromHash);
-  useEffect(() => {
-    const onHashChange = () => setId(sessionIdFromHash());
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
-  return id;
-}
-
-function withRound(
-  session: SessionView,
-  warmup: boolean,
-  index: number,
-  update: (runs: RunView[]) => RunView[],
-): SessionView {
-  if (warmup) {
-    return session.warmup
-      ? { ...session, warmup: { ...session.warmup, runs: update(session.warmup.runs) } }
-      : session;
-  }
-  return {
-    ...session,
-    rounds: session.rounds.map((round) =>
-      round.index === index ? { ...round, runs: update(round.runs) } : round,
-    ),
-  };
-}
-
-function putRound(session: SessionView, warmup: boolean, round: RoundView): SessionView {
-  if (warmup) return { ...session, warmup: round };
-  const others = session.rounds.filter((r) => r.index !== round.index);
-  return { ...session, rounds: [...others, round].sort((a, b) => a.index - b.index) };
-}
-
-function applyMessage(session: SessionView, message: SessionStreamMessage): SessionView {
-  if (message.type === 'snapshot' || message.type === 'finished') return message.session;
-  if (message.type === 'progress') return { ...session, progress: message.progress };
-  if (message.type === 'round') return putRound(session, message.warmup, message.round);
-  if (message.type === 'run') {
-    return withRound(session, message.warmup, message.round, (runs) =>
-      runs.map((run) => (run.machineId === message.run.machineId ? message.run : run)),
-    );
-  }
-  return withRound(session, message.warmup, message.round, (runs) =>
-    runs.map((run) => {
-      const delta = message.runs.find((d) => d.machineId === run.machineId);
-      if (!delta || run.finishedAt !== null) return run;
-      return {
-        ...run,
-        state: delta.state,
-        reasoning: run.reasoning + delta.reasoning,
-        answer: run.answer + delta.answer,
-        live: delta.live,
-      };
-    }),
-  );
-}
-
-/** A line about where a running session is. */
-function progressText(progress: SessionProgress, rounds: number): string {
-  const round = progress.round === null ? '' : `round ${progress.round + 1} of ${rounds}`;
-  switch (progress.phase) {
-    case 'preparing':
-      return 'Reading each machine’s model…';
-    case 'warmup':
-      return 'Warm-up: one short request per machine, not counted.';
-    case 'rtt':
-      return `Measuring round trips before ${round}.`;
-    case 'settling':
-      return `Pausing before ${round}.`;
-    case 'running':
-      return rounds > 1 ? `Running ${round}.` : 'Running.';
-    default:
-      return '';
-  }
-}
 
 /** Effort levels every selected model accepts. */
 function commonEfforts(statuses: ModelStatus[]): string[] {
@@ -154,8 +57,16 @@ interface Props {
   addLog: (entry: NewLogEntry) => void;
 }
 
+/** The log line for a finished text run. */
+function describeRun(run: RunView): string {
+  const c = run.client;
+  if (!c) return 'Done.';
+  return c.firstAnswerMs === null
+    ? `No answer: stopped at ${c.finishReason === 'length' ? `Max tokens (${run.maxTokens})` : (c.finishReason ?? 'the end')} before answering. First token ${formatMsValue(c.ttftMs)}, ${formatRate(c.decodeTokPerSec, 'tok/s')}.`
+    : `First word ${formatMsValue(c.firstAnswerMs)}, first token ${formatMsValue(c.ttftMs)}, ${formatRate(c.decodeTokPerSec, 'tok/s')}.`;
+}
+
 export function TextPage({ machines, loadError, log, addLog }: Props) {
-  const routeId = useRouteSessionId();
   const [statuses, setStatuses] = useState<Record<string, MachineStatusView>>({});
   const [selected, setSelected] = useState<string[] | null>(null);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
@@ -163,16 +74,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [thinking, setThinking] = useState(true);
   /** null until the user picks: then low where every model offers it. */
   const [effort, setEffort] = useState<string | null>(null);
-  const [session, setSession] = useState<SessionView | null>(null);
-  const [summaries, setSummaries] = useState<SessionSummary[] | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [devMode, setDevMode] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [deleting, setDeleting] = useState<SessionSummary | null>(null);
-  const [rounds, setRounds] = useState(String(DEFAULT_PLAN.rounds));
-  const [warmup, setWarmup] = useState(DEFAULT_PLAN.warmup);
-  const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
-  const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
+  const plan = usePlan();
   const [hosts, setHosts] = useState<Record<string, string>>({});
   const [preset, setPreset] = useState<PresetId>('custom');
   const [presetViews, setPresetViews] = useState<PresetView[]>([]);
@@ -185,32 +87,34 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     repetitionPenalty: String(DEFAULT_SAMPLING.repetitionPenalty),
     seed: String(DEFAULT_SAMPLING.seed),
   }));
-  const [preflight, setPreflight] = useState<{
-    key: string;
-    result: PreflightResult | null;
-    error: string | null;
-  } | null>(null);
-  const [raceAnyway, setRaceAnyway] = useState(false);
-  /** The blind vote hides everything that could name a machine. */
-  const [blind, setBlind] = useState(false);
-  const preflightRequest = useRef(0);
-  /** The round shown in the panes; null follows the newest. -1 is the warm-up. */
-  const [shownRound, setShownRound] = useState<number | null>(null);
+  const fillPlan = plan.fill;
 
-  const refreshSummaries = useCallback(() => {
-    api.listSessions().then(
-      ({ sessions }) => setSummaries(sessions),
-      (error: unknown) => setFormError(messageOf(error)),
-    );
-  }, []);
-
-  useEffect(() => {
-    api.health().then(
-      (health) => setDevMode(health.mode === 'dev'),
-      () => undefined,
-    );
-    refreshSummaries();
-  }, [refreshSummaries]);
+  const fillForm = useCallback(
+    (view: SessionView) => {
+      if (view.workload !== 'text') return;
+      if (view.config.preset === 'custom') setPrompt(view.config.prompt);
+      setMaxTokens(String(view.config.maxTokens));
+      setThinking(view.config.thinking);
+      setEffort(view.config.reasoningEffort ?? '');
+      setPreset(view.config.preset);
+      setPrefill(view.config.prefill);
+      setSampling({
+        temperature: String(view.config.sampling.temperature),
+        topP: String(view.config.sampling.topP),
+        topK: String(view.config.sampling.topK),
+        minP: String(view.config.sampling.minP),
+        repetitionPenalty: String(view.config.sampling.repetitionPenalty),
+        seed: String(view.config.sampling.seed),
+      });
+      fillPlan(view.plan);
+      const known = new Set((machines ?? []).map((m) => m.id));
+      const ids = view.machines.map((m) => m.id).filter((id) => known.has(id));
+      if (ids.length > 0) setSelected(ids);
+    },
+    [machines, fillPlan],
+  );
+  const race = useRace({ workload: 'text', machines, addLog, describeRun, onOpen: fillForm });
+  const { session, running } = race;
 
   useEffect(() => {
     api.presets().then(
@@ -254,100 +158,6 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : machines.slice(0, 1).map((m) => m.id));
   }, [selected, machines, statuses]);
 
-  const fillForm = useCallback(
-    (view: SessionView) => {
-      if (view.config.preset === 'custom') setPrompt(view.config.prompt);
-      setMaxTokens(String(view.config.maxTokens));
-      setThinking(view.config.thinking);
-      setEffort(view.config.reasoningEffort ?? '');
-      setPreset(view.config.preset);
-      setPrefill(view.config.prefill);
-      setSampling({
-        temperature: String(view.config.sampling.temperature),
-        topP: String(view.config.sampling.topP),
-        topK: String(view.config.sampling.topK),
-        minP: String(view.config.sampling.minP),
-        repetitionPenalty: String(view.config.sampling.repetitionPenalty),
-        seed: String(view.config.sampling.seed),
-      });
-      setRounds(String(view.plan.rounds));
-      setWarmup(view.plan.warmup);
-      setSettleSeconds(String(view.plan.settleMs / 1000));
-      setSequencing(view.plan.sequencing);
-      const known = new Set((machines ?? []).map((m) => m.id));
-      const ids = view.machines.map((m) => m.id).filter((id) => known.has(id));
-      if (ids.length > 0) setSelected(ids);
-    },
-    [machines],
-  );
-
-  // Open the race in the address, or the latest one.
-  const shownId = session?.id ?? null;
-  const latestId = summaries?.[0]?.id ?? null;
-  const wantedId = routeId ?? latestId;
-  useEffect(() => {
-    if (!wantedId || wantedId === shownId) return;
-    let cancelled = false;
-    api.getSession(wantedId).then(
-      (view) => {
-        if (cancelled) return;
-        setSession(view);
-        setShownRound(null);
-        // Opening a race on purpose loads its settings, so Start runs it again.
-        if (view.id === routeId) fillForm(view);
-      },
-      (error: unknown) => {
-        if (!cancelled) setFormError(`Could not open that race. ${messageOf(error)}`);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [wantedId, shownId, routeId, fillForm]);
-
-  const reportRun = useCallback(
-    (run: RunView) => {
-      const machine = machines?.find((m) => m.id === run.machineId);
-      const c = run.client;
-      addLog({
-        machineName: machine?.name ?? run.machineName,
-        color: machine?.color ?? null,
-        tone: run.state === 'done' ? 'ok' : run.state === 'cancelled' ? 'info' : 'error',
-        text:
-          run.state === 'done' && c
-            ? c.firstAnswerMs === null
-              ? `No answer: stopped at ${c.finishReason === 'length' ? `Max tokens (${run.maxTokens})` : (c.finishReason ?? 'the end')} before answering. First token ${formatMsValue(c.ttftMs)}, ${formatRate(c.decodeTokPerSec, 'tok/s')}.`
-              : `First word ${formatMsValue(c.firstAnswerMs)}, first token ${formatMsValue(c.ttftMs)}, ${formatRate(c.decodeTokPerSec, 'tok/s')}.`
-            : run.state === 'cancelled'
-              ? 'Run cancelled.'
-              : `Run failed: ${run.error ?? 'unknown error'}`,
-      });
-    },
-    [machines, addLog],
-  );
-
-  const running = session !== null && session.finishedAt === null;
-  useEffect(() => {
-    if (!shownId || !running) return;
-    const source = new EventSource(api.sessionStreamUrl(shownId));
-    source.onmessage = (event) => {
-      const message = JSON.parse(event.data as string) as SessionStreamMessage;
-      setSession((current) =>
-        message.type === 'snapshot'
-          ? message.session
-          : current && current.id === shownId
-            ? applyMessage(current, message)
-            : current,
-      );
-      if (message.type === 'run') reportRun(message.run);
-      if (message.type === 'finished') {
-        source.close();
-        refreshSummaries();
-      }
-    };
-    return () => source.close();
-  }, [shownId, running, reportRun, refreshSummaries]);
-
   const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
   const chosenStatuses = chosen.map((m) => statuses[m.id]?.status ?? null);
   const loaded = chosenStatuses.filter((s): s is ModelStatus => !!s?.activeModel);
@@ -374,51 +184,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     },
   });
   const chosenIds = chosen.map((m) => m.id);
-  const preflightKey = draft.success ? JSON.stringify([chosenIds, draft.data]) : null;
-
-  // Pre-flight runs on the machines themselves, a moment after the form stops changing. The key
-  // holds everything it depends on.
-  useEffect(() => {
-    if (!preflightKey || running) return;
-    const [ids, config] = JSON.parse(preflightKey) as [string[], TextConfig];
-    if (ids.length === 0) return;
-    const ticket = ++preflightRequest.current;
-    const timer = setTimeout(() => {
-      api.preflight(ids, config).then(
-        (result) => {
-          if (ticket === preflightRequest.current) {
-            setPreflight({ key: preflightKey, result, error: null });
-          }
-        },
-        (error: unknown) => {
-          if (ticket === preflightRequest.current) {
-            setPreflight({ key: preflightKey, result: null, error: messageOf(error) });
-          }
-        },
-      );
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [preflightKey, running]);
-
-  const current = preflight && preflight.key === preflightKey ? preflight : null;
-  const issues: PreflightIssue[] = current?.result?.issues ?? [];
-  const errors = issues.filter((issue) => issue.level === 'error');
-  const warnings = issues.filter((issue) => issue.level === 'warning');
-  const blocked =
-    !draft.success ||
-    chosen.length === 0 ||
-    current === null ||
-    current.result === null ||
-    hasErrors(issues) ||
-    (hasWarnings(issues) && !raceAnyway);
-
+  const preflightKey = draft.success
+    ? JSON.stringify({ workload: 'text', machineIds: chosenIds, config: draft.data })
+    : null;
+  const preflight = usePreflight(preflightKey, running);
+  const blocked = !draft.success || chosen.length === 0 || preflight.stops;
   // Machines on one computer compete for it, so they should take turns.
-  const byHost = new Map<string, string[]>();
-  for (const m of chosen) {
-    const key = hosts[m.id];
-    if (key) byHost.set(key, [...(byHost.get(key) ?? []), m.name]);
-  }
-  const sharing = [...byHost.values()].find((names) => names.length > 1) ?? null;
+  const sharing = sharedHost(chosen, hosts);
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -429,100 +201,31 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
 
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
-    setFormError(null);
+    race.setFormError(null);
     if (!draft.success) {
-      setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
       workload: 'text',
       machineIds: chosenIds,
       config: draft.data,
-      acknowledgeWarnings: raceAnyway,
-      plan: {
-        rounds: Number(rounds),
-        warmup,
-        settleMs: Math.round(Number(settleSeconds) * 1000),
-        sequencing,
-      },
+      acknowledgeWarnings: preflight.raceAnyway,
+      plan: plan.value,
     });
     if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
       return;
     }
-    setStarting(true);
-    try {
-      const created = await api.startSession(parsed.data);
-      setSession(created);
-      setShownRound(null);
-      window.location.hash = `#/text/${created.id}`;
-      refreshSummaries();
-      addLog({
-        machineName: null,
-        color: null,
-        tone: 'info',
-        text:
-          (chosen.length === 1
-            ? `Run started on ${chosen[0]?.name ?? 'one machine'}`
-            : `Race started: ${chosen.map((m) => m.name).join(', ')}`) +
-          (parsed.data.plan.rounds > 1 ? `, ${parsed.data.plan.rounds} rounds.` : '.'),
-      });
-    } catch (error) {
-      setFormError(messageOf(error));
-      // Pre-flight on the server found something the form had not seen yet.
-      if (error instanceof ApiError && error.issues && preflightKey) {
-        setPreflight({
-          key: preflightKey,
-          result: {
-            checkedAt: new Date().toISOString(),
-            issues: error.issues,
-            promptTokens: current?.result?.promptTokens ?? {},
-            promptWords: current?.result?.promptWords ?? 0,
-          },
-          error: null,
-        });
-      }
-    } finally {
-      setStarting(false);
-    }
+    const refused = await race.start(
+      parsed.data,
+      chosen.map((m) => m.name),
+    );
+    // Pre-flight on the server found something the form had not seen yet.
+    if (refused?.issues) preflight.showIssues(refused.issues);
   };
 
-  const cancel = async () => {
-    if (!session) return;
-    try {
-      setSession(await api.cancelSession(session.id));
-      refreshSummaries();
-    } catch (error) {
-      setFormError(messageOf(error));
-    }
-  };
-
-  const remove = async (target: SessionSummary) => {
-    await api.deleteSession(target.id);
-    setDeleting(null);
-    setSummaries((current) => current?.filter((s) => s.id !== target.id) ?? null);
-    if (session?.id === target.id) {
-      setSession(null);
-      if (routeId) window.location.hash = '#/text';
-    }
-  };
-
-  // Panes: a round of the race on screen, or the chosen machines waiting for one. While a race
-  // runs they follow it; afterwards they show the round picked in the round table.
-  const newest =
-    session === null
-      ? null
-      : session.progress.phase === 'warmup'
-        ? session.warmup
-        : (session.rounds[session.rounds.length - 1] ?? session.warmup);
-  const picked =
-    session === null || shownRound === null || running
-      ? null
-      : shownRound === -1
-        ? session.warmup
-        : (session.rounds.find((r) => r.index === shownRound) ?? null);
-  const round = picked ?? newest;
-  const roundIndex = round === null ? null : round === session?.warmup ? -1 : round.index;
+  const round = race.round;
   const panes = session
     ? session.machines.map((m, i) => ({
         key: m.id,
@@ -536,10 +239,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         run: null,
         model: statuses[m.id]?.status?.activeModel ?? null,
       }));
-  const finishedRuns = round?.runs.filter((run) => run.finishedAt !== null && run.client) ?? [];
   const telemetry = useTelemetry(panes.map((pane) => pane.key));
-  const counted = session?.rounds.some((r) => r.runs.some((run) => run.state === 'done')) ?? false;
-  const manyRounds = (session?.rounds.length ?? 0) > 1 || session?.warmup !== null;
   const columns = Math.min(Math.max(panes.length, 1), 4);
 
   const votable =
@@ -547,7 +247,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     !running &&
     session.machines.length === 2 &&
     session.rounds.some((r) => r.runs.every((run) => run.answer.length > 0));
-  if (blind && session) {
+  if (race.blind && session) {
     return (
       <>
         <TopBar title="Blind vote" current="text" />
@@ -556,9 +256,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
             key={session.id}
             session={session}
             onClose={(updated) => {
-              if (updated) setSession(updated);
-              setBlind(false);
-              refreshSummaries();
+              if (updated) race.setSession(updated);
+              race.setBlind(false);
+              race.refreshSummaries();
             }}
           />
         </main>
@@ -573,7 +273,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         current="text"
         actions={
           running ? (
-            <button type="button" className="btn btn-primary" onClick={() => void cancel()}>
+            <button type="button" className="btn btn-primary" onClick={() => void race.cancel()}>
               Cancel
             </button>
           ) : (
@@ -581,7 +281,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               type="submit"
               form="run-form"
               className="btn btn-primary"
-              disabled={starting || blocked}
+              disabled={race.starting || blocked}
             >
               Start
             </button>
@@ -590,7 +290,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       />
 
       <main className="main">
-        {devMode ? (
+        {race.devMode ? (
           <div className="banner banner-warn" role="status">
             This is the development server. Its extra work can skew timings. For measurements, run
             npm run build and npm start.
@@ -617,41 +317,22 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
             onSubmit={(event) => void start(event)}
             noValidate
           >
-            <fieldset className="chip-group">
-              <legend className="hero-label">Machines</legend>
-              {machines.map((m) => {
+            <MachinePicker
+              machines={machines}
+              selected={selected}
+              onToggle={toggle}
+              running={running}
+              describe={(m) => {
                 const s = statuses[m.id];
-                return (
-                  <label
-                    key={m.id}
-                    className="chip-radio"
-                    style={{ '--machine': m.color } as CSSProperties}
-                  >
-                    <input
-                      type="checkbox"
-                      name="machines"
-                      value={m.id}
-                      checked={selected?.includes(m.id) ?? false}
-                      onChange={() => toggle(m.id)}
-                      // Enabled once the default choice is made, so it cannot undo a click.
-                      disabled={running || selected === null}
-                    />
-                    <span className="chip-radio-body">
-                      <span className="chip-radio-name">{m.name}</span>
-                      <span className="chip-radio-model">
-                        {s
-                          ? s.error
-                            ? 'unreachable'
-                            : [s.status?.activeModel ?? 'no model loaded', s.status?.quant]
-                                .filter(Boolean)
-                                .join(' · ')
-                          : 'checking…'}
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
-            </fieldset>
+                return s
+                  ? s.error
+                    ? 'unreachable'
+                    : [s.status?.activeModel ?? 'no model loaded', s.status?.quant]
+                        .filter(Boolean)
+                        .join(' · ')
+                  : 'checking…';
+              }}
+            />
 
             <div className="field">
               <span className="field-label" id="preset-label">
@@ -783,7 +464,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                     : 'The same prompt every round and no seed: rounds after the first may reuse the cache.'}
                 </p>
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={setFormError} />
+              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
             </div>
             <details className="sampling">
               <summary>Sampling</summary>
@@ -819,181 +500,53 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 Every field is sent to every machine. The seed goes out with cold prefill only.
               </p>
             </details>
-            <div className="run-options">
-              <div className="field">
-                <label htmlFor="run-rounds">Rounds</label>
-                <input
-                  id="run-rounds"
-                  inputMode="numeric"
-                  value={rounds}
-                  onChange={(event) => setRounds(event.target.value)}
-                  disabled={running}
-                  aria-describedby="rounds-hint"
-                />
-                <p className="field-hint" id="rounds-hint">
-                  1 to {MAX_ROUNDS}. Results are medians.
-                </p>
-              </div>
-              <div className="field">
-                <span className="field-label" id="warmup-label">
-                  Warm-up
-                </span>
-                <div className="toggle-chips" role="radiogroup" aria-labelledby="warmup-label">
-                  {[true, false].map((on) => (
-                    <button
-                      key={String(on)}
-                      type="button"
-                      role="radio"
-                      aria-checked={warmup === on}
-                      className={`toggle-chip${warmup === on ? ' toggle-chip-on' : ''}`}
-                      onClick={() => setWarmup(on)}
-                      disabled={running}
-                    >
-                      {on ? 'On' : 'Off'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="field">
-                <label htmlFor="run-settle">Pause between rounds, seconds</label>
-                <input
-                  id="run-settle"
-                  inputMode="decimal"
-                  value={settleSeconds}
-                  onChange={(event) => setSettleSeconds(event.target.value)}
-                  disabled={running}
-                />
-              </div>
-              <div className="field">
-                <span className="field-label" id="order-label">
-                  Order
-                </span>
-                <div className="toggle-chips" role="radiogroup" aria-labelledby="order-label">
-                  {(['concurrent', 'sequential'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      role="radio"
-                      aria-checked={sequencing === mode}
-                      className={`toggle-chip${sequencing === mode ? ' toggle-chip-on' : ''}`}
-                      onClick={() => setSequencing(mode)}
-                      disabled={running}
-                    >
-                      {mode === 'concurrent' ? 'Together' : 'Take turns'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {sharing && sequencing === 'concurrent' ? (
-              <p className="note-warn" data-testid="same-host">
-                {sharing.join(' and ')} run on the same computer, so racing them together makes them
-                compete for it.{' '}
-                <button
-                  type="button"
-                  className="btn btn-quiet btn-inline"
-                  onClick={() => setSequencing('sequential')}
-                  disabled={running}
-                >
-                  Take turns instead
-                </button>
-              </p>
-            ) : null}
+            <PlanFields plan={plan} running={running} sharing={sharing} />
             {thinking && canThink ? (
               <p className="field-hint">
                 Max tokens includes the thinking. If a model thinks until the limit, it never
                 answers; lower the effort or raise the limit.
               </p>
             ) : null}
-            <section
-              className="preflight"
-              aria-labelledby="preflight-title"
-              data-testid="preflight"
-            >
-              <h3 id="preflight-title" className="hero-label">
-                Pre-flight
-              </h3>
-              {!draft.success ? (
-                <p className="field-error">{draft.error.issues[0]?.message}</p>
-              ) : chosen.length === 0 ? (
-                <p className="field-hint">Pick at least one machine.</p>
-              ) : current === null ? (
-                <p className="field-hint" data-testid="preflight-status">
-                  Checking the machines…
-                </p>
-              ) : current.error ? (
-                <p className="field-error">Pre-flight could not run: {current.error}</p>
-              ) : (
-                <>
-                  <p className="field-hint" data-testid="preflight-status">
-                    {errors.length > 0
-                      ? 'This race cannot start.'
-                      : warnings.length > 0
-                        ? 'This race can start, but it compares more than the hardware.'
-                        : 'All clear: the machines match and the prompt fits.'}{' '}
-                    {chosen
-                      .map((m) => {
-                        const tokens = current.result?.promptTokens[m.id];
-                        return typeof tokens === 'number'
-                          ? `${m.name} counts ${tokens.toLocaleString('en-US')} prompt tokens.`
-                          : null;
-                      })
-                      .filter(Boolean)
-                      .join(' ')}
-                  </p>
-                  {errors.length > 0 ? (
-                    <ul className="start-check" data-testid="start-blockers">
-                      {errors.map((issue) => (
-                        <li key={issue.text} className="field-error">
-                          {issue.text}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {warnings.length > 0 ? (
-                    <ul className="start-check" data-testid="race-warnings">
-                      {warnings.map((issue) => (
-                        <li key={issue.text} className="note-warn">
-                          {issue.text}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {warnings.length > 0 && errors.length === 0 ? (
-                    <label className="check-line">
-                      <input
-                        type="checkbox"
-                        checked={raceAnyway}
-                        onChange={(event) => setRaceAnyway(event.target.checked)}
-                        disabled={running}
-                      />
-                      Race anyway
-                    </label>
-                  ) : null}
-                </>
-              )}
-            </section>
-            {formError ? (
+            <PreflightPanel
+              problem={
+                !draft.success
+                  ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
+                  : chosen.length === 0
+                    ? { text: 'Pick at least one machine.', error: false }
+                    : null
+              }
+              checking={preflight.current === null}
+              error={preflight.current?.error ?? null}
+              errors={preflight.errors}
+              warnings={preflight.warnings}
+              clear="All clear: the machines match and the prompt fits."
+              details={chosen
+                .map((m) => {
+                  const tokens = preflight.current?.result?.promptTokens[m.id];
+                  return typeof tokens === 'number'
+                    ? `${m.name} counts ${tokens.toLocaleString('en-US')} prompt tokens.`
+                    : null;
+                })
+                .filter(Boolean)
+                .join(' ')}
+              raceAnyway={preflight.raceAnyway}
+              setRaceAnyway={preflight.setRaceAnyway}
+              running={running}
+            />
+            {race.formError ? (
               <p className="form-error" role="alert">
-                {formError}
+                {race.formError}
               </p>
             ) : null}
           </form>
         ) : null}
 
-        {session && running ? (
-          <p className="race-progress" role="status" data-testid="race-progress">
-            {progressText(session.progress, session.plan.rounds)}
-          </p>
-        ) : session && roundIndex !== null && manyRounds ? (
-          <p className="race-progress" data-testid="race-progress">
-            Showing{' '}
-            {roundIndex === -1
-              ? 'the warm-up'
-              : `round ${roundIndex + 1} of ${session.rounds.length}`}
-            . Pick another in the round table.
-          </p>
-        ) : null}
+        <ProgressLine
+          session={session}
+          running={running}
+          roundIndex={race.roundIndex}
+          manyRounds={race.manyRounds}
+        />
         {panes.length > 0 ? (
           <div
             className={`race-panes cols-${columns}`}
@@ -1016,84 +569,27 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           </div>
         ) : null}
 
-        {session && session.state === 'interrupted' ? (
-          <div className="banner banner-warn" role="status">
-            {session.error}
-          </div>
-        ) : null}
-
-        {session && !running && counted ? <Scoreboard session={session} /> : null}
-        {session && !running && round && counted ? (
-          <RaceCharts
-            session={session}
-            round={round}
-            label={roundIndex === -1 ? 'warm-up' : `round ${(roundIndex ?? 0) + 1}`}
-          />
-        ) : null}
-        {session &&
-        !running &&
-        counted &&
-        (session.machines.length > 1 || session.rounds.length > 1) ? (
-          <StatsTable session={session} />
-        ) : null}
-        {session && manyRounds ? (
-          <RoundTable
-            session={session}
-            shown={running ? -2 : (roundIndex ?? -2)}
-            onShow={(index) => setShownRound(index)}
-          />
-        ) : null}
-        {session && !running
-          ? finishedRuns.map((run) =>
-              session.machines.length === 1 && !manyRounds ? (
-                <RunMetrics key={run.id} run={run} />
-              ) : (
-                <details key={run.id} className="panel run-details">
-                  <summary>
-                    Measurements for {run.machineName}
-                    {manyRounds
-                      ? roundIndex === -1
-                        ? ', warm-up'
-                        : `, round ${(roundIndex ?? 0) + 1}`
-                      : ''}
-                  </summary>
-                  <RunMetrics run={run} />
-                </details>
-              ),
-            )
-          : null}
-        {session && !running ? <SetupTable session={session} /> : null}
-        {session && !running ? (
-          <div className="report-actions">
-            <ExportLinks session={session} />
-            {votable ? (
-              <button type="button" className="btn btn-outline" onClick={() => setBlind(true)}>
-                Blind vote
-              </button>
-            ) : null}
-            {session.votes.length > 0 ? (
-              <span className="muted">
-                {session.votes.length} blind {session.votes.length === 1 ? 'vote' : 'votes'} cast
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+        <RaceReport
+          race={race}
+          details={(run) => (run.client ? <RunMetrics run={run} /> : null)}
+          votable={votable}
+        />
 
         <SessionList
-          sessions={summaries}
+          sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => setDeleting(target)}
+          onDelete={(target) => race.setDeleting(target)}
         />
         <LogPanel machines={machines ?? []} entries={log} />
       </main>
 
-      {deleting ? (
+      {race.deleting ? (
         <ConfirmDialog
           title="Delete this race?"
-          message={`The race from ${new Date(deleting.createdAt).toLocaleString()} and its results will be removed from this computer.`}
+          message={`The race from ${new Date(race.deleting.createdAt).toLocaleString()} and its results will be removed from this computer.`}
           confirmLabel="Delete race"
-          onConfirm={() => remove(deleting)}
-          onClose={() => setDeleting(null)}
+          onConfirm={() => (race.deleting ? race.remove(race.deleting) : Promise.resolve())}
+          onClose={() => race.setDeleting(null)}
         />
       ) : null}
     </>

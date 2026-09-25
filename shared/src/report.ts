@@ -1,7 +1,9 @@
 import type { MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { PRESETS } from './presets';
+import { LIBRISPEECH_CLIP } from './transcribe';
 import {
+  audioLabel,
   backendLabel,
   speculativeOn,
   type MachineProvenance,
@@ -119,39 +121,65 @@ export function comparisonTable(session: SessionView): TableModel {
   };
 }
 
+/** The three cells a machine gets in a round row, and their column names. */
+const ROUND_CELLS = {
+  text: {
+    names: ['first word (ms)', 'speed (tok/s)', 'RTT (ms)'],
+    cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
+      const done = run?.state === 'done';
+      const first = done ? (run?.client?.firstAnswerMs ?? null) : null;
+      const speed = done ? (run?.client?.decodeTokPerSec ?? null) : null;
+      const rtt = run?.rtt?.medianMs ?? null;
+      const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
+      return [
+        done
+          ? { value: first, text: first === null ? 'no answer' : `${formatSeconds(first)} s` }
+          : { value: state, text: state },
+        { value: speed, text: done ? formatValue(speed, 'tok/s') : '' },
+        { value: rtt, text: rtt === null ? '' : `RTT ${formatMsValue(rtt)}` },
+      ];
+    },
+  },
+  transcribe: {
+    names: ['processing (ms)', 'real-time factor', 'word error rate (%)'],
+    cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
+      const done = run?.state === 'done';
+      const t = done ? (run?.transcription ?? null) : null;
+      const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
+      const wer = t?.wer ? t.wer.wer * 100 : null;
+      return [
+        done
+          ? { value: t?.processingMs ?? null, text: formatMsValue(t?.processingMs ?? null) }
+          : { value: state, text: state },
+        {
+          value: t?.rtf ?? null,
+          text: done ? `${formatValue(t?.rtf ?? null, '×')} real time` : '',
+        },
+        { value: wer, text: wer === null ? '' : `WER ${formatValue(wer, '%')}` },
+      ];
+    },
+  },
+} as const;
+
 function roundRow(session: SessionView, round: RoundView, label: string, key: string): TableRow {
+  const spec = ROUND_CELLS[session.workload];
   const cells: TableCell[] = [];
   for (const machine of session.machines) {
-    const run = round.runs.find((r) => r.machineId === machine.id);
-    const done = run?.state === 'done';
-    const first = done ? (run?.client?.firstAnswerMs ?? null) : null;
-    const speed = done ? (run?.client?.decodeTokPerSec ?? null) : null;
-    const rtt = run?.rtt?.medianMs ?? null;
-    const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
-    cells.push(
-      done
-        ? { value: first, text: first === null ? 'no answer' : `${formatSeconds(first)} s` }
-        : { value: state, text: state },
-      { value: speed, text: done ? formatValue(speed, 'tok/s') : '' },
-      { value: rtt, text: rtt === null ? '' : `RTT ${formatMsValue(rtt)}` },
-    );
+    cells.push(...spec.cells(round.runs.find((r) => r.machineId === machine.id)));
   }
   const flags = round.flags.map((flag) => flag.text).join(' ');
   cells.push({ value: flags, text: flags });
   return { key, label, unit: null, hint: null, cells };
 }
 
-/** One row per round; each machine has three cells: first answer word, speed and round trip. */
+/** One row per round; each machine has three cells, which depend on the workload. */
 export function roundTable(session: SessionView): TableModel {
+  const names = ROUND_CELLS[session.workload].names;
   return {
     title: 'Rounds',
     columns: [
       'Round',
-      ...session.machines.flatMap((m) => [
-        `${m.name} first word (ms)`,
-        `${m.name} speed (tok/s)`,
-        `${m.name} RTT (ms)`,
-      ]),
+      ...session.machines.flatMap((m) => names.map((name) => `${m.name} ${name}`)),
       'Flags',
     ],
     rows: [
@@ -268,15 +296,49 @@ const SETUP: readonly SetupSpec[] = [
   },
 ];
 
+/** Speech-to-text setup: what was asked for, and what actually served. */
+const STT_SETUP: readonly SetupSpec[] = [
+  {
+    key: 'stt-model',
+    label: 'Model',
+    matters: true,
+    pick: (p, s) =>
+      text(p.sttAfter?.loadedModel ?? (s.workload === 'transcribe' ? s.config.model : null)),
+  },
+  {
+    key: 'stt-engine',
+    label: 'Engine that served',
+    matters: true,
+    pick: (p) => text(p.sttAfter?.loadedEngine),
+  },
+  {
+    key: 'stt-device',
+    label: 'Device that served',
+    matters: true,
+    pick: (p) => text(p.sttAfter?.device),
+  },
+  {
+    key: 'whisper-cpp',
+    label: 'whisper.cpp (gguf engine)',
+    matters: false,
+    pick: (p) =>
+      p.sttBefore ? (p.sttBefore.engines.gguf.available ? 'available' : 'not built') : 'n/a',
+  },
+  ...SETUP.filter((spec) =>
+    ['unsloth', 'llama', 'gpu', 'os', 'ram', 'notes', 'address'].includes(spec.key),
+  ),
+];
+
 /** What each machine ran, from the snapshot taken with the race. */
 export function setupTable(session: SessionView): TableModel {
   const provenance = session.machines.map(
     (machine) => session.provenance.find((p) => p.machineId === machine.id) ?? null,
   );
+  const specs = session.workload === 'transcribe' ? STT_SETUP : SETUP;
   return {
     title: 'Setup',
     columns: ['Setting', ...session.machines.map((m) => m.name)],
-    rows: SETUP.map((spec) => {
+    rows: specs.map((spec) => {
       const values = provenance.map((p, i) => (p ? spec.pick(p, session, i) : 'n/a'));
       return {
         key: spec.key,
@@ -313,6 +375,12 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
     tokensPerJoule: {
       noun: 'Energy efficiency',
       win: (w, r) => `${w} gets ${r}× more tokens per joule`,
+    },
+    rtf: { noun: 'Transcription speed', win: (w, r) => `${w} transcribes ${r}× faster` },
+    wer: { noun: 'Accuracy', win: (w, r) => `${w} makes ${r}× fewer word errors` },
+    joulesPerMinute: {
+      noun: 'Energy per audio minute',
+      win: (w, r) => `${w} uses ${r}× less energy per audio minute`,
     },
   };
 
@@ -423,9 +491,6 @@ function mdRounds(session: SessionView): string {
 export function toMarkdown(session: SessionView): string {
   const when = new Date(session.createdAt).toISOString().replace('T', ' ').slice(0, 16);
   const names = session.machines.map((m) => m.name);
-  const preset =
-    PRESETS.find((p) => p.id === session.config.preset)?.label ?? session.config.preset;
-  const s = session.config.sampling;
   const plan = session.plan;
   const lines: string[] = [
     `# Model Duel: ${names.join(' against ')}`,
@@ -445,13 +510,32 @@ export function toMarkdown(session: SessionView): string {
   );
   lines.push('## Rounds', '', mdRounds(session), '');
   lines.push('## Setup', '', mdTable(setupTable(session), false), '');
+  if (session.workload === 'text') {
+    const cfg = session.config;
+    const preset = PRESETS.find((p) => p.id === cfg.preset)?.label ?? cfg.preset;
+    const sampling = cfg.sampling;
+    lines.push(
+      '## Settings',
+      '',
+      `- Prompt: ${preset}, ${cfg.prompt.split(/\s+/).filter(Boolean).length.toLocaleString('en-US')} words, starting "${mdEscape(cfg.prompt.slice(0, 160))}${cfg.prompt.length > 160 ? '…' : ''}"`,
+      `- Max tokens ${cfg.maxTokens}, thinking ${cfg.thinking ? 'on' : 'off'}${cfg.reasoningEffort ? `, effort ${cfg.reasoningEffort}` : ''}`,
+      `- ${cfg.prefill === 'cold' ? 'Cold' : 'Warm'} prefill: ${cfg.prefill === 'cold' ? "a fresh line started each round's prompt and the seed was sent, so no cached prompt helped" : 'the same prompt every round without a seed, so later rounds could reuse the cache'}`,
+      `- Sampling: temperature ${sampling.temperature}, top-p ${sampling.topP}, top-k ${sampling.topK}, min-p ${sampling.minP}, repetition penalty ${sampling.repetitionPenalty}${cfg.prefill === 'cold' ? `, seed ${sampling.seed}` : ''}`,
+    );
+  } else {
+    const cfg = session.config;
+    lines.push(
+      '## Settings',
+      '',
+      `- Audio: ${audioLabel(cfg)}`,
+      `- Model ${cfg.model}, engine ${cfg.engine} asked for, device ${cfg.device}, language ${cfg.language}`,
+      '- Processing time runs from the last byte of the file sent to the first byte of the answer; Unsloth measures its own from the end of the upload.',
+      '- Real-time factor is audio seconds per processing second: 20× transcribes a minute in three seconds.',
+      '- Word error rate compares lower-cased words with punctuation removed and numbers spelled out.',
+    );
+    if (cfg.audio.kind !== 'upload') lines.push(`- Audio source: ${LIBRISPEECH_CLIP.attribution}`);
+  }
   lines.push(
-    '## Settings',
-    '',
-    `- Prompt: ${preset}, ${session.config.prompt.split(/\s+/).filter(Boolean).length.toLocaleString('en-US')} words, starting "${mdEscape(session.config.prompt.slice(0, 160))}${session.config.prompt.length > 160 ? '…' : ''}"`,
-    `- Max tokens ${session.config.maxTokens}, thinking ${session.config.thinking ? 'on' : 'off'}${session.config.reasoningEffort ? `, effort ${session.config.reasoningEffort}` : ''}`,
-    `- ${session.config.prefill === 'cold' ? 'Cold' : 'Warm'} prefill: ${session.config.prefill === 'cold' ? "a fresh line started each round's prompt and the seed was sent, so no cached prompt helped" : 'the same prompt every round without a seed, so later rounds could reuse the cache'}`,
-    `- Sampling: temperature ${s.temperature}, top-p ${s.topP}, top-k ${s.topK}, min-p ${s.minP}, repetition penalty ${s.repetitionPenalty}${session.config.prefill === 'cold' ? `, seed ${s.seed}` : ''}`,
     `- Plan: ${plan.rounds} ${plan.rounds === 1 ? 'round' : 'rounds'}, warm-up ${plan.warmup ? 'on' : 'off'}, ${plan.settleMs / 1000} s between rounds, machines ${plan.sequencing === 'concurrent' ? 'together' : 'taking turns in ABBA order'}`,
     `- Telemetry: ${session.telemetry.enabled ? 'on, read twice a second' : 'off'}`,
     '',
@@ -459,7 +543,9 @@ export function toMarkdown(session: SessionView): string {
     '',
     '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
     `- A machine wins a row only when its median is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
-    '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
+    session.workload === 'transcribe'
+      ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
+      : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
     '- Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, read twice a second and added up over the run.',
     '',
     'Made with Model Duel.',

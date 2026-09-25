@@ -41,8 +41,12 @@ export class UnslothClient {
     return this.send('POST', path, body, options);
   }
 
+  deleteJson(path: string, options: RequestOptions): Promise<RouteResult> {
+    return this.send('DELETE', path, undefined, options);
+  }
+
   private async send(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body: unknown,
     options: RequestOptions,

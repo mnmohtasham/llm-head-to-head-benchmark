@@ -6,6 +6,7 @@ import type { Page } from './components/TopBar';
 import { MachinesPage } from './pages/MachinesPage';
 import { ModelsPage } from './pages/ModelsPage';
 import { TextPage } from './pages/TextPage';
+import { TranscribePage } from './pages/TranscribePage';
 
 let nextLogId = 1;
 
@@ -13,10 +14,17 @@ function pageFromHash(): Page {
   if (window.location.hash === '#/models') return 'models';
   if (window.location.hash === '#/text' || window.location.hash.startsWith('#/text/'))
     return 'text';
+  if (window.location.hash === '#/transcribe' || window.location.hash.startsWith('#/transcribe/'))
+    return 'transcribe';
   return 'machines';
 }
 
-const TITLES: Record<Page, string> = { machines: 'Machines', models: 'Models', text: 'Text' };
+const TITLES: Record<Page, string> = {
+  machines: 'Machines',
+  models: 'Models',
+  text: 'Text',
+  transcribe: 'Transcribe',
+};
 
 export function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
@@ -79,6 +87,8 @@ export function App() {
       ) : null}
       {page === 'text' ? (
         <TextPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
+      ) : page === 'transcribe' ? (
+        <TranscribePage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'models' ? (
         <ModelsPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : (

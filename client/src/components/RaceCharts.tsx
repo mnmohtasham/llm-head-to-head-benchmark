@@ -1,5 +1,6 @@
 import type { RoundView, SessionView } from '@duel/shared';
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
+import { formatMsValue } from '../format';
 import type uPlot from 'uplot';
 import { alignSeries, AXIS, Chart, withAlpha } from './Chart';
 
@@ -87,6 +88,7 @@ function TelemetryChart({ session, round }: { session: SessionView; round: Round
         // Each machine has its own sample times; join its readings across the other's.
         spanGaps: true,
       });
+      if (session.workload !== 'text') continue;
       // Tokens per second over the last second, every half second of the run.
       const timeline = run?.timeline ?? [];
       const start = run?.requestedAtMs ?? origin;
@@ -110,21 +112,26 @@ function TelemetryChart({ session, round }: { session: SessionView; round: Round
         spanGaps: true,
       });
     }
+    const text = session.workload === 'text';
     const options: Omit<uPlot.Options, 'width'> = {
       height: 220,
       series: specs,
-      scales: { x: { time: false }, W: {}, rate: {} },
+      scales: text ? { x: { time: false }, W: {}, rate: {} } : { x: { time: false }, W: {} },
       axes: [
         { ...AXIS, label: 'seconds since the round started', labelSize: 18 },
         { ...AXIS, scale: 'W', label: 'watts', labelSize: 18 },
-        {
-          ...AXIS,
-          scale: 'rate',
-          side: 1,
-          label: 'tokens per second',
-          labelSize: 18,
-          grid: { show: false },
-        },
+        ...(text
+          ? [
+              {
+                ...AXIS,
+                scale: 'rate',
+                side: 1,
+                label: 'tokens per second',
+                labelSize: 18,
+                grid: { show: false },
+              },
+            ]
+          : []),
       ],
       legend: { show: true },
       cursor: { drag: { x: false, y: false } },
@@ -135,9 +142,56 @@ function TelemetryChart({ session, round }: { session: SessionView; round: Round
     <Chart
       options={options}
       data={data}
-      label="GPU power and token rate over the round"
+      label={
+        session.workload === 'text'
+          ? 'GPU power and token rate over the round'
+          : 'GPU power over the round'
+      }
       testId="telemetry-chart"
     />
+  );
+}
+
+/**
+ * Where each machine's time went in a transcription: sending the file, then processing it, on
+ * one scale so the bars compare directly.
+ */
+function PhaseBars({ session, round }: { session: SessionView; round: RoundView }) {
+  const rows = session.machines.map((machine) => {
+    const t = round.runs.find((r) => r.machineId === machine.id)?.transcription ?? null;
+    return { machine, upload: t?.uploadMs ?? null, processing: t?.processingMs ?? null };
+  });
+  const longest = Math.max(1, ...rows.map((r) => (r.upload ?? 0) + (r.processing ?? 0)));
+  const width = (ms: number | null) => `${(((ms ?? 0) / longest) * 100).toFixed(2)}%`;
+  return (
+    <div
+      className="phase-bars"
+      data-testid="phase-bars"
+      role="img"
+      aria-label="Upload and processing time for each machine"
+    >
+      {rows.map(({ machine, upload, processing }) => (
+        <div
+          key={machine.id}
+          className="phase-row"
+          style={{ '--machine': machine.color } as CSSProperties}
+        >
+          <span className="phase-name">{machine.name}</span>
+          <span className="phase-track">
+            <span className="phase-upload" style={{ width: width(upload) }} />
+            <span className="phase-processing" style={{ width: width(processing) }} />
+          </span>
+          <span className="phase-value">
+            {upload === null && processing === null
+              ? 'n/a'
+              : `${formatMsValue(upload)} up · ${formatMsValue(processing)} processing`}
+          </span>
+        </div>
+      ))}
+      <p className="field-hint">
+        Light: the file going to the machine. Solid: the machine working on it.
+      </p>
+    </div>
   );
 }
 
@@ -157,7 +211,11 @@ export function RaceCharts({
       <h2 id="charts-title" className="section-title">
         Charts · {label}
       </h2>
-      <RaceChart session={session} round={round} />
+      {session.workload === 'transcribe' ? (
+        <PhaseBars session={session} round={round} />
+      ) : (
+        <RaceChart session={session} round={round} />
+      )}
       {hasTelemetry ? <TelemetryChart session={session} round={round} /> : null}
     </section>
   );

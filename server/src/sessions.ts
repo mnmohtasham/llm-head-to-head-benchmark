@@ -20,6 +20,11 @@ import {
   summarizeSession,
   tokenTimeline,
   withNonce,
+  wordErrorRate,
+  audioLabel,
+  type RunPhases,
+  type TranscribeConfig,
+  type WorkloadConfig,
   type ClientMetrics,
   type LiveMetrics,
   type MachineProvenance,
@@ -45,6 +50,15 @@ import { streamChatCompletion, type StreamOutcome } from './chat-stream';
 import { readModelStatus } from './models';
 import { cancelOnMachine, readMonitorRow } from './monitor';
 import { measureRtt } from './rtt';
+import { resolveAudio, warmupAudio, type Audio, type AudioStore } from './audio';
+import {
+  clearMonitor,
+  ensureSttModel,
+  readSttStatus,
+  readTranscriptionMonitor,
+  servedEngine,
+  transcribe,
+} from './stt';
 import type { SessionStore } from './session-store';
 import type { MachineStore, StoredMachine } from './store';
 import type { TelemetryHub } from './telemetry';
@@ -123,6 +137,10 @@ interface ActiveSession {
   stopReason: string | null;
   /** When each run's request went out, epoch ms, for lining up telemetry afterwards. */
   starts: Map<string, number>;
+  /** Each finished run's phases on the same clock, for telemetry; text or transcription alike. */
+  phases: Map<string, { phases: RunPhases; outputTokens: number | null }>;
+  /** The audio of a transcription session, resolved once before the first round. */
+  audio: Audio | null;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -163,7 +181,23 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
+/** What a run records about its request; transcription runs describe their audio instead. */
+interface RunLabel {
+  prompt: string;
+  maxTokens: number;
+  thinking: boolean;
+  reasoningEffort: TextConfig['reasoningEffort'];
+}
+
+const textLabel = (config: TextConfig): RunLabel => config;
+const audioRunLabel = (config: TranscribeConfig): RunLabel => ({
+  prompt: audioLabel(config),
+  maxTokens: 0,
+  thinking: false,
+  reasoningEffort: null,
+});
+
+function newRun(machine: StoredMachine, config: RunLabel): StoredRun {
   return {
     id: randomUUID(),
     machineId: machine.id,
@@ -192,6 +226,7 @@ function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
     telemetry: null,
     timeline: null,
     requestedAtMs: null,
+    transcription: null,
     raw: null,
   };
 }
@@ -218,6 +253,7 @@ export class SessionManager {
       /** True while a model load runs on the machine, which would skew a race. */
       isLoading: (machineId: string) => boolean;
       telemetry: TelemetryHub;
+      audio: AudioStore;
     },
   ) {}
 
@@ -266,15 +302,18 @@ export class SessionManager {
 
   start(machines: StoredMachine[], request: SessionRequest): SessionView {
     const id = randomUUID();
+    const workload: WorkloadConfig =
+      request.workload === 'text'
+        ? { workload: 'text', config: { ...request.config } }
+        : { workload: 'transcribe', config: structuredClone(request.config) };
     const session: StoredSession = {
+      ...workload,
       schemaVersion: SESSION_SCHEMA_VERSION,
       id,
-      workload: 'text',
       createdAt: new Date().toISOString(),
       finishedAt: null,
       state: 'running',
       error: null,
-      config: { ...request.config },
       plan: { ...request.plan },
       machines: machines.map((m) => ({
         id: m.id,
@@ -303,6 +342,8 @@ export class SessionManager {
       done: Promise.resolve(),
       stopReason: null,
       starts: new Map(),
+      phases: new Map(),
+      audio: null,
     };
     this.active.set(id, entry);
     entry.done = this.execute(entry).catch(async (error: unknown) => {
@@ -393,6 +434,8 @@ export class SessionManager {
       statusBefore: null,
       statusAfter: null,
       request: null,
+      sttBefore: null,
+      sttAfter: null,
     };
   }
 
@@ -500,6 +543,26 @@ export class SessionManager {
     const machine = entry.machines[index];
     const provenance = entry.session.provenance[index];
     if (!machine || !provenance) return;
+    const { session } = entry;
+    if (session.workload === 'transcribe') {
+      const stt = await readSttStatus(machine);
+      provenance.sttBefore = stt.status;
+      if (!stt.status) {
+        entry.unready[index] = stt.error ?? `${machine.name} did not answer its STT status.`;
+        return;
+      }
+      if (!stt.status.available) {
+        entry.unready[index] = `Speech-to-text is not available on ${machine.name}.`;
+        return;
+      }
+      const engine = servedEngine(stt.status, session.config.engine);
+      if (!stt.status.engines[engine].available) {
+        entry.unready[index] = `The ${engine} engine is not available on ${machine.name}.`;
+        return;
+      }
+      entry.models[index] = session.config.model;
+      return;
+    }
     if (this.deps.isLoading(machine.id)) {
       entry.unready[index] =
         `A model is loading on ${machine.name}. Wait for it to finish, then start again.`;
@@ -532,7 +595,12 @@ export class SessionManager {
     const baselineMs = this.deps.timings.telemetryBaselineMs;
     try {
       await Promise.all(entry.machines.map((_machine, i) => this.prepare(entry, i)));
-      const anyReady = entry.models.some((model) => model !== null);
+      if (session.workload === 'transcribe') {
+        const audio = await resolveAudio(session.config.audio, this.deps.audio);
+        if (typeof audio === 'string') entry.stopReason = audio;
+        else entry.audio = audio;
+      }
+      const anyReady = entry.models.some((model) => model !== null) && entry.stopReason === null;
       if (session.telemetry.enabled && anyReady && !signal.aborted) {
         releaseTelemetry = this.deps.telemetry.acquire(entry.machines.map((m) => m.id));
         this.setProgress(entry, 'baseline', null);
@@ -593,28 +661,25 @@ export class SessionManager {
     ];
     for (const round of rounds) {
       for (const run of round.runs) {
-        const start = entry.starts.get(run.id);
-        const c = run.client;
-        if (start === undefined || !c) continue;
-        const firstToken = c.ttftMs === null ? null : start + c.ttftMs;
-        const lastToken =
-          firstToken === null || c.decodeMs === null ? null : firstToken + c.decodeMs;
-        const end = start + c.totalMs;
+        const recorded = entry.phases.get(run.id);
+        if (!recorded) continue;
+        const { phases, outputTokens } = recorded;
         const samples = this.deps.telemetry.samplesBetween(
           run.machineId,
-          start - baseline,
-          end + baseline,
+          phases.start - baseline,
+          phases.end + baseline,
         );
-        run.telemetry = {
-          samples,
-          energy: runEnergy(samples, { start, firstToken, lastToken, end }, c.outputTokens),
-        };
+        run.telemetry = { samples, energy: runEnergy(samples, phases, outputTokens) };
       }
     }
   }
 
   private async runRound(entry: ActiveSession, index: number, warmup: boolean): Promise<void> {
     const { session, controller } = entry;
+    if (session.workload === 'transcribe') {
+      await this.runTranscribeRound(entry, session.config, index, warmup);
+      return;
+    }
     const signal = controller.signal;
     const config = warmup ? WARMUP : session.config;
     const cold = !warmup && config.prefill === 'cold';
@@ -625,7 +690,7 @@ export class SessionManager {
       sendSkewMs: null,
       order: [],
       nonce: cold ? newNonce() : null,
-      runs: entry.machines.map((machine) => newRun(machine, config)),
+      runs: entry.machines.map((machine) => newRun(machine, textLabel(config))),
       loopLagMs: null,
       flags: [],
     };
@@ -715,7 +780,7 @@ export class SessionManager {
     if (!warmup) {
       const names = new Map(session.machines.map((m) => [m.id, m.name]));
       view.flags = roundFlags(view.runs, names, view.loopLagMs, {
-        fixedLength: session.config.preset === 'fixed-length',
+        fixedLength: session.workload === 'text' && session.config.preset === 'fixed-length',
       });
     }
     if (cutOn !== null) {
@@ -730,6 +795,217 @@ export class SessionManager {
     this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
     entry.current = null;
     await this.deps.sessions.save(session);
+  }
+
+  /**
+   * A transcription round: every machine gets the model loaded if it is not, a clean monitor, a
+   * round-trip check, then the same audio together or in turns.
+   */
+  private async runTranscribeRound(
+    entry: ActiveSession,
+    config: TranscribeConfig,
+    index: number,
+    warmup: boolean,
+  ): Promise<void> {
+    const { session, controller } = entry;
+    const signal = controller.signal;
+    const audio = warmup ? await warmupAudio() : entry.audio;
+    if (!audio) return;
+    const view: StoredRound = {
+      index,
+      startedAt: null,
+      finishedAt: null,
+      sendSkewMs: null,
+      order: [],
+      nonce: null,
+      runs: entry.machines.map((machine) => newRun(machine, audioRunLabel(config))),
+      loopLagMs: null,
+      flags: [],
+    };
+    const round: LiveRound = {
+      view,
+      warmup,
+      lag: monitorEventLoopDelay({ resolution: 10 }),
+      cancelId: randomUUID(),
+      controller: new AbortController(),
+      truncatedBy: null,
+      runs: entry.machines.map((machine, i) => ({
+        view: view.runs[i] as StoredRun,
+        machine,
+        provenance: session.provenance[i] as MachineProvenance,
+        unsentReasoning: '',
+        unsentAnswer: '',
+        requestAt: null,
+        firstTokenAt: null,
+        lastTokenAt: null,
+      })),
+    };
+    for (const [i, run] of round.runs.entries()) run.view.modelBefore = entry.models[i] ?? null;
+    if (warmup) session.warmup = view;
+    else session.rounds.push(view);
+    entry.current = round;
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+
+    for (const [i, run] of round.runs.entries()) {
+      const why = entry.unready[i];
+      if (why) this.finishRun(entry, round, run, 'failed', why);
+    }
+    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+
+    // The sidecar unloads after idle minutes, so every round makes sure the model is there.
+    this.setProgress(entry, 'loading', warmup ? null : index);
+    const loads = new Map<string, number | null>();
+    await Promise.all(
+      ready.map(async (run) => {
+        const loaded = await ensureSttModel(run.machine, config);
+        if (loaded.error) this.finishRun(entry, round, run, 'failed', loaded.error);
+        else loads.set(run.view.id, loaded.loadMs);
+      }),
+    );
+    const sending = ready.filter((run) => run.view.finishedAt === null);
+    await Promise.all(sending.map((run) => clearMonitor(run.machine)));
+    if (!warmup && sending.length > 0) {
+      this.setProgress(entry, 'rtt', index);
+      const rtts = await Promise.all(
+        sending.map((run) => measureRtt(run.machine.baseUrl, { signal })),
+      );
+      sending.forEach((run, i) => {
+        run.view.rtt = rtts[i] ?? null;
+      });
+    }
+    if (!signal.aborted && sending.length > 0) {
+      this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
+      round.lag.enable();
+      view.startedAt = new Date().toISOString();
+      const fields = {
+        model: config.model,
+        language: config.language,
+        response_format: 'verbose_json',
+      };
+      const send = (run: LiveRun) =>
+        this.sendAudio(entry, round, run, audio, fields, loads.get(run.view.id) ?? null);
+      if (session.plan.sequencing === 'concurrent') {
+        const pending = sending.map((run) => send(run));
+        view.order = sending.map((run) => run.machine.id);
+        const first = Math.min(...sending.map((run) => run.requestAt ?? 0));
+        const last = Math.max(...sending.map((run) => run.requestAt ?? 0));
+        view.sendSkewMs = round3(last - first);
+        for (const run of sending) run.view.sendOffsetMs = round3((run.requestAt ?? 0) - first);
+        await Promise.all(pending);
+      } else {
+        const order = abbaOrder(sending, warmup ? 0 : index);
+        view.order = order.map((run) => run.machine.id);
+        for (const run of order) run.view.state = 'queued';
+        for (const run of order) {
+          if (signal.aborted) break;
+          await send(run);
+        }
+      }
+      round.lag.disable();
+      view.loopLagMs = lagOf(round.lag);
+    }
+    for (const run of round.runs) {
+      if (signal.aborted) this.finishRun(entry, round, run, 'cancelled', null);
+    }
+    view.finishedAt = new Date().toISOString();
+    if (!warmup) {
+      for (const run of view.runs) {
+        if (run.transcription && audio.reference) {
+          run.transcription.wer = wordErrorRate(audio.reference, run.transcription.text);
+        }
+      }
+      const names = new Map(session.machines.map((m) => [m.id, m.name]));
+      view.flags = roundFlags(view.runs, names, view.loopLagMs);
+    }
+    this.flush(entry);
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    entry.current = null;
+    await this.deps.sessions.save(session);
+  }
+
+  /** Sends the audio to one machine and turns its answer into a transcription result. */
+  private async sendAudio(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    audio: Audio,
+    fields: Record<string, string>,
+    loadMs: number | null,
+  ): Promise<void> {
+    const { machine } = run;
+    if (!round.warmup) {
+      run.provenance.request ??= { ...fields, file: `${audio.name}, ${audio.bytes.length} bytes` };
+    }
+    run.view.state = 'streaming';
+    run.requestAt = performance.now();
+    run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
+    entry.starts.set(run.view.id, run.view.requestedAtMs);
+    const outcome = await transcribe(machine, audio, fields, {
+      signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
+      timeoutMs: this.deps.timings.totalTimeoutMs,
+    });
+    if (outcome.cancelled) {
+      this.finishRun(entry, round, run, 'cancelled', null);
+      return;
+    }
+    if (outcome.error) {
+      this.finishRun(entry, round, run, 'failed', `${machine.name}: ${outcome.error}`);
+      return;
+    }
+    if (outcome.status !== 200) {
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'failed',
+        detailOf(outcome.body) || `The transcription answered HTTP ${outcome.status ?? 'nothing'}.`,
+      );
+      return;
+    }
+    const body = (outcome.body ?? {}) as { text?: unknown; language?: unknown; duration?: unknown };
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    const audioSeconds =
+      typeof body.duration === 'number' && body.duration > 0 ? body.duration : audio.seconds;
+    const bodySentAt = outcome.bodySentAt ?? outcome.requestAt;
+    const headersAt = outcome.headersAt ?? outcome.endAt;
+    const uploadMs = bodySentAt - outcome.requestAt;
+    const processingMs = headersAt - bodySentAt;
+    const [serverProcessingMs, after] = round.warmup
+      ? [null, null]
+      : await Promise.all([readTranscriptionMonitor(machine), readSttStatus(machine)]);
+    if (after?.status) run.provenance.sttAfter = after.status;
+    const rate = (ms: number | null) =>
+      audioSeconds && ms !== null && ms > 0 ? audioSeconds / (ms / 1000) : null;
+    run.view.answer = text;
+    run.view.transcription = {
+      text,
+      language: typeof body.language === 'string' ? body.language : null,
+      audioSeconds,
+      bytes: audio.bytes.length,
+      uploadMs: round3(uploadMs),
+      processingMs: round3(processingMs),
+      serverProcessingMs,
+      rtf: rate(processingMs),
+      serverRtf: rate(serverProcessingMs),
+      loadMs: loadMs === null ? null : round3(loadMs),
+      // Scored after the round: aligning a long transcript would block the other machines' timing.
+      wer: null,
+      engine: after?.status?.loadedEngine ?? null,
+      device: after?.status?.device ?? null,
+    };
+    run.view.live = { ...run.view.live, elapsedMs: outcome.endAt - outcome.requestAt };
+    run.view.loopLagMs = lagOf(round.lag);
+    const start = performance.timeOrigin + outcome.requestAt;
+    entry.phases.set(run.view.id, {
+      phases: {
+        start,
+        firstToken: start + uploadMs,
+        lastToken: start + uploadMs + processingMs,
+        end: start + (outcome.endAt - outcome.requestAt),
+      },
+      outputTokens: null,
+    });
+    this.finishRun(entry, round, run, 'done', null);
   }
 
   /** Sends one machine's request; the moment it leaves is stamped before this returns. */
@@ -775,6 +1051,18 @@ export class SessionManager {
     run.view.client = client;
     const { requestAt, headersAt, endAt, events } = outcome.timeline;
     run.view.timeline = tokenTimeline(events, requestAt);
+    const start = performance.timeOrigin + requestAt;
+    const firstToken = client.ttftMs === null ? null : start + client.ttftMs;
+    entry.phases.set(run.view.id, {
+      phases: {
+        start,
+        firstToken,
+        lastToken:
+          firstToken === null || client.decodeMs === null ? null : firstToken + client.decodeMs,
+        end: start + client.totalMs,
+      },
+      outputTokens: client.outputTokens,
+    });
     run.view.raw = {
       headersAtMs: headersAt === null ? null : round3(headersAt - requestAt),
       endAtMs: round3(endAt - requestAt),
@@ -786,7 +1074,8 @@ export class SessionManager {
     if (round.warmup) {
       run.view.server = { timings, monitor: null };
     } else {
-      const sent = withNonce(entry.session.config.prompt, round.view.nonce);
+      const prompt = entry.session.workload === 'text' ? entry.session.config.prompt : '';
+      const sent = withNonce(prompt, round.view.nonce);
       const [monitor, after] = await Promise.all([
         readMonitorRow(machine, sent),
         readModelStatus(machine),

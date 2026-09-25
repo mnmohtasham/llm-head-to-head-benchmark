@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
 import type { RunEnergy, TelemetrySample } from './telemetry';
+import type { TranscriptionResult } from './transcribe';
 import { detailOf } from './probe';
 import type { SseMessage } from './sse';
 
@@ -488,6 +489,8 @@ export interface RunView {
   timeline: Array<[number, number, 0 | 1]> | null;
   /** When the request left, epoch ms on the controller's clock, to line up telemetry. */
   requestedAtMs: number | null;
+  /** The transcription workload's result; null for text. */
+  transcription: TranscriptionResult | null;
 }
 
 export interface RunTelemetry {
