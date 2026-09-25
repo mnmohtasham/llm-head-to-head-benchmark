@@ -26,7 +26,7 @@ sharing results, for example on a public results website. The app's own session 
 | `generator` | `app`, `version`, `build` (the page build id) and `sessionSchemaVersion`. |
 | `workload` | `text`, `transcribe`, `image` or `command`. |
 | `kind` | The metric set: the workload, with text split into `text` (latency) and `throughput`. |
-| `settings` | `config` (the workload's settings as sent, full prompt included), `plan` (rounds, warm-up, pause, order) and `telemetry.enabled`. |
+| `settings` | `config` (the workload's settings as sent, full prompt included), `plan` (rounds, warm-up, pause, order, and `statistic`: `median` or `mean`) and `telemetry.enabled`. |
 | `machines` | One entry per machine, described below. Runs refer to machines by `index`. |
 | `metricDefinitions` | The metrics of `kind`: `key`, `label`, `unit`, and `better` (`lower`, `higher` or `null`). |
 | `rounds` | The warm-up (with `warmup: true`) and every counted round, in order. |
@@ -89,8 +89,10 @@ this table.
 ## Statistics
 
 `summary.stats` has one entry per metric: `key`, `machines` (per machine: `n` counted rounds,
-`median`, `min`, `max`, `mean`, `stdev`) and `verdict`. A verdict is `win` only when the leader's
-median is more than 10 percent better than the runner-up's, or their round-to-round ranges do not
+`median`, `min`, `max`, `mean`, `stdev`) and `verdict`. The verdict compares the statistic in
+`settings.plan.statistic`, the median unless it says `mean`; files without the field used the
+median. A verdict is `win` only when the leader's median (or mean) is more than 10 percent better
+than the runner-up's, or their round-to-round ranges do not
 overlap (at least two rounds each); otherwise `tie`, or `none` with fewer than two machines.
 `leader` and `runnerUp` are machine indexes, `ratio` is "times better", and `reason` is `gap` or
 `ranges`. Failed rounds and the warm-up never count.

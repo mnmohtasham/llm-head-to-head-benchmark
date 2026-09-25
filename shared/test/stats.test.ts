@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { abbaOrder, gate, roundFlags, sessionStats, summarize, type Summary } from '../src/stats';
+import { comparisonTable, scoreboard, toMarkdown } from '../src/report';
+import { summarizeSession } from '../src/session';
+import {
+  abbaOrder,
+  centre,
+  gate,
+  roundFlags,
+  sessionStats,
+  statisticOf,
+  summarize,
+  type Summary,
+} from '../src/stats';
 import { makeRun, makeSession } from './make';
 
 describe('summarize', () => {
@@ -126,5 +137,54 @@ describe('roundFlags', () => {
       ['failed', 'b'],
     ]);
     expect(roundFlags([makeRun('a')], names, { max: 12 })).toEqual([]);
+  });
+});
+
+describe('median or average', () => {
+  // One slow round: the median ignores it, the average does not.
+  const outlier = () =>
+    makeSession(
+      ['a', 'b'],
+      [
+        [makeRun('a', { decodeTokPerSec: 40 }), makeRun('b', { decodeTokPerSec: 38 })],
+        [makeRun('a', { decodeTokPerSec: 41 }), makeRun('b', { decodeTokPerSec: 39 })],
+        [makeRun('a', { decodeTokPerSec: 10 }), makeRun('b', { decodeTokPerSec: 38.5 })],
+      ],
+    );
+
+  it('uses the median unless the plan asks for the average', () => {
+    expect(statisticOf(undefined)).toBe('median');
+    expect(statisticOf({ statistic: 'mean' })).toBe('mean');
+    const summary = summarize([1, 2, 9]);
+    expect(centre(summary, 'median')).toBe(2);
+    expect(centre(summary, 'mean')).toBe(4);
+  });
+
+  it('can turn a tie into a win for the other machine', () => {
+    const session = outlier();
+    const median = sessionStats(session).find((r) => r.key === 'decode');
+    expect(median).toMatchObject({ statistic: 'median', verdict: { kind: 'tie', leader: 0 } });
+
+    session.plan = { ...session.plan, statistic: 'mean' };
+    const mean = sessionStats(session).find((r) => r.key === 'decode');
+    expect(mean?.statistic).toBe('mean');
+    // Average 30.3 against 38.5: b wins by more than 10 percent.
+    expect(mean?.verdict).toMatchObject({ kind: 'win', leader: 1, reason: 'gap' });
+    expect(gate(mean?.summaries ?? [], 'higher', 'median').leader).toBe(0);
+  });
+
+  it('says which one the report and the log use', () => {
+    const session = outlier();
+    session.plan = { ...session.plan, statistic: 'mean' };
+    const table = comparisonTable(session);
+    expect(table.title).toBe('Comparison · averages of 3 rounds');
+    const decode = table.rows.find((row) => row.key === 'decode');
+    expect(decode?.cells[0]?.value).toBeCloseTo(30.33, 2);
+    expect(scoreboard(session).find((line) => line.key === 'decode')?.text).toMatch(
+      /38\.5 tok\/s against 30\.3 tok\/s/,
+    );
+    expect(summarizeSession(session)).toMatchObject({ statistic: 'mean' });
+    expect(summarizeSession(session).machines[0]?.decodeTokPerSec).toBeCloseTo(30.33, 2);
+    expect(toMarkdown(session)).toContain('rounds summed up by their average');
   });
 });

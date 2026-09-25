@@ -140,6 +140,47 @@ test('filters, sorts and picks columns', async ({ page }) => {
   await expect(page.getByRole('columnheader', { name: 'GPU', exact: true })).toBeVisible();
 });
 
+test('switches between median and average, in the race and in the table', async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/#/text/${sessionId}`);
+  const compare = page.getByTestId('compare');
+  await expect(compare.getByRole('heading')).toHaveText('Comparison · medians of 2 rounds');
+  await compare.getByRole('radio', { name: 'Average' }).click();
+  await expect(compare.getByRole('heading')).toHaveText('Comparison · averages of 2 rounds');
+  await expect(compare).toContainText('its average is more than');
+  await expect(page.getByTestId('session-row').filter({ hasText: 'results-spec' })).toContainText(
+    '2 rounds, averages',
+  );
+  // Kept with the race.
+  await page.reload();
+  await expect(page.getByTestId('compare').getByRole('heading')).toHaveText(
+    'Comparison · averages of 2 rounds',
+  );
+
+  const runs = (
+    (await (await request.get('/api/runs')).json()) as {
+      runs: Array<{ sessionId: string; machine: string; means: Record<string, number> }>;
+    }
+  ).runs.filter((r) => r.sessionId === sessionId);
+  const linuxMean = runs.find((r) => r.machine === LINUX.name)?.means.decode ?? 0;
+  await page.goto('/#/results');
+  await page.getByLabel('Search').fill('results-spec');
+  await page
+    .getByRole('radiogroup', { name: 'Rounds summed up by' })
+    .getByRole('radio', { name: 'Average' })
+    .click();
+  // The cell may also carry the best-value star.
+  await expect(cell(page, LINUX.name, 'metric:decode')).toHaveText(
+    new RegExp(`^${linuxMean.toFixed(1).replace('.', '\\.')} tok/s`),
+  );
+  await page
+    .getByRole('radiogroup', { name: 'Rounds summed up by' })
+    .getByRole('radio', { name: 'Median' })
+    .click();
+});
+
 test('downloads the rows shown as CSV, and fits a phone screen', async ({ page }) => {
   await page.goto('/#/results');
   await page.getByLabel('Search').fill('results-spec');

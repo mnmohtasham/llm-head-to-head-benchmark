@@ -52,6 +52,7 @@ import {
   type SessionStreamMessage,
   type SessionSummary,
   type SessionView,
+  type Statistic,
   type StoredRound,
   type StoredRun,
   type StoredSession,
@@ -511,6 +512,23 @@ export class SessionManager {
     );
     await this.deps.sessions.save(stored);
     // Votes are part of the result, so the file follows them.
+    await this.writeResult(stored);
+    if (this.recent.has(id)) this.recent.set(id, stored);
+    return publicSession(stored);
+  }
+
+  /** Sums a finished race up by its medians or its averages, from now on. */
+  async setStatistic(id: string, statistic: Statistic): Promise<SessionView | string> {
+    const entry = this.active.get(id);
+    if (entry) {
+      if (entry.session.finishedAt === null) return 'The race is still running.';
+      await entry.done;
+    }
+    const stored = await this.getStored(id);
+    if (!stored) return 'There is no race with that id.';
+    stored.plan = { ...stored.plan, statistic };
+    await this.deps.sessions.save(stored);
+    // The verdicts in the result file change with it.
     await this.writeResult(stored);
     if (this.recent.has(id)) this.recent.set(id, stored);
     return publicSession(stored);

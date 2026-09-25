@@ -109,6 +109,26 @@ describe('device runs', () => {
     expect(text(rtx, 'wins')).toMatch(/decode speed/);
   });
 
+  it('keeps the average beside the median, and shows either', () => {
+    const session = race();
+    session.rounds[2] = {
+      ...session.rounds[2]!,
+      runs: [
+        makeRun('rtx', { decodeTokPerSec: 20, ttftMs: 150, promptTokens: 42 }),
+        makeRun('amd', { decodeTokPerSec: 18.5, ttftMs: 320, promptTokens: 42 }),
+      ],
+    };
+    const [rtx] = deviceRuns(session);
+    expect(rtx?.metrics.decode).toBe(56);
+    expect(rtx?.means.decode).toBeCloseTo(44.33, 2);
+    expect(rtx?.means.finish).toBe('stop ×3');
+    const column = (statistic: 'median' | 'mean') =>
+      runColumns('text', statistic).find((c) => c.id === 'metric:decode');
+    expect(column('median')?.text(rtx!)).toBe('56.0 tok/s');
+    expect(column('mean')?.text(rtx!)).toBe('44.3 tok/s');
+    expect(column('mean')?.hint).toMatch(/^Average over the counted rounds/);
+  });
+
   it('adds up several GPUs', () => {
     const session = race();
     session.provenance[0] = provenance('rtx', {

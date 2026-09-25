@@ -15,9 +15,12 @@ import {
   type SessionView,
 } from './session';
 import {
+  centre,
   GATE_RATIO,
   runsOf,
   sessionStats,
+  statisticOf,
+  statisticWord,
   type StatRow,
   type Summary,
   type Verdict,
@@ -88,8 +91,9 @@ export function comparisonTable(session: SessionView): TableModel {
   const stats = sessionStats(session);
   const multi = session.machines.length > 1;
   const rounds = session.rounds.length;
+  const word = statisticWord(statisticOf(session.plan), true);
   return {
-    title: rounds > 1 ? `Comparison · medians of ${rounds} rounds` : 'Comparison',
+    title: rounds > 1 ? `Comparison · ${word} of ${rounds} rounds` : 'Comparison',
     columns: ['Metric', ...session.machines.map((m) => m.name), ...(multi ? ['Result'] : [])],
     rows: stats.map((row) => {
       const cells: TableCell[] = row.summaries.map((summary, i) => {
@@ -97,9 +101,10 @@ export function comparisonTable(session: SessionView): TableModel {
           const text = textValues(session, session.machines[i]?.id ?? '', row.key);
           return { value: text, text };
         }
+        const value = centre(summary, row.statistic);
         return {
-          value: summary.median,
-          text: formatValue(summary.median, row.unit),
+          value,
+          text: formatValue(value, row.unit),
           detail: spread(summary, row.unit),
           best: row.verdict.kind === 'win' && row.verdict.leader === i,
         };
@@ -639,8 +644,8 @@ export function scoreboard(session: SessionView): ScoreLine[] {
     }
     const leader = session.machines[verdict.leader];
     const runnerUp = session.machines[verdict.runnerUp];
-    const a = formatValue(row.summaries[verdict.leader]?.median ?? null, row.unit);
-    const b = formatValue(row.summaries[verdict.runnerUp]?.median ?? null, row.unit);
+    const a = formatValue(centre(row.summaries[verdict.leader], row.statistic), row.unit);
+    const b = formatValue(centre(row.summaries[verdict.runnerUp], row.statistic), row.unit);
     const against = session.machines.length > 2 ? ` for ${runnerUp?.name ?? ''}` : '';
     if (verdict.kind === 'win') {
       const ratio =
@@ -802,13 +807,13 @@ export function toMarkdown(session: SessionView): string {
     if (cfg.audio.kind !== 'upload') lines.push(`- Audio source: ${LIBRISPEECH_CLIP.attribution}`);
   }
   lines.push(
-    `- Plan: ${plan.rounds} ${plan.rounds === 1 ? 'round' : 'rounds'}, warm-up ${plan.warmup ? 'on' : 'off'}, ${plan.settleMs / 1000} s between rounds, machines ${plan.sequencing === 'concurrent' ? 'together' : 'taking turns in ABBA order'}`,
+    `- Plan: ${plan.rounds} ${plan.rounds === 1 ? 'round' : 'rounds'}, warm-up ${plan.warmup ? 'on' : 'off'}, ${plan.settleMs / 1000} s between rounds, machines ${plan.sequencing === 'concurrent' ? 'together' : 'taking turns in ABBA order'}, rounds summed up by their ${statisticWord(statisticOf(plan))}`,
     `- Telemetry: ${session.telemetry.enabled ? 'on, read twice a second' : 'off'}`,
     '',
     '## How to read this',
     '',
     '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
-    `- A machine wins a row only when its median is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
+    `- A machine wins a row only when its ${statisticWord(statisticOf(plan))} is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
     session.workload === 'command'
       ? '- Ratio headlines cover frames per second and energy per encode, for the same clip and settings.'
       : metricKind(session) === 'throughput'

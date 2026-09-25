@@ -1,12 +1,14 @@
 import {
   DEFAULT_PLAN,
   MAX_ROUNDS,
+  statisticOf,
   type MachineView,
   type PreflightIssue,
   type RunPlan,
   type RunView,
   type SessionProgress,
   type SessionView,
+  type Statistic,
   type Workload,
 } from '@duel/shared';
 import { useState, type CSSProperties, type ReactNode } from 'react';
@@ -61,6 +63,7 @@ export function usePlan() {
   const [warmup, setWarmup] = useState(DEFAULT_PLAN.warmup);
   const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
   const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
+  const [statistic, setStatistic] = useState<Statistic>('median');
   return {
     rounds,
     setRounds,
@@ -70,17 +73,21 @@ export function usePlan() {
     setSettleSeconds,
     sequencing,
     setSequencing,
+    statistic,
+    setStatistic,
     value: {
       rounds: Number(rounds),
       warmup,
       settleMs: Math.round(Number(settleSeconds) * 1000),
       sequencing,
+      statistic,
     } satisfies RunPlan,
     fill: (plan: RunPlan) => {
       setRounds(String(plan.rounds));
       setWarmup(plan.warmup);
       setSettleSeconds(String(plan.settleMs / 1000));
       setSequencing(plan.sequencing);
+      setStatistic(statisticOf(plan));
     },
   };
 }
@@ -157,7 +164,25 @@ export function PlanFields({
             aria-describedby="rounds-hint"
           />
           <p className="field-hint" id="rounds-hint">
-            1 to {MAX_ROUNDS}. Results are medians.
+            1 to {MAX_ROUNDS}.
+          </p>
+        </div>
+        <div className="field">
+          <Toggle
+            labelId="statistic-label"
+            label="Sum up rounds by"
+            options={[
+              ['median', 'Median'],
+              ['mean', 'Average'],
+            ]}
+            value={plan.statistic}
+            onChange={plan.setStatistic}
+            disabled={running}
+          />
+          <p className="field-hint">
+            {plan.statistic === 'median'
+              ? 'The middle round: one slow or fast round does not move it.'
+              : 'The mean of every round: each round counts, outliers too.'}
           </p>
         </div>
         <Toggle
@@ -392,6 +417,8 @@ export function RaceReport({
     roundIndex: number | null;
     setShownRound: (index: number | null) => void;
     setBlind: (on: boolean) => void;
+    setSession: (session: SessionView) => void;
+    refreshSummaries?: () => void;
   };
   /** The measurements of one finished run; null when it has none. */
   details: (run: RunView) => ReactNode | null;
@@ -416,7 +443,13 @@ export function RaceReport({
         <RaceCharts session={session} round={round} label={label} />
       ) : null}
       {!running && counted && (session.machines.length > 1 || session.rounds.length > 1) ? (
-        <StatsTable session={session} />
+        <StatsTable
+          session={session}
+          onChange={(updated) => {
+            race.setSession(updated);
+            race.refreshSummaries?.();
+          }}
+        />
       ) : null}
       {manyRounds ? (
         <RoundTable

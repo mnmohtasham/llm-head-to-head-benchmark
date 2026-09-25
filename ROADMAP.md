@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Fifteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Sixteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 15 are `v1.1` to `v1.5`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 16 are `v1.1` to `v1.6`.
 
 ## Running a phase
 
@@ -61,6 +61,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 13 | Result files | Keep every race as a shareable JSON result in a documented, versioned format | 8 | S | v1.3 |
 | 14 | Cloud reference models | Race ChatGPT, Claude and Gemini models next to local machines as references | 6 | M | v1.4 |
 | 15 | Results tab | Filter, sort and download every machine's run from every race in one table | 8 | S | v1.5 |
+| 16 | Long races and averages | Run up to 100 rounds and sum them up by median or average | 5 | S | v1.6 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -71,8 +72,8 @@ Milestones:
 - **M2 Trustworthy numbers** (phases 5 to 8, v0.8): results that survive scrutiny and can be shared.
 - **M3 Three workloads** (phases 9 and 10, v1.0): transcription and images on the same machinery. This is 1.0.
 - **M4 Extensions** (phases 11 and 12): throughput testing and command workloads.
-- **M5 Sharing and references** (phases 13 to 15): result files ready for a public results website,
-  cloud models as reference points, and one table of every run. Added on 2026-09-25 at Mani's
+- **M5 Sharing and references** (phases 13 to 16): result files ready for a public results website,
+  cloud models as reference points, one table of every run, and long races summed up either way. Added on 2026-09-25 at Mani's
   request, after phase 12.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
@@ -95,6 +96,7 @@ flowchart LR
   P8 --> P13[13 Results]
   P6 --> P14[14 Cloud]
   P8 --> P15[15 Results tab]
+  P5 --> P16[16 Averages]
 ```
 
 ## Phase 1: Foundation and machines
@@ -677,6 +679,30 @@ race's report.
 Exit checklist
 - [ ] Phase gate passes.
 
+## Phase 16: Long races and averages
+
+**You can** run up to 100 rounds, and sum them up by median or average, before the race or after.
+Needs: 5. Size: S. Cites PLAN.md 5.14.
+
+Scope
+- Rounds from 1 to 100.
+- The plan's statistic, median by default or average, used by the winner gate, the comparison
+  table, the scoreboard, the results log, the exports and the result file.
+- A switch in the report's Comparison table that changes a finished race, and one in the Results
+  tab that shows every row either way.
+
+Automated tests
+- Unit: the average changes a verdict an outlier round decides; the report, scoreboard, Markdown
+  and log follow the statistic; result rows keep both.
+- Integration: a twelve-round race summed up by average; switching a finished race rewrites its
+  result file with a valid checksum; 101 rounds are refused.
+- End-to-end: switching in the report and in the Results tab.
+
+Real-machine script: none needed; the numbers come from the rounds already measured.
+
+Exit checklist
+- [ ] Phase gate passes.
+
 ## Testing across phases
 
 - **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
@@ -703,6 +729,7 @@ Exit checklist
 | 13 | nothing new |
 | 14 | nothing on the machines; an API key from each provider to race |
 | 15 | nothing new |
+| 16 | nothing new |
 
 ## Open questions and when they block
 

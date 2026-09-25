@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 15 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 16 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -162,9 +162,15 @@ prompt with its own tokenizer.
 
 ### Rounds
 
-One race is noisy, so a race runs several rounds and reports medians.
+One race is noisy, so a race runs several rounds and sums them up by their median or average.
 
-- **Rounds** sets how many, 1 to 10. The default is 3.
+- **Rounds** sets how many, 1 to 100. The default is 3. Every round is kept with the race, so a
+  long race makes a larger file: a few hundred kilobytes per round for two machines writing a few
+  thousand tokens each.
+- **Sum up rounds by** is **Median**, the middle round, which one unusually slow or fast round
+  does not move, or **Average**, the mean of every round, outliers included. Median is the default.
+  A finished race can switch between them from its **Comparison** table; the exports and the result
+  file follow.
 - **Warm-up** sends one short request to each machine first and does not count it. It wakes up a
   machine that sat idle.
 - **Pause between rounds** lets the machines settle, 2 seconds by default.
@@ -175,9 +181,9 @@ One race is noisy, so a race runs several rounds and reports medians.
   handshakes. HTTP is no good for this: Unsloth's answers on a reused connection stall for about
   40 ms.
 
-The **Comparison** table shows medians, with the range and standard deviation under each. A
-machine wins a row only when its median is more than 10 percent better, or its range does not
-overlap the runner-up's; otherwise the row says **Tie**. Failed rounds and the warm-up never
+The **Comparison** table shows the medians or averages, with the range and standard deviation
+under each. A machine wins a row only when its median (or average) is more than 10 percent better,
+or its range does not overlap the runner-up's; otherwise the row says **Tie**. Failed rounds and the warm-up never
 count. The **Rounds** table has a row per round with each machine's first word, speed and round
 trip, and flags a round when this computer was too busy, when many chunks arrived together, or when
 a machine failed. Pick a row to see that round in the panes.
@@ -413,7 +419,8 @@ races can be compared: which GPU runs a model fastest, what a quant or a context
   and Unsloth and llama.cpp versions, as probed before the race; the model, quant, engine, context,
   context per slot, KV cache type, GPU layers, slots, speculative decoding and GPU memory mode it
   ran with; the prompt, its length in tokens, prefill, thinking and Max tokens; and the medians of
-  its counted rounds, the same numbers as the race's report.
+  its counted rounds, the same numbers as the race's report. **Rounds summed up by** shows every
+  row's medians or averages, whatever each race was set to.
 - **Workload** picks the kind of race, since each has its own measurements: Text, Throughput,
   Transcribe, Image or Command. **All** shows every kind with one headline number each.
 - **Filter** by typing in **Search**, which matches the cells shown and the full prompt, or with the

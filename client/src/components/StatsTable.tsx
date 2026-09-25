@@ -1,5 +1,14 @@
-import { comparisonTable, GATE_RATIO, runsOf, type SessionView } from '@duel/shared';
-import type { CSSProperties } from 'react';
+import {
+  comparisonTable,
+  GATE_RATIO,
+  runsOf,
+  statisticOf,
+  statisticWord,
+  type SessionView,
+  type Statistic,
+} from '@duel/shared';
+import { useState, type CSSProperties } from 'react';
+import { api, messageOf } from '../api';
 import { formatMsValue } from '../format';
 
 /** "failed 1 of 3" next to a machine that did not finish every round. */
@@ -16,20 +25,76 @@ function failures(session: SessionView, machineId: string) {
 }
 
 /**
- * Metric rows by machine columns, as medians over the counted rounds, from the same table model
- * the CSV and Markdown exports use. A winner is named only when the gate says so.
+ * Metric rows by machine columns, as medians or averages over the counted rounds, from the same
+ * table model the CSV and Markdown exports use. A winner is named only when the gate says so.
  */
-export function StatsTable({ session }: { session: SessionView }) {
+export function StatsTable({
+  session,
+  onChange,
+}: {
+  session: SessionView;
+  /** Takes the race back after its statistic changed. */
+  onChange?: (session: SessionView) => void;
+}) {
   const table = comparisonTable(session);
+  const statistic = statisticOf(session.plan);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const switchTo = async (next: Statistic) => {
+    if (next === statistic || !onChange) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await api.setStatistic(session.id, next));
+    } catch (failure) {
+      setError(messageOf(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
   const skews = session.rounds
     .map((round) => round.sendSkewMs)
     .filter((v): v is number => v !== null);
   const multi = session.machines.length > 1;
   return (
     <section className="panel compare" aria-labelledby="compare-title" data-testid="compare">
-      <h2 id="compare-title" className="section-title">
-        {table.title}
-      </h2>
+      <div className="compare-head">
+        <h2 id="compare-title" className="section-title">
+          {table.title}
+        </h2>
+        {session.rounds.length > 1 && onChange ? (
+          <div
+            className="toggle-chips"
+            role="radiogroup"
+            aria-label="Sum up rounds by"
+            data-testid="statistic-switch"
+          >
+            {(
+              [
+                ['median', 'Median'],
+                ['mean', 'Average'],
+              ] as const
+            ).map(([option, label]) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={statistic === option}
+                className={`toggle-chip${statistic === option ? ' toggle-chip-on' : ''}`}
+                onClick={() => void switchTo(option)}
+                disabled={busy}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {error ? (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <div className="table-scroll">
         <table className="metrics-table compare-table">
           <thead>
@@ -81,7 +146,7 @@ export function StatsTable({ session }: { session: SessionView }) {
       <ul className="metrics-notes">
         {multi ? (
           <li>
-            A machine wins a row only when its median is more than{' '}
+            A machine wins a row only when its {statisticWord(statistic)} is more than{' '}
             {Math.round((GATE_RATIO - 1) * 100)} percent better, or when its round-to-round range
             does not overlap the runner-up&apos;s. Otherwise the row is a tie. Failed rounds do not
             count, and the warm-up never does.

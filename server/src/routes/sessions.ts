@@ -9,6 +9,7 @@ import {
   toMarkdown,
   preflightRequestSchema,
   sessionRequestSchema,
+  STATISTICS,
   type ApiErrorBody,
   type PreflightRequest,
   type PreflightIssue,
@@ -235,6 +236,20 @@ export function registerSessionRoutes(
     if (typeof result === 'string') {
       const status = result.startsWith('There is no race') ? 404 : 400;
       return fail(reply, status, status === 404 ? 'not_found' : 'bad_vote', result);
+    }
+    return result;
+  });
+
+  /** Sums a finished race up by its medians or its averages; its result file follows. */
+  app.post<IdParams>('/api/sessions/:id/statistic', async (request, reply) => {
+    const parsed = z.object({ statistic: z.enum(STATISTICS) }).safeParse(request.body);
+    if (!parsed.success) {
+      return fail(reply, 400, 'validation', 'Pick median or mean.');
+    }
+    const result = await sessions.setStatistic(request.params.id, parsed.data.statistic);
+    if (typeof result === 'string') {
+      const status = result.startsWith('There is no race') ? 404 : 409;
+      return fail(reply, status, status === 404 ? 'not_found' : 'running', result);
     }
     return result;
   });
