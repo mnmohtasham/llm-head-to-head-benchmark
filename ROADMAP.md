@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Fourteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Fifteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 14 are `v1.1` to `v1.4`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 15 are `v1.1` to `v1.5`.
 
 ## Running a phase
 
@@ -60,6 +60,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 12 | Agent and command workloads | Run video encodes on each machine through a small agent | 8 | L | v1.2 |
 | 13 | Result files | Keep every race as a shareable JSON result in a documented, versioned format | 8 | S | v1.3 |
 | 14 | Cloud reference models | Race ChatGPT, Claude and Gemini models next to local machines as references | 6 | M | v1.4 |
+| 15 | Results tab | Filter, sort and download every machine's run from every race in one table | 8 | S | v1.5 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -70,8 +71,9 @@ Milestones:
 - **M2 Trustworthy numbers** (phases 5 to 8, v0.8): results that survive scrutiny and can be shared.
 - **M3 Three workloads** (phases 9 and 10, v1.0): transcription and images on the same machinery. This is 1.0.
 - **M4 Extensions** (phases 11 and 12): throughput testing and command workloads.
-- **M5 Sharing and references** (phases 13 and 14): result files ready for a public results website,
-  and cloud models as reference points. Added on 2026-09-25 at Mani's request, after phase 12.
+- **M5 Sharing and references** (phases 13 to 15): result files ready for a public results website,
+  cloud models as reference points, and one table of every run. Added on 2026-09-25 at Mani's
+  request, after phase 12.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
 concurrency adds noise (phase 4). Statistics, pre-flight, telemetry and the report (phases 5 to 8) are
@@ -92,6 +94,7 @@ flowchart LR
   P8 --> P12[12 Agent]
   P8 --> P13[13 Results]
   P6 --> P14[14 Cloud]
+  P8 --> P15[15 Results tab]
 ```
 
 ## Phase 1: Foundation and machines
@@ -642,6 +645,38 @@ the RTX machine on the Short preset.
 Exit checklist
 - [ ] Phase gate passes.
 
+## Phase 15: Results tab
+
+**You can** see every machine's run from every finished race in one table, filter it by machine,
+GPU, model, quant, context, KV cache, slots, prompt and more, sort it by any column, and download it.
+Needs: 8. Size: S. Cites PLAN.md 7.2.
+
+Scope
+- One row per machine per finished race: hardware (GPU, GPU memory, platform, RAM, system,
+  versions), the model and how it was loaded (quant, engine, context, KV cache type, GPU layers,
+  slots, speculative decoding, GPU memory mode), the race's settings, and the medians of every
+  metric, equal to the race's report.
+- A Results tab: workload choice, search, filter lists with counts, sorting, a star on the best value
+  of each metric among the rows shown, columns picked per workload, CSV of the rows shown, and a link
+  to each race.
+
+Not in this phase: charts across races, comparing a machine with itself over time, sharing the
+table.
+
+Automated tests
+- Unit: rows from a session, including partial and failed machines, cloud models and several GPUs;
+  column text; the quant in a GGUF file name; CSV.
+- Integration: rows after a race equal the report's medians, carry no key or address, and follow
+  new and deleted races.
+- End-to-end: after a race, find its rows, filter, sort, pick columns, open the race, download CSV,
+  and fit a phone screen.
+
+Real-machine script: open the Results tab on Mani's saved races and check the rows against each
+race's report.
+
+Exit checklist
+- [ ] Phase gate passes.
+
 ## Testing across phases
 
 - **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
@@ -667,6 +702,7 @@ Exit checklist
 | 12 | ffmpeg, the source clip, the agent running |
 | 13 | nothing new |
 | 14 | nothing on the machines; an API key from each provider to race |
+| 15 | nothing new |
 
 ## Open questions and when they block
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type Page = 'machines' | 'models' | 'text' | 'transcribe' | 'image' | 'command';
+export type Page = 'machines' | 'models' | 'text' | 'transcribe' | 'image' | 'command' | 'results';
 
 const TABS: ReadonlyArray<{ page: Page; label: string }> = [
   { page: 'machines', label: 'Machines' },
@@ -9,6 +9,7 @@ const TABS: ReadonlyArray<{ page: Page; label: string }> = [
   { page: 'transcribe', label: 'Transcribe' },
   { page: 'image', label: 'Image' },
   { page: 'command', label: 'Command' },
+  { page: 'results', label: 'Results' },
 ];
 
 export function TopBar({

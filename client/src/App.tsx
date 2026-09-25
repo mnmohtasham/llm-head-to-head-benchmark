@@ -5,6 +5,7 @@ import type { LogEntry, NewLogEntry } from './components/LogPanel';
 import type { Page } from './components/TopBar';
 import { MachinesPage } from './pages/MachinesPage';
 import { ModelsPage } from './pages/ModelsPage';
+import { ResultsPage } from './pages/ResultsPage';
 import { TextPage } from './pages/TextPage';
 import { CommandPage } from './pages/CommandPage';
 import { ImagePage } from './pages/ImagePage';
@@ -22,6 +23,7 @@ function pageFromHash(): Page {
     return 'image';
   if (window.location.hash === '#/command' || window.location.hash.startsWith('#/command/'))
     return 'command';
+  if (window.location.hash === '#/results') return 'results';
   return 'machines';
 }
 
@@ -32,6 +34,7 @@ const TITLES: Record<Page, string> = {
   transcribe: 'Transcribe',
   image: 'Image',
   command: 'Command',
+  results: 'Results',
 };
 
 export function App() {
@@ -104,6 +107,8 @@ export function App() {
         <ImagePage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'command' ? (
         <CommandPage machines={local} loadError={loadError} log={log} addLog={addLog} />
+      ) : page === 'results' ? (
+        <ResultsPage />
       ) : page === 'models' ? (
         <ModelsPage machines={local} loadError={loadError} log={log} addLog={addLog} />
       ) : (

@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.13, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.14, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -14,7 +14,7 @@ built in phase 8, in section 7. v2.8 records transcription as built in phase 9, 
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
 2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
 command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
-sections 2.7, 6 and 9.
+sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2.
 
 ## 0. Decisions so far
 
@@ -581,6 +581,8 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   {provider, apiKey?, baseUrl?, machineId?}` answers `{models}` from the provider, with a saved
   participant's key when `apiKey` is empty, or 502 with the provider's refusal in words. A cloud
   participant answers 400 to a probe and is left out of hosts, status and telemetry.
+- Results (phase 15): `GET /api/runs` answers `{runs}`, one row per machine per finished race,
+  newest race first (section 7.2).
 - `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
   slots and its other settings, through the load manager, and answers 202 with the load job.
 - Images (phase 10): `GET /api/machines/:id/image` answers the image status and the image models on disk
@@ -634,6 +636,26 @@ canonical JSON (sorted keys, no spaces) detects damaged or edited copies; it is 
 format, its privacy rules and its versioning are described in `docs/result-format.md`, with a JSON
 Schema generated from the zod definition in `shared/src/result.ts`. Built in phase 13.
 
+### 7.2 Results tab
+
+A RESULTS tab lists every machine's run in every finished race, one row each, built by
+`deviceRuns` in `shared/src/runs.ts` from the session's provenance and `sessionStats`, so its
+numbers are the report's medians. A row holds the hardware from the probe taken with the race
+(GPU names and memory added up, platform, RAM, system, versions); the model, quant and engine that
+ran for the workload (the chat model for text, the STT model and engine for transcription, the
+image repo and the quant in its GGUF file name for images, the encoder for commands); the chat
+model's context, KV cache type, GPU layers, slots, speculative decoding and GPU memory mode; the
+prompt, prompt tokens, prefill, thinking and Max tokens; the workload's other settings in a few
+words; every metric's median; the metrics it won in its race; and its state (`done`, `partial`,
+`failed`, `cancelled`, `interrupted`). Unsloth reports the KV cache's type, not its size.
+
+The server builds a race's rows once and keeps them until the race is saved again or deleted. The
+page picks a workload (each has its own metric columns; "all" shows one headline metric), filters
+by search and by lists of the values present, each counted under the other filters, sorts by any
+column, stars the best value of each metric among the rows shown, lets the viewer pick columns per
+workload (kept in the browser), and downloads the rows shown as CSV with raw values. Column
+definitions, shared by the page and the CSV, are `runColumns` in the same module.
+
 ## 8. Timing discipline
 
 `performance.now()` only. Stamp first in the data handler, then parse. Parse SSE events, not raw reads, and
@@ -680,7 +702,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: fourteen phases in five milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: fifteen phases in five milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions

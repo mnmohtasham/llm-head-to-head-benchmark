@@ -4,6 +4,7 @@ import type {
   LoadRequest,
   LoadStartResult,
   CloudModel,
+  DeviceRun,
   CloudProvider,
   MachineCreateInput,
   MachineModelsView,
@@ -107,6 +108,7 @@ const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
+  runs: () => call<{ runs: DeviceRun[] }>('GET', '/api/runs'),
   createMachine: (input: MachineCreateInput) => call<MachineView>('POST', '/api/machines', input),
   updateMachine: (id: string, input: MachineUpdateInput) =>
     call<MachineView>('PUT', machineUrl(id), input),

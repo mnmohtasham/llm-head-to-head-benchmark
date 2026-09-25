@@ -483,15 +483,18 @@ export function sessionLabel(session: WorkloadConfig): string {
   return imageLabel(session.config);
 }
 
+/** The audio a transcription session used, in a few words. */
+export function audioSource(config: TranscribeConfig): string {
+  return config.audio.kind === 'clip'
+    ? `LibriSpeech clip, ${Math.round(LIBRISPEECH_CLIP.seconds)} s`
+    : config.audio.kind === 'long'
+      ? `LibriSpeech clip repeated ${repeatsFor(config.audio.minutes)} times, ${config.audio.minutes}+ min`
+      : `${config.audio.name}${config.audio.reference ? ', with a reference' : ''}`;
+}
+
 /** A few words about a transcription session's audio and model, for the results log. */
 export function audioLabel(config: TranscribeConfig): string {
-  const audio =
-    config.audio.kind === 'clip'
-      ? `LibriSpeech clip, ${Math.round(LIBRISPEECH_CLIP.seconds)} s`
-      : config.audio.kind === 'long'
-        ? `LibriSpeech clip repeated ${repeatsFor(config.audio.minutes)} times, ${config.audio.minutes}+ min`
-        : `${config.audio.name}${config.audio.reference ? ', with a reference' : ''}`;
-  return `Transcribe ${audio} with ${config.model} on ${config.engine}`;
+  return `Transcribe ${audioSource(config)} with ${config.model} on ${config.engine}`;
 }
 
 function medianOf(values: number[]): number | null {
