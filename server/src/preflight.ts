@@ -45,6 +45,19 @@ async function countTokens(
   }
 }
 
+/** Requests the loaded model serves at once: from its status, else llama-server's props. */
+async function slotsOf(machine: StoredMachine, fromStatus: number | null): Promise<number | null> {
+  if (fromStatus !== null) return fromStatus;
+  const client = new UnslothClient(machine.baseUrl, machine.apiKey, { connectTimeoutMs: 3000 });
+  try {
+    const answer = await client.getJson('/v1/props', { timeoutMs: 10_000 });
+    const slots = (answer.body as { total_slots?: unknown } | null)?.total_slots;
+    return answer.status === 200 && typeof slots === 'number' ? slots : null;
+  } finally {
+    await client.close();
+  }
+}
+
 /**
  * Everything pre-flight needs, read from the machines themselves: each status, and the prompt's
  * exact length from each machine's tokenizer, with a nonce line when the prefill is cold.
@@ -80,7 +93,12 @@ export async function runPreflight(
           tokenError: null,
         };
       }
-      const counted = await countTokens(machine, content);
+      const [counted, slots] = await Promise.all([
+        countTokens(machine, content),
+        config.mode === 'throughput'
+          ? slotsOf(machine, status.status.parallelSlots)
+          : Promise.resolve(null),
+      ]);
       return {
         ...base,
         status: status.status,
@@ -88,6 +106,7 @@ export async function runPreflight(
         loading: false,
         promptTokens: counted.tokens,
         tokenError: counted.error,
+        slots,
       };
     }),
   );

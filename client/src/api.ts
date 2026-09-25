@@ -129,6 +129,8 @@ export const api = {
     }>('GET', `${machineUrl(id)}/image`),
   sessionImageUrl: (sessionId: string, runId: string) =>
     `${sessionUrl(sessionId)}/images/${encodeURIComponent(runId)}`,
+  reloadSlots: (id: string, slots: number) =>
+    call<{ job: LoadJob }>('POST', `${machineUrl(id)}/reload-slots`, { slots }),
   machineHosts: () => call<{ hosts: Record<string, string> }>('GET', '/api/machines/hosts'),
   settings: () => call<{ telemetry: boolean }>('GET', '/api/settings'),
   setTelemetry: (on: boolean) =>

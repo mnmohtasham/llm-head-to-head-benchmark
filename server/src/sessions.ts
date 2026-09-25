@@ -25,7 +25,10 @@ import {
   imagePrompt,
   imageRequestBody,
   stepMetrics,
+  observeQueue,
+  summarizeThroughput,
   type ImageConfig,
+  type RequestResult,
   type ModelStatus,
   type RestoreOutcome,
   type RunPhases,
@@ -65,6 +68,7 @@ import {
   readImageStatus,
 } from './imagegen';
 import type { ImageStore } from './imagestore';
+import { watchQueue } from './queue';
 import {
   clearMonitor,
   ensureSttModel,
@@ -86,6 +90,8 @@ export interface RunTimings {
   telemetryBaselineMs: number;
   /** How often an image's progress is read: its step times are good to about this much. */
   imagePollMs: number;
+  /** How often the admission queue is read during a throughput batch. */
+  queuePollMs: number;
 }
 
 export const DEFAULT_RUN_TIMINGS: RunTimings = {
@@ -94,6 +100,7 @@ export const DEFAULT_RUN_TIMINGS: RunTimings = {
   flushEveryMs: 50,
   telemetryBaselineMs: 5000,
   imagePollMs: 100,
+  queuePollMs: 250,
 };
 
 /** Finished sessions kept in memory, so the page does not wait for the disk right after a race. */
@@ -108,6 +115,8 @@ const WARMUP: TextConfig = {
   reasoningEffort: null,
   prefill: 'warm',
   sampling: DEFAULT_SAMPLING,
+  mode: 'latency',
+  concurrency: 1,
 };
 
 /** Runs keep only the start of a long prompt; the session's config has all of it. */
@@ -256,6 +265,7 @@ function newRun(machine: StoredMachine, config: RunLabel): StoredRun {
     requestedAtMs: null,
     transcription: null,
     image: null,
+    throughput: null,
     raw: null,
   };
 }
@@ -405,11 +415,22 @@ export class SessionManager {
     const inFlight = (entry.current?.runs ?? []).filter(
       (run) => run.requestAt !== null && run.view.finishedAt === null,
     );
+    const session = entry.session;
+    // A throughput batch gave each request its own id: the round's id and its number.
+    const batch =
+      session.workload === 'text' && session.config.mode === 'throughput' && !entry.current?.warmup
+        ? session.config.concurrency
+        : 0;
+    const cancelId = (run: LiveRun) => entry.current?.cancelId ?? run.view.id;
     await Promise.allSettled(
-      inFlight.map((run) =>
-        entry.session.workload === 'image'
-          ? cancelImage(run.machine)
-          : cancelOnMachine(run.machine, entry.current?.cancelId ?? run.view.id),
+      inFlight.flatMap((run) =>
+        session.workload === 'image'
+          ? [cancelImage(run.machine)]
+          : batch > 0
+            ? Array.from({ length: batch }, (_unused, k) =>
+                cancelOnMachine(run.machine, `${cancelId(run)}-${k + 1}`),
+              )
+            : [cancelOnMachine(run.machine, cancelId(run))],
       ),
     );
     // An image race still loads the chat models again after this, so do not wait for that.
@@ -449,7 +470,12 @@ export class SessionManager {
 
   /** Deletes a finished session. */
   async remove(id: string): Promise<'deleted' | 'running' | 'missing'> {
-    if (this.active.has(id)) return 'running';
+    const entry = this.active.get(id);
+    if (entry) {
+      if (entry.session.finishedAt === null) return 'running';
+      // Finished but still being saved: wait, or the save would write the file back.
+      await entry.done;
+    }
     this.recent.delete(id);
     const removed = await this.deps.sessions.remove(id);
     if (removed) await this.deps.images.removeSession(id);
@@ -852,10 +878,16 @@ export class SessionManager {
         const model = entry.models[round.runs.indexOf(run)] ?? '';
         return chatRequestBody(config, model, round.cancelId, view.nonce);
       };
+      // Throughput mode sends a batch per machine; the warm-up stays a single request.
+      const batch = !warmup && config.mode === 'throughput' ? config.concurrency : 0;
+      const send = (run: LiveRun) =>
+        batch > 0
+          ? this.streamMany(entry, round, run, bodyFor(run), batch)
+          : this.stream(entry, round, run, bodyFor(run));
       if (session.plan.sequencing === 'concurrent') {
         const pending: Array<Promise<void>> = [];
         // Same tick: nothing in this loop waits.
-        for (const run of ready) pending.push(this.stream(entry, round, run, bodyFor(run)));
+        for (const run of ready) pending.push(send(run));
         view.order = ready.map((run) => run.machine.id);
         const first = Math.min(...ready.map((run) => run.requestAt ?? 0));
         const last = Math.max(...ready.map((run) => run.requestAt ?? 0));
@@ -868,7 +900,7 @@ export class SessionManager {
         for (const run of order) run.view.state = 'queued';
         for (const run of order) {
           if (signal.aborted || round.controller.signal.aborted) break;
-          await this.stream(entry, round, run, bodyFor(run));
+          await send(run);
         }
       }
       round.lag.disable();
@@ -1381,11 +1413,134 @@ export class SessionManager {
       );
   }
 
+  /**
+   * Throughput mode: the same request several times at once to one machine. The first streams
+   * into the pane; every one is measured on its own, the queue is watched, and the batch is added
+   * up. Each request has its own cancel id, so a cancel reaches all of them.
+   */
+  private async streamMany(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    body: Record<string, unknown>,
+    count: number,
+  ): Promise<void> {
+    const { machine } = run;
+    if (!round.warmup) run.provenance.request ??= body;
+    run.view.state = 'streaming';
+    run.requestAt = performance.now();
+    run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
+    entry.starts.set(run.view.id, run.view.requestedAtMs);
+    run.view.live = { ...run.view.live, requests: { done: 0, total: count } };
+    const signal = AbortSignal.any([entry.controller.signal, round.controller.signal]);
+    const queue = watchQueue(machine, this.deps.timings.queuePollMs);
+    const sentAt: number[] = [];
+    let finished = 0;
+    const outcomes = await Promise.all(
+      Array.from({ length: count }, (_unused, k) => {
+        sentAt.push(performance.now());
+        return streamChatCompletion(
+          machine.baseUrl,
+          machine.apiKey,
+          { ...body, cancel_id: `${String(body.cancel_id)}-${k + 1}` },
+          {
+            signal,
+            idleTimeoutMs: this.deps.timings.idleTimeoutMs,
+            totalTimeoutMs: this.deps.timings.totalTimeoutMs,
+            onEvent: (timed) => {
+              const last = run.lastTokenAt;
+              if (k === 0) this.onEvent(round, run, timed);
+              else if (isTokenEvent(timed.event)) {
+                run.firstTokenAt = Math.min(run.firstTokenAt ?? timed.t, timed.t);
+                run.view.live.chunks += 1;
+              }
+              // The live speed counts every request's tokens over the whole batch.
+              if (isTokenEvent(timed.event)) run.lastTokenAt = Math.max(last ?? timed.t, timed.t);
+            },
+          },
+        )
+          .then((outcome) => ({ outcome, error: null as string | null }))
+          .catch((error: unknown) => ({ outcome: null, error: (error as Error).message }))
+          .finally(() => {
+            finished += 1;
+            run.view.live = { ...run.view.live, requests: { done: finished, total: count } };
+          });
+      }),
+    );
+    const samples = await queue.stop();
+    const first = sentAt[0] ?? run.requestAt;
+    const requests: RequestResult[] = outcomes.map(({ outcome, error }, k) => {
+      const sendOffsetMs = round3((sentAt[k] ?? first) - first);
+      if (!outcome) {
+        return {
+          index: k,
+          state: 'failed',
+          error: `Model Duel stopped this request: ${error ?? 'unknown error'}`,
+          sendOffsetMs,
+          ttftMs: null,
+          totalMs: null,
+          outputTokens: null,
+          decodeTokPerSec: null,
+        };
+      }
+      const client = computeClientMetrics(outcome.timeline);
+      const verdict = this.verdict(machine, outcome, client);
+      return {
+        index: k,
+        state: verdict.state,
+        error: verdict.error,
+        sendOffsetMs,
+        ttftMs: client.ttftMs,
+        totalMs: client.totalMs,
+        outputTokens: client.outputTokens ?? client.chunks,
+        decodeTokPerSec: client.decodeTokPerSec,
+      };
+    });
+    const throughput = summarizeThroughput(requests, count, observeQueue(samples));
+    run.view.throughput = throughput;
+    run.view.live = { ...run.view.live, requests: { done: count, total: count } };
+    const lead = outcomes[0]?.outcome;
+    if (!lead) {
+      this.finishRun(entry, round, run, 'failed', requests[0]?.error ?? 'The requests failed.');
+      return;
+    }
+    const start = performance.timeOrigin + first;
+    const done = requests.filter((r) => r.state === 'done');
+    const firsts = done
+      .filter((r) => r.ttftMs !== null)
+      .map((r) => r.sendOffsetMs + (r.ttftMs ?? 0));
+    const failures = requests.filter((r) => r.state === 'failed');
+    await this.completeRun(entry, round, run, lead, {
+      phases: {
+        start,
+        firstToken: firsts.length > 0 ? start + Math.min(...firsts) : null,
+        lastToken: throughput.totalMs === null ? null : start + throughput.totalMs,
+        end: start + (throughput.totalMs ?? performance.now() - first),
+      },
+      outputTokens: throughput.outputTokens,
+      verdict:
+        done.length === 0
+          ? {
+              state: failures.length > 0 ? 'failed' : 'cancelled',
+              error: failures[0]?.error ?? null,
+            }
+          : // Some requests failing leaves the batch done; its request table says which.
+            failures.length > 0
+            ? { state: 'done', error: null }
+            : null,
+    });
+  }
+
   private async completeRun(
     entry: ActiveSession,
     round: LiveRound,
     run: LiveRun,
     outcome: StreamOutcome,
+    batch: {
+      phases: RunPhases;
+      outputTokens: number;
+      verdict: { state: RunView['state']; error: string | null } | null;
+    } | null = null,
   ) {
     const { machine } = run;
     this.flush(entry);
@@ -1396,16 +1551,23 @@ export class SessionManager {
     run.view.timeline = tokenTimeline(events, requestAt);
     const start = performance.timeOrigin + requestAt;
     const firstToken = client.ttftMs === null ? null : start + client.ttftMs;
-    entry.phases.set(run.view.id, {
-      phases: {
-        start,
-        firstToken,
-        lastToken:
-          firstToken === null || client.decodeMs === null ? null : firstToken + client.decodeMs,
-        end: start + client.totalMs,
-      },
-      outputTokens: client.outputTokens,
-    });
+    entry.phases.set(
+      run.view.id,
+      batch
+        ? { phases: batch.phases, outputTokens: batch.outputTokens }
+        : {
+            phases: {
+              start,
+              firstToken,
+              lastToken:
+                firstToken === null || client.decodeMs === null
+                  ? null
+                  : firstToken + client.decodeMs,
+              end: start + client.totalMs,
+            },
+            outputTokens: client.outputTokens,
+          },
+    );
     run.view.raw = {
       headersAtMs: headersAt === null ? null : round3(headersAt - requestAt),
       endAtMs: round3(endAt - requestAt),
@@ -1428,7 +1590,7 @@ export class SessionManager {
       run.provenance.statusAfter = after.status;
     }
 
-    const verdict = this.verdict(machine, outcome, client);
+    const verdict = batch?.verdict ?? this.verdict(machine, outcome, client);
     if (round.truncatedBy === machine.name && client.truncated) {
       this.finishRun(entry, round, run, 'failed', 'Unsloth cut the prompt to fit the context.');
       return;

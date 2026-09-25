@@ -19,6 +19,8 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
     error: string | null;
   } | null>(null);
   const [raceAnyway, setRaceAnyway] = useState(false);
+  /** Bumped to run pre-flight again for the same request, after the machines changed. */
+  const [round, setRound] = useState(0);
   const ticketRef = useRef(0);
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
       );
     }, 350);
     return () => clearTimeout(timer);
-  }, [requestKey, paused]);
+  }, [requestKey, paused, round]);
 
   const current = preflight && preflight.key === requestKey ? preflight : null;
   const issues: PreflightIssue[] = current?.result?.issues ?? [];
@@ -57,6 +59,7 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
       (hasWarnings(issues) && !raceAnyway),
     raceAnyway,
     setRaceAnyway,
+    recheck: () => setRound((n) => n + 1),
     /** Shows what the server's own pre-flight found when it refused to start. */
     showIssues: (found: PreflightIssue[]) => {
       if (!requestKey) return;

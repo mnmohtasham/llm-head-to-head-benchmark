@@ -173,12 +173,12 @@ describe('image pre-flight', () => {
 });
 
 describe('stored sessions', () => {
-  it('migrate from version 6 with empty image fields', () => {
+  it('migrate from version 6 with empty image fields, up to version 8', () => {
     const v6 = makeSession(['a'], [[makeRun('a')]]) as unknown as Record<string, unknown>;
     v6.schemaVersion = 6;
     v6.provenance = [{ machineId: 'a', statusBefore: null, sttBefore: null, sttAfter: null }];
     const migrated = migrateSession(v6 as unknown as StoredSession);
-    expect(migrated.schemaVersion).toBe(7);
+    expect(migrated.schemaVersion).toBe(8);
     expect(migrated.rounds[0]?.runs[0]?.image).toBeNull();
     expect(migrated.provenance[0]).toMatchObject({
       imageBefore: null,

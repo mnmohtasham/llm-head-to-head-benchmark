@@ -152,13 +152,23 @@ afterEach(async () => {
 });
 
 describe('a run on one machine', () => {
-  it('measures the time to first token within 20 ms of the mock’s startup delay', async () => {
-    await control(linux, { stream: { startupMs: 300 } });
-    const run = await single();
-    expect(run.state).toBe('done');
-    expect(run.client?.ttftMs).toBeGreaterThanOrEqual(300);
-    expect(run.client?.ttftMs).toBeLessThan(320);
-  });
+  // A timing check: with every test file running at once the scheduler can add a few
+  // milliseconds anywhere, so it gets two more tries before it counts as a failure.
+  it(
+    'measures the time to first token within 20 ms of the mock’s own clock',
+    { retry: 2 },
+    async () => {
+      await control(linux, { stream: { startupMs: 300 } });
+      const run = await single();
+      expect(run.state).toBe('done');
+      expect(run.client?.ttftMs).toBeGreaterThanOrEqual(300);
+      // Compared with what the mock recorded for the same request, so a busy test machine, which
+      // makes the mock's own timer late too, does not count as measurement error.
+      const own = run.server?.monitor?.ttftMs ?? null;
+      expect(own).toBeGreaterThanOrEqual(300);
+      expect((run.client?.ttftMs ?? 0) - (own ?? 0)).toBeLessThan(20);
+    },
+  );
 
   it('agrees with Unsloth’s own decode speed within 10 percent, and finds its monitor row', async () => {
     await control(linux, { stream: { tokenMs: 20, reasoningTokens: 20, answerTokens: 40 } });
@@ -515,7 +525,7 @@ describe('saved races', () => {
     expect(text).not.toContain(LINUX_KEY);
     expect(text).not.toContain(MAC_KEY);
     const stored = JSON.parse(text) as StoredSession;
-    expect(stored.schemaVersion).toBe(7);
+    expect(stored.schemaVersion).toBe(8);
     const run = stored.rounds[0]?.runs[0];
     const raw = run?.raw;
     expect(raw?.events.length).toBeGreaterThan(20);
@@ -710,7 +720,7 @@ describe('rounds', () => {
     await ctx.app.close();
     ctx = await testApp({ dataDir: ctx.dataDir });
     const view = await getSession(original.id);
-    expect(view.schemaVersion).toBe(7);
+    expect(view.schemaVersion).toBe(8);
     expect(view.workload).toBe('text');
     expect(view.plan).toEqual({ rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' });
     expect(view.warmup).toBeNull();

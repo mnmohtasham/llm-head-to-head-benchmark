@@ -35,6 +35,11 @@ export interface StreamConfig {
    * startup and token times by it. Null or empty keeps every request at the same speed.
    */
   speedFactors: number[] | null;
+  /**
+   * How much each extra busy slot slows every stream: with four busy slots and 0.3, each token takes
+   * 1.9 times as long, so four requests together deliver about twice the tokens of one.
+   */
+  slotSlowdown: number;
 }
 
 export const DEFAULT_STREAM: StreamConfig = {
@@ -55,7 +60,54 @@ export const DEFAULT_STREAM: StreamConfig = {
   cachedPromptTokens: 0,
   draftAcceptRate: null,
   speedFactors: null,
+  slotSlowdown: 0.3,
 };
+
+/**
+ * The loaded model's request slots, with Unsloth's admission control: a request beyond the slots
+ * waits in a first-in, first-out queue instead of failing.
+ */
+export class Slots {
+  active = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(private readonly capacity: () => number) {}
+
+  get queued(): number {
+    return this.waiting.length;
+  }
+
+  get size(): number {
+    return this.capacity();
+  }
+
+  /** Resolves with a release function once a slot is free; null when the request left first. */
+  acquire(request: IncomingMessage): Promise<(() => void) | null> {
+    const release = () => {
+      this.active -= 1;
+      const next = this.waiting.shift();
+      if (next) next();
+    };
+    if (this.active < this.capacity()) {
+      this.active += 1;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolve) => {
+      const admit = () => {
+        request.off('close', leave);
+        this.active += 1;
+        resolve(release);
+      };
+      const leave = () => {
+        const at = this.waiting.indexOf(admit);
+        if (at !== -1) this.waiting.splice(at, 1);
+        resolve(null);
+      };
+      this.waiting.push(admit);
+      request.once('close', leave);
+    });
+  }
+}
 
 // Multibyte words on purpose, so clients meet split UTF-8 sequences.
 const WORDS = [
@@ -163,6 +215,7 @@ export interface ChatDeps {
   tokenMs: number;
   monitor: MonitorEntry[];
   cache: PromptCache;
+  slots: Slots;
   /** Registers a cancel function under the request's cancel_id; returns an unregister function. */
   onCancelId: (id: string, cancel: () => void) => () => void;
 }
@@ -192,9 +245,27 @@ export async function streamChat(
   body: Record<string, unknown>,
   deps: ChatDeps,
 ): Promise<void> {
-  const { model, stream: cfg, monitor } = deps;
+  // The monitor's clock starts when the request arrives, so its times include any queue wait.
   const started = performance.now();
   const startedAt = Date.now() / 1000;
+  const release = await deps.slots.acquire(request);
+  if (!release) return;
+  try {
+    await serve(request, response, body, deps, started, startedAt);
+  } finally {
+    release();
+  }
+}
+
+async function serve(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: Record<string, unknown>,
+  deps: ChatDeps,
+  started: number,
+  startedAt: number,
+): Promise<void> {
+  const { model, stream: cfg, monitor } = deps;
   const prompt = lastUserText(body);
   const seed = seedOf(prompt);
   const promptWords = prompt.split(/\s+/).filter(Boolean);
@@ -363,7 +434,9 @@ export async function streamChat(
     firstTokenAt ??= performance.now();
     lastTokenAt = performance.now();
     sent += group.length;
-    const tokenMs = deps.tokenMs * group.length + (Math.random() - 0.5) * 2 * cfg.jitterMs;
+    // Every busy slot shares the GPU, so each stream slows as more run at once.
+    const shared = 1 + cfg.slotSlowdown * Math.max(0, deps.slots.active - 1);
+    const tokenMs = deps.tokenMs * group.length * shared + (Math.random() - 0.5) * 2 * cfg.jitterMs;
     if (i + cfg.tokensPerChunk < tokens.length) await sleep(tokenMs);
   }
   unregister();

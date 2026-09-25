@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { DEFAULT_STREAM, streamChat, type MonitorEntry, type StreamConfig } from './chat';
+import { DEFAULT_STREAM, Slots, streamChat, type MonitorEntry, type StreamConfig } from './chat';
 import {
   findEntry,
   healthBody,
@@ -88,6 +88,8 @@ export interface MockConfig {
   stt: SttMockConfig;
   /** How image models load and how fast they denoise. */
   image: ImageMockConfig;
+  /** Serve at most this many chat requests at once, whatever the loaded slots say; null follows them. */
+  slotCapacity: number | null;
 }
 
 export interface MockOptions {
@@ -148,6 +150,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     stream: { ...DEFAULT_STREAM },
     stt: { ...DEFAULT_STT },
     image: { ...DEFAULT_IMAGE },
+    slotCapacity: null,
   };
   let config: MockConfig = structuredClone(initial);
   /** Chat requests served since the last reset, for `stream.speedFactors`. */
@@ -168,6 +171,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   const monitor: MonitorEntry[] = [];
   const cancels = new Map<string, () => void>();
   let stt = newSttState();
+  const slots = new Slots(() => config.slotCapacity ?? state.loaded?.parallelSlots ?? 1);
   let image = newImageState();
 
   const app = Fastify({ logger: false, forceCloseConnections: true, bodyLimit: 1024 * 1024 });
@@ -443,6 +447,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       tokenMs: (config.stream.tokenMs ?? profile().tokenMs) * factor,
       monitor,
       cache: { prompts: cachedPrompts, keepsSeeded: profile().backend === 'mlx' },
+      slots,
       onCancelId: (id: string, cancel: () => void) => {
         cancels.set(id, cancel);
         return () => cancels.delete(id);
@@ -741,7 +746,8 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
   });
 
   route('GET', '/api/inference/monitor', true, () => {
-    const active = monitor.filter((m) => m.status === 'streaming').length;
+    const active = slots.active;
+    const capacity = slots.size;
     return {
       status: state.pending ? 'loading' : state.loaded ? 'ready' : 'idle',
       server_time: Date.now() / 1000,
@@ -749,7 +755,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       context_length: state.loaded?.contextLength ?? null,
       active_requests: active,
       // Unsloth 2026.9 reports its request slots like this.
-      queue: { capacity: 4, active, queued: 0, free: Math.max(0, 4 - active) },
+      queue: { capacity, active, queued: slots.queued, free: Math.max(0, capacity - active) },
       logging_enabled: true,
       entries: monitor,
     };

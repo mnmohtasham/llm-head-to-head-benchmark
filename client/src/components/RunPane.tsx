@@ -92,6 +92,15 @@ export function RunPane({ machine, modelName, run, telemetry }: Props) {
       ? (live.firstAnswerMs ?? live.elapsedMs) - live.ttftMs
       : null);
   const answerRef = useFollow(run?.answer ?? '');
+  // Throughput mode: a batch of requests, added up; the pane streams the first.
+  const batch = run?.throughput
+    ? {
+        done: run.throughput.requests.filter((r) => r.state === 'done').length,
+        total: run.throughput.concurrency,
+      }
+    : (run?.live?.requests ?? null);
+  const aggregate =
+    run?.throughput?.aggregateTokPerSec ?? (running ? (live?.decodeTokPerSec ?? null) : null);
   const cutOff = !running && client?.finishReason === 'length' && !!run?.answer;
 
   return (
@@ -121,26 +130,55 @@ export function RunPane({ machine, modelName, run, telemetry }: Props) {
         />
       ) : null}
 
-      <div className="big-stats">
-        <div className="big-stat">
-          <span className="hero-label">First word</span>
-          <span className="big-number" data-testid="first-word">
-            {firstAnswer === null && running ? '…' : formatSeconds(firstAnswer)}
-          </span>
-          <span className="big-caption">
-            seconds · first token {firstToken === null ? 'n/a' : `${formatSeconds(firstToken)} s`}
-          </span>
+      {batch ? (
+        <div className="big-stats">
+          <div className="big-stat">
+            <span className="hero-label">Aggregate</span>
+            <span className="big-number" data-testid="aggregate">
+              {aggregate === null ? (running ? '…' : 'n/a') : aggregate.toFixed(1)}
+            </span>
+            <span className="big-caption">tokens/sec, every request together</span>
+          </div>
+          <div className="big-stat">
+            <span className="hero-label">Requests</span>
+            <span className="big-number" data-testid="requests-done">
+              {batch.done}/{batch.total}
+            </span>
+            <span className="big-caption">
+              done · median first token{' '}
+              {run?.throughput?.ttftMedianMs == null
+                ? 'n/a'
+                : `${formatSeconds(run.throughput.ttftMedianMs)} s`}
+            </span>
+          </div>
         </div>
-        <div className="big-stat">
-          <span className="hero-label">Speed</span>
-          <span className="big-number" data-testid="speed">
-            {speed === null ? (running ? '…' : 'n/a') : speed.toFixed(1)}
-          </span>
-          <span className="big-caption">
-            tokens/sec{client?.tokensEstimated ? ', estimated from chunks' : ''}
-          </span>
+      ) : (
+        <div className="big-stats">
+          <div className="big-stat">
+            <span className="hero-label">First word</span>
+            <span className="big-number" data-testid="first-word">
+              {firstAnswer === null && running ? '…' : formatSeconds(firstAnswer)}
+            </span>
+            <span className="big-caption">
+              seconds · first token {firstToken === null ? 'n/a' : `${formatSeconds(firstToken)} s`}
+            </span>
+          </div>
+          <div className="big-stat">
+            <span className="hero-label">Speed</span>
+            <span className="big-number" data-testid="speed">
+              {speed === null ? (running ? '…' : 'n/a') : speed.toFixed(1)}
+            </span>
+            <span className="big-caption">
+              tokens/sec{client?.tokensEstimated ? ', estimated from chunks' : ''}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
+      {batch ? (
+        <p className="field-hint" data-testid="batch-note">
+          The text below is request 1 of {batch.total}; the others ran alongside it.
+        </p>
+      ) : null}
 
       {run?.reasoning ? (
         <ThinkingBlock key={run.id} run={run} thinkingMs={thinkingMs} running={running} />

@@ -4,6 +4,7 @@ import {
   loadSettingsSchema,
   sameId,
   SPECULATIVE_TYPES,
+  type LoadJob,
   type LoadSettings,
   type ModelStatus,
   type RestoreOutcome,
@@ -29,39 +30,53 @@ function settingsFromStatus(status: ModelStatus): LoadSettings {
   return parsed.success ? parsed.data : DEFAULT_LOAD_SETTINGS;
 }
 
+type Deps = { catalog: ModelCatalog; loads: LoadManager; store: MachineStore };
+
 /**
- * Loads a machine's chat model again after an image race pushed it out: the same model and quant,
- * with the settings of Model Duel's last load of it, or else the ones its status showed. It goes
- * through the load manager, so the Models tab shows it and pre-flight waits for it.
+ * Starts loading a machine's chat model again, the same model and quant, with the settings of
+ * Model Duel's last load of it (or else the ones its status showed) and any changes asked for. It
+ * goes through the load manager, so the Models tab shows it and pre-flight waits for it.
  */
-export function chatRestorer(deps: {
-  catalog: ModelCatalog;
-  loads: LoadManager;
-  store: MachineStore;
-}): (machine: StoredMachine, status: ModelStatus) => Promise<RestoreOutcome> {
+export async function startChatReload(
+  deps: Deps,
+  machine: StoredMachine,
+  status: ModelStatus,
+  changes: Partial<LoadSettings> = {},
+): Promise<{ job: LoadJob } | { error: string; skipped?: boolean }> {
+  const modelId = status.activeModel ?? '';
+  const view = await deps.catalog.list(machine, { refresh: true });
+  const model = view.models?.find((m) => sameId(m.modelId, modelId) || sameId(m.loadId, modelId));
+  if (!model) {
+    return { error: view.error ?? `${modelId} is no longer in ${machine.name}'s models.` };
+  }
+  if (deps.loads.isActive(machine.id)) return { error: 'Another load was running.', skipped: true };
+  const last = deps.store.lastLoad(machine.id);
+  const sameLoad =
+    last?.state === 'loaded' &&
+    sameId(last.modelId, model.modelId) &&
+    (last.quant ?? '').toLowerCase() === (status.quant ?? '').toLowerCase();
+  const settings = {
+    ...(sameLoad && last ? last.settings : settingsFromStatus(status)),
+    ...changes,
+  };
+  return { job: deps.loads.start(machine, model, status.quant, settings) };
+}
+
+/** Loads a machine's chat model again after an image race pushed it out, and waits for it. */
+export function chatRestorer(
+  deps: Deps,
+): (machine: StoredMachine, status: ModelStatus) => Promise<RestoreOutcome> {
   return async (machine, status) => {
-    const modelId = status.activeModel ?? '';
-    const base = { model: modelId, quant: status.quant };
-    const view = await deps.catalog.list(machine, { refresh: true });
-    const model = view.models?.find((m) => sameId(m.modelId, modelId) || sameId(m.loadId, modelId));
-    if (!model) {
+    const base = { model: status.activeModel ?? '', quant: status.quant };
+    const started = await startChatReload(deps, machine, status);
+    if ('error' in started) {
       return {
         ...base,
-        state: 'failed',
-        error: view.error ?? `${modelId} is no longer in ${machine.name}'s models.`,
+        state: started.skipped ? 'skipped' : 'failed',
+        error: started.error,
         durationMs: null,
       };
     }
-    if (deps.loads.isActive(machine.id)) {
-      return { ...base, state: 'skipped', error: 'Another load was running.', durationMs: null };
-    }
-    const last = deps.store.lastLoad(machine.id);
-    const sameLoad =
-      last?.state === 'loaded' &&
-      sameId(last.modelId, model.modelId) &&
-      (last.quant ?? '').toLowerCase() === (status.quant ?? '').toLowerCase();
-    const settings = sameLoad && last ? last.settings : settingsFromStatus(status);
-    deps.loads.start(machine, model, status.quant, settings);
     await deps.loads.settled(machine.id);
     const job = deps.loads.job(machine.id);
     return job?.state === 'loaded'

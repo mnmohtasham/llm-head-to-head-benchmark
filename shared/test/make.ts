@@ -49,6 +49,7 @@ export function makeRun(
     requestedAtMs: null,
     transcription: null,
     image: null,
+    throughput: null,
   };
 }
 
@@ -73,7 +74,7 @@ export function makeSession(
   warmup: RunView[] | null = null,
 ): SessionView {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     id: '11111111-1111-4111-8111-111111111111',
     workload: 'text',
     createdAt: '2026-09-25T00:00:00.000Z',
@@ -88,6 +89,8 @@ export function makeSession(
       reasoningEffort: null,
       prefill: 'cold',
       sampling: DEFAULT_SAMPLING,
+      mode: 'latency',
+      concurrency: 1,
     },
     plan: { rounds: rounds.length, warmup: warmup !== null, settleMs: 0, sequencing: 'concurrent' },
     machines: ids.map((id) => ({ id, name: id, color: '#fff', baseUrl: 'http://x', notes: '' })),

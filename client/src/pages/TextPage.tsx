@@ -1,5 +1,6 @@
 import {
   DEFAULT_SAMPLING,
+  MAX_CONCURRENCY,
   PRESETS,
   REASONING_EFFORTS,
   sessionRequestSchema,
@@ -9,8 +10,10 @@ import {
   type ModelStatus,
   type PrefillMode,
   type PresetId,
+  type PreflightIssue,
   type RunView,
   type SessionView,
+  type TextMode,
 } from '@duel/shared';
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { api, messageOf, type PresetView } from '../api';
@@ -24,9 +27,11 @@ import {
   ProgressLine,
   RaceReport,
   sharedHost,
+  Toggle,
   usePlan,
 } from '../components/RaceParts';
 import { RunMetrics } from '../components/RunMetrics';
+import { ThroughputTable } from '../components/ThroughputTable';
 import { RunPane } from '../components/RunPane';
 import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
@@ -79,6 +84,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [preset, setPreset] = useState<PresetId>('custom');
   const [presetViews, setPresetViews] = useState<PresetView[]>([]);
   const [prefill, setPrefill] = useState<PrefillMode>('cold');
+  const [mode, setMode] = useState<TextMode>('latency');
+  const [concurrency, setConcurrency] = useState('4');
+  /** Machines whose model is loading again with more slots, from pre-flight's shortcut. */
+  const [reloading, setReloading] = useState<Record<string, string>>({});
   const [sampling, setSampling] = useState(() => ({
     temperature: String(DEFAULT_SAMPLING.temperature),
     topP: String(DEFAULT_SAMPLING.topP),
@@ -98,6 +107,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       setEffort(view.config.reasoningEffort ?? '');
       setPreset(view.config.preset);
       setPrefill(view.config.prefill);
+      setMode(view.config.mode);
+      setConcurrency(String(view.config.concurrency));
       setSampling({
         temperature: String(view.config.sampling.temperature),
         topP: String(view.config.sampling.topP),
@@ -168,6 +179,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
 
   // The config the form describes, or the reason it cannot be sent yet.
   const draft = textConfigSchema.safeParse({
+    mode,
+    concurrency: Number(concurrency),
     preset,
     prompt: preset === 'custom' ? prompt : '',
     maxTokens: Number(maxTokens),
@@ -191,6 +204,50 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const blocked = !draft.success || chosen.length === 0 || preflight.stops;
   // Machines on one computer compete for it, so they should take turns.
   const sharing = sharedHost(chosen, hosts);
+
+  /** Pre-flight's shortcut when a machine has too few slots: reload its model with enough. */
+  const reloadWithSlots = async (machineId: string, slots: number) => {
+    setReloading((current) => ({ ...current, [machineId]: 'Loading again…' }));
+    try {
+      await api.reloadSlots(machineId, slots);
+      const deadline = Date.now() + 15 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const view = await api.machineStatus(machineId);
+        setStatuses((current) => ({ ...current, [machineId]: view }));
+        if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
+          setReloading((current) => ({
+            ...current,
+            [machineId]:
+              view.job?.state === 'loaded'
+                ? ''
+                : `The load ended: ${view.job?.error ?? view.job?.state ?? 'unknown'}`,
+          }));
+          break;
+        }
+      }
+    } catch (error) {
+      setReloading((current) => ({ ...current, [machineId]: messageOf(error) }));
+    }
+    preflight.recheck();
+  };
+  const slotShortcut = (issue: PreflightIssue) => {
+    if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
+    const id = issue.machineId;
+    const state = reloading[id];
+    return state ? (
+      <span className="field-hint">{state}</span>
+    ) : (
+      <button
+        type="button"
+        className="btn btn-quiet btn-inline"
+        onClick={() => void reloadWithSlots(id, Number(concurrency))}
+        disabled={running}
+      >
+        Reload with {concurrency} slots
+      </button>
+    );
+  };
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -466,6 +523,42 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               </div>
               <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
             </div>
+            <div className="run-options">
+              <div className="field">
+                <Toggle
+                  labelId="mode-label"
+                  label="Mode"
+                  options={[
+                    ['latency', 'Latency'],
+                    ['throughput', 'Throughput'],
+                  ]}
+                  value={mode}
+                  onChange={setMode}
+                  disabled={running}
+                />
+                <p className="field-hint">
+                  {mode === 'latency'
+                    ? 'One request per machine: how fast one answer comes.'
+                    : 'Several copies of the prompt at once on each machine: how many tokens it delivers in total.'}
+                </p>
+              </div>
+              {mode === 'throughput' ? (
+                <div className="field">
+                  <label htmlFor="run-concurrency">Requests at once</label>
+                  <input
+                    id="run-concurrency"
+                    inputMode="numeric"
+                    value={concurrency}
+                    onChange={(event) => setConcurrency(event.target.value)}
+                    disabled={running}
+                  />
+                  <p className="field-hint">
+                    1 to {MAX_CONCURRENCY}. Each machine needs its model loaded with at least this
+                    many slots.
+                  </p>
+                </div>
+              ) : null}
+            </div>
             <details className="sampling">
               <summary>Sampling</summary>
               <div className="run-options">
@@ -519,6 +612,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
               warnings={preflight.warnings}
+              action={slotShortcut}
               clear="All clear: the machines match and the prompt fits."
               details={chosen
                 .map((m) => {
@@ -571,7 +665,14 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
 
         <RaceReport
           race={race}
-          details={(run) => (run.client ? <RunMetrics run={run} /> : null)}
+          details={(run) =>
+            run.client ? (
+              <>
+                <ThroughputTable run={run} />
+                <RunMetrics run={run} />
+              </>
+            ) : null
+          }
           votable={votable}
         />
 

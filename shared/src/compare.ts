@@ -294,10 +294,104 @@ export const IMAGE_METRICS: readonly MetricSpec[] = [
   },
 ];
 
-export function metricsFor(workload: 'text' | 'transcribe' | 'image'): readonly MetricSpec[] {
-  return workload === 'transcribe'
+/** The metrics of a throughput race: one batch of requests per machine per round. */
+export const THROUGHPUT_METRICS: readonly MetricSpec[] = [
+  {
+    key: 'aggregate',
+    label: 'Aggregate output speed',
+    unit: 'tok/s',
+    better: 'higher',
+    pick: (r) => r.throughput?.aggregateTokPerSec,
+  },
+  {
+    key: 'perRequest',
+    label: 'Speed of each request',
+    unit: 'tok/s',
+    better: 'higher',
+    pick: (r) => r.throughput?.perRequestTokPerSec,
+  },
+  {
+    key: 'ttftMedian',
+    label: 'Time to first token, median request',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.throughput?.ttftMedianMs,
+  },
+  {
+    key: 'ttftP95',
+    label: 'Time to first token, 95th percentile',
+    unit: 'ms',
+    better: 'lower',
+    pick: (r) => r.throughput?.ttftP95Ms,
+  },
+  {
+    key: 'batchTime',
+    label: 'Time for every request',
+    unit: 'ms',
+    better: null,
+    pick: (r) => r.throughput?.totalMs,
+  },
+  {
+    key: 'queued',
+    label: 'Time with a request waiting for a slot',
+    unit: 'ms',
+    better: null,
+    pick: (r) => r.throughput?.queue?.queuedMs,
+  },
+  {
+    key: 'outputTokens',
+    label: 'Output tokens, all requests',
+    unit: 'tokens',
+    better: null,
+    pick: (r) => r.throughput?.outputTokens,
+  },
+  {
+    key: 'energy',
+    label: 'Energy per batch, approx.',
+    unit: 'J',
+    better: null,
+    pick: (r) => r.telemetry?.energy.energyJ,
+  },
+  {
+    key: 'tokensPerJoule',
+    label: 'Tokens per joule, approx.',
+    unit: 'tok/J',
+    better: 'higher',
+    pick: (r) => r.telemetry?.energy.tokensPerJoule,
+  },
+  {
+    key: 'peakGpu',
+    label: 'Peak GPU',
+    unit: '%',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakGpuPct,
+  },
+  {
+    key: 'peakMemory',
+    label: 'Peak GPU memory or RAM',
+    unit: 'GB',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakVramGb ?? r.telemetry?.energy.peakRamGb,
+  },
+];
+
+/** Which set of metrics and round cells a session uses. */
+export type MetricKind = 'text' | 'throughput' | 'transcribe' | 'image';
+
+export function metricKind(session: {
+  workload: 'text' | 'transcribe' | 'image';
+  config: unknown;
+}): MetricKind {
+  if (session.workload !== 'text') return session.workload;
+  return (session.config as { mode?: string }).mode === 'throughput' ? 'throughput' : 'text';
+}
+
+export function metricsFor(kind: MetricKind): readonly MetricSpec[] {
+  return kind === 'transcribe'
     ? TRANSCRIBE_METRICS
-    : workload === 'image'
+    : kind === 'image'
       ? IMAGE_METRICS
-      : METRICS;
+      : kind === 'throughput'
+        ? THROUGHPUT_METRICS
+        : METRICS;
 }

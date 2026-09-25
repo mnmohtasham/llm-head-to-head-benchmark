@@ -15,6 +15,8 @@ export interface PreflightMachine {
   /** The exact prompt length from the machine's own tokenizer, or null when it could not count. */
   promptTokens: number | null;
   tokenError: string | null;
+  /** Requests the loaded model serves at once, from its status or llama-server's props. */
+  slots?: number | null;
 }
 
 export interface PreflightIssue {
@@ -35,6 +37,8 @@ export interface PreflightIssue {
     | 'kv-cache'
     | 'gpu-memory'
     | 'tokens'
+    | 'slots'
+    | 'context-slots'
     | 'audio'
     | 'no-stt'
     | 'stt-engine'
@@ -74,7 +78,8 @@ function speculativeLabel(status: ModelStatus): string {
  */
 export function preflightIssues(
   machines: readonly PreflightMachine[],
-  config: Pick<TextConfig, 'maxTokens' | 'thinking'>,
+  config: Pick<TextConfig, 'maxTokens' | 'thinking'> &
+    Partial<Pick<TextConfig, 'mode' | 'concurrency'>>,
 ): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
   const error = (code: PreflightIssue['code'], machineId: string | null, text: string) =>
@@ -131,6 +136,32 @@ export function preflightIssues(
         m.id,
         `${m.name} could not count the prompt's tokens (${m.tokenError}), so pre-flight could not check that it fits.`,
       );
+    }
+    if (config.mode === 'throughput') {
+      const count = config.concurrency ?? 1;
+      const slots = m.slots ?? null;
+      if (slots === null) {
+        warning(
+          'slots',
+          m.id,
+          `${m.name} does not say how many requests it serves at once, so some of the ${count} may wait for a slot.`,
+        );
+      } else if (count > slots) {
+        error(
+          'slots',
+          m.id,
+          `${m.name} serves ${slots} ${slots === 1 ? 'request' : 'requests'} at once, so ${count - slots} of the ${count} would wait in the queue, which measures the queue rather than the machine. Reload its model with ${count} slots.`,
+        );
+      } else if (slots > 1 && context !== null && m.promptTokens !== null) {
+        const share = Math.floor(context / slots);
+        if (m.promptTokens + config.maxTokens > share) {
+          warning(
+            'context-slots',
+            m.id,
+            `If llama.cpp splits ${m.name}'s context of ${n(context)} between its ${slots} slots, each request gets about ${n(share)} tokens, fewer than the prompt and Max tokens need (${n(m.promptTokens + config.maxTokens)}).`,
+          );
+        }
+      }
     }
   }
 
