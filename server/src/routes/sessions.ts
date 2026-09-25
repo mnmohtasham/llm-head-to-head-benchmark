@@ -6,16 +6,19 @@ import {
   tallyVotes,
   toCsv,
   toMarkdown,
-  MAX_RACE_MACHINES,
+  preflightRequestSchema,
   sessionRequestSchema,
-  textConfigSchema,
   type ApiErrorBody,
+  type PreflightRequest,
   type PreflightIssue,
   type SessionStreamMessage,
 } from '@duel/shared';
+import { createReadStream } from 'node:fs';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { runPreflight } from '../preflight';
+import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
+import { runPreflight, runTranscribePreflight } from '../preflight';
+import { readSttStatus } from '../stt';
 import { presetViews, resolvePrompt } from '../presets';
 import type { SessionManager } from '../sessions';
 import type { MachineStore, StoredMachine } from '../store';
@@ -31,14 +34,6 @@ const voteSchema = z.object({
 function fileName(session: { id: string; createdAt: string }, extension: string): string {
   return `model-duel-${session.createdAt.slice(0, 10)}-${session.id.slice(0, 8)}.${extension}`;
 }
-
-const preflightRequestSchema = z.object({
-  machineIds: z
-    .array(z.string().min(1))
-    .min(1, 'Pick at least one machine.')
-    .max(MAX_RACE_MACHINES),
-  config: textConfigSchema,
-});
 
 interface IdParams {
   Params: { id: string };
@@ -64,9 +59,47 @@ export function registerSessionRoutes(
     store: MachineStore;
     sessions: SessionManager;
     isLoading: (machineId: string) => boolean;
+    audio: AudioStore;
   },
 ): void {
-  const { store, sessions, isLoading } = deps;
+  const { store, sessions, isLoading, audio } = deps;
+  const preflight = (machines: StoredMachine[], request: PreflightRequest) =>
+    request.workload === 'text'
+      ? runPreflight(machines, request.config, isLoading)
+      : runTranscribePreflight(machines, request.config, isLoading, audio);
+
+  /** Audio for a transcription race, sent as the raw file; stored by its hash. */
+  app.post<{ Querystring: { name?: string } }>(
+    '/api/audio',
+    { bodyLimit: AUDIO_UPLOAD_LIMIT },
+    async (request, reply) => {
+      const body = request.body;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return fail(reply, 400, 'validation', 'Send the audio file as the request body.');
+      }
+      const saved = await audio.save(
+        String(request.query.name ?? 'audio'),
+        String(request.headers['content-type'] ?? ''),
+        new Uint8Array(body.buffer, body.byteOffset, body.length),
+      );
+      return reply.code(201).send(saved);
+    },
+  );
+
+  /** A machine's speech-to-text: engines, what is on disk and what is in memory. */
+  app.get<IdParams>('/api/machines/:id/stt', async (request, reply) => {
+    const machine = store.get(request.params.id);
+    if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    return { machineId: machine.id, ...(await readSttStatus(machine)) };
+  });
+
+  /** The bundled LibriSpeech clip, to listen to. */
+  app.get('/api/audio/clip.wav', async (_request, reply) =>
+    reply
+      .header('content-type', 'audio/wav')
+      .header('cache-control', 'public, max-age=86400')
+      .send(createReadStream(CLIP_PATH)),
+  );
 
   app.get('/api/presets', async () => ({ presets: presetViews() }));
 
@@ -80,7 +113,7 @@ export function registerSessionRoutes(
     if (machines.some((machine) => !machine)) {
       return fail(reply, 404, 'not_found', 'There is no machine with that id.');
     }
-    return runPreflight(machines as StoredMachine[], parsed.data.config, isLoading);
+    return preflight(machines as StoredMachine[], parsed.data);
   });
 
   app.post('/api/sessions', async (request, reply) => {
@@ -105,26 +138,29 @@ export function registerSessionRoutes(
         'A race is already running. Wait for it to finish or cancel it first.',
       );
     }
-    const preflight = await runPreflight(
-      machines as StoredMachine[],
-      parsed.data.config,
-      isLoading,
-    );
-    if (hasErrors(preflight.issues)) {
-      const first = preflight.issues.find((issue) => issue.level === 'error');
-      return fail(reply, 400, 'preflight', first?.text ?? 'Pre-flight failed.', preflight.issues);
+    const checked = await preflight(machines as StoredMachine[], parsed.data);
+    if (hasErrors(checked.issues)) {
+      const first = checked.issues.find((issue) => issue.level === 'error');
+      return fail(reply, 400, 'preflight', first?.text ?? 'Pre-flight failed.', checked.issues);
     }
-    if (hasWarnings(preflight.issues) && !parsed.data.acknowledgeWarnings) {
+    if (hasWarnings(checked.issues) && !parsed.data.acknowledgeWarnings) {
       return fail(
         reply,
         409,
         'preflight_warnings',
         'Pre-flight found differences between the machines. Race anyway to start.',
-        preflight.issues,
+        checked.issues,
       );
     }
-    const config = { ...parsed.data.config, prompt: resolvePrompt(parsed.data.config) };
-    const view = sessions.start(machines as StoredMachine[], { ...parsed.data, config });
+    const view = sessions.start(
+      machines as StoredMachine[],
+      parsed.data.workload === 'text'
+        ? {
+            ...parsed.data,
+            config: { ...parsed.data.config, prompt: resolvePrompt(parsed.data.config) },
+          }
+        : parsed.data,
+    );
     request.log.info({ sessionId: view.id, machines: parsed.data.machineIds }, 'race started');
     return reply.code(201).send(view);
   });

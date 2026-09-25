@@ -10,14 +10,21 @@ import {
 } from './chat';
 import { labelVotes, type LabeledVote } from './blind';
 import type { ModelStatus } from './models';
+import {
+  LIBRISPEECH_CLIP,
+  repeatsFor,
+  transcribeConfigSchema,
+  type SttStatus,
+  type TranscribeConfig,
+} from './transcribe';
 
 /**
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
  * full sampling and per-round nonce; version 4 telemetry; version 5 blind votes and each run's
- * token timeline. Older files are migrated on read.
+ * token timeline; version 6 the transcription workload. Older files are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 5;
+export const SESSION_SCHEMA_VERSION = 6;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -42,19 +49,58 @@ export const runPlanSchema = z.object({
 export type RunPlan = z.infer<typeof runPlanSchema>;
 export const DEFAULT_PLAN: RunPlan = runPlanSchema.parse({});
 
-export const sessionRequestSchema = z.object({
-  workload: z.literal('text'),
+const sessionRequestBase = {
   machineIds: z
     .array(z.string().min(1))
     .min(1, 'Pick at least one machine.')
     .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
     .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.'),
-  config: textConfigSchema,
   plan: runPlanSchema.prefault({}),
   /** Start even though pre-flight has warnings; errors can never be overridden. */
   acknowledgeWarnings: z.boolean().default(false),
-});
+};
+
+/** Requests from before transcription had no workload, and were text. */
+const textByDefault = (value: unknown) =>
+  value !== null && typeof value === 'object' && !('workload' in value)
+    ? { ...value, workload: 'text' }
+    : value;
+
+export const sessionRequestSchema = z.preprocess(
+  textByDefault,
+  z.discriminatedUnion('workload', [
+    z.object({ workload: z.literal('text'), config: textConfigSchema, ...sessionRequestBase }),
+    z.object({
+      workload: z.literal('transcribe'),
+      config: transcribeConfigSchema,
+      ...sessionRequestBase,
+    }),
+  ]),
+);
+
+/** The fairness checks for a race that has not started. */
+export const preflightRequestSchema = z.preprocess(
+  textByDefault,
+  z.discriminatedUnion('workload', [
+    z.object({
+      workload: z.literal('text'),
+      machineIds: sessionRequestBase.machineIds,
+      config: textConfigSchema,
+    }),
+    z.object({
+      workload: z.literal('transcribe'),
+      machineIds: sessionRequestBase.machineIds,
+      config: transcribeConfigSchema,
+    }),
+  ]),
+);
+export type PreflightRequest = z.infer<typeof preflightRequestSchema>;
 export type SessionRequest = z.infer<typeof sessionRequestSchema>;
+export type Workload = SessionRequest['workload'];
+
+/** A workload and its settings; the rest of a session is the same for every workload. */
+export type WorkloadConfig =
+  { workload: 'text'; config: TextConfig } | { workload: 'transcribe'; config: TranscribeConfig };
 
 export type SessionState = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -76,8 +122,11 @@ export interface MachineProvenance {
   gpus: Array<{ name: string; memoryGb: number | null }>;
   statusBefore: ModelStatus | null;
   statusAfter: ModelStatus | null;
-  /** The exact body sent to Unsloth. */
+  /** The exact body sent to Unsloth; for transcription, the form fields without the file. */
   request: Record<string, unknown> | null;
+  /** Speech-to-text status before and after, for transcription sessions. */
+  sttBefore: SttStatus | null;
+  sttAfter: SttStatus | null;
 }
 
 /** A blind vote on one round's two answers; the machines were hidden until it was cast. */
@@ -116,7 +165,7 @@ export interface RoundView {
 }
 
 export type SessionPhase =
-  'preparing' | 'baseline' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
+  'preparing' | 'baseline' | 'loading' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
 
 export interface SessionProgress {
   phase: SessionPhase;
@@ -124,20 +173,18 @@ export interface SessionProgress {
   round: number | null;
 }
 
-export interface SessionView {
+interface SessionCommon<Round> {
   schemaVersion: number;
   id: string;
-  workload: 'text';
   createdAt: string;
   finishedAt: string | null;
   state: SessionState;
   error: string | null;
-  config: TextConfig;
   plan: RunPlan;
   machines: SessionMachine[];
   /** The discarded warm-up round, if the plan has one. */
-  warmup: RoundView | null;
-  rounds: RoundView[];
+  warmup: Round | null;
+  rounds: Round[];
   progress: SessionProgress;
   /** Whether hardware was polled during the session. */
   telemetry: { enabled: boolean };
@@ -145,6 +192,14 @@ export interface SessionView {
   votes: Vote[];
   provenance: MachineProvenance[];
   loopLagMs: { max: number; p99: number } | null;
+}
+
+export type SessionView = SessionCommon<RoundView> & WorkloadConfig;
+
+export function isTextSession<S extends WorkloadConfig>(
+  session: S,
+): session is S & { workload: 'text'; config: TextConfig } {
+  return session.workload === 'text';
 }
 
 /**
@@ -162,16 +217,15 @@ export interface RawRun {
 export type StoredRun = RunView & { raw: RawRun | null };
 export type StoredRound = Omit<RoundView, 'runs'> & { runs: StoredRun[] };
 /** The file `data/sessions/<id>.json`: the view plus every run's raw events. */
-export type StoredSession = Omit<SessionView, 'rounds' | 'warmup'> & {
-  rounds: StoredRound[];
-  warmup: StoredRound | null;
-};
+export type StoredSession = SessionCommon<StoredRound> & WorkloadConfig;
 
 export interface SessionSummary {
   id: string;
   createdAt: string;
   finishedAt: string | null;
   state: SessionState;
+  workload: Workload;
+  /** The prompt, or a line about the audio and model. */
   prompt: string;
   rounds: number;
   /** Blind votes cast on this session, with the models named. */
@@ -183,6 +237,9 @@ export interface SessionSummary {
     state: RunState;
     firstAnswerMs: number | null;
     decodeTokPerSec: number | null;
+    /** Transcription only: audio seconds per processing second, and the word error rate. */
+    rtf: number | null;
+    wer: number | null;
   }>;
 }
 
@@ -250,7 +307,9 @@ export function publicSession(session: StoredSession | SessionView): SessionView
 export function migrateSession(value: StoredSession): StoredSession {
   if (value.schemaVersion >= SESSION_SCHEMA_VERSION) return value;
   const old = value as Partial<StoredSession>;
-  const oldSampling = (old.config?.sampling ?? {}) as unknown as Record<string, number | undefined>;
+  // Every session before version 6 was a text session.
+  const oldConfig = (old.config ?? {}) as Partial<TextConfig>;
+  const oldSampling = (oldConfig.sampling ?? {}) as unknown as Record<string, number | undefined>;
   const round = (r: StoredRound): StoredRound => ({
     ...r,
     finishedAt: r.finishedAt ?? null,
@@ -264,15 +323,30 @@ export function migrateSession(value: StoredSession): StoredSession {
       telemetry: run.telemetry ?? null,
       timeline: run.timeline ?? null,
       requestedAtMs: run.requestedAtMs ?? null,
+      transcription: run.transcription ?? null,
     })),
   });
+  if (value.workload === 'transcribe') {
+    return {
+      ...value,
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      rounds: value.rounds.map(round),
+      warmup: value.warmup ? round(value.warmup) : null,
+    };
+  }
   return {
     ...value,
+    workload: 'text',
     schemaVersion: SESSION_SCHEMA_VERSION,
+    provenance: (old.provenance ?? []).map((p) => ({
+      ...p,
+      sttBefore: p.sttBefore ?? null,
+      sttAfter: p.sttAfter ?? null,
+    })),
     config: {
-      ...value.config,
-      preset: value.config.preset ?? 'custom',
-      prefill: value.config.prefill ?? 'warm',
+      ...(oldConfig as TextConfig),
+      preset: oldConfig.preset ?? 'custom',
+      prefill: oldConfig.prefill ?? 'warm',
       sampling: {
         temperature: oldSampling.temperature ?? 0.6,
         topP: oldSampling.topP ?? oldSampling.top_p ?? 0.95,
@@ -297,6 +371,17 @@ export function publicRun(run: RunView | StoredRun): RunView {
   return view;
 }
 
+/** A few words about a transcription session's audio and model, for the results log. */
+export function audioLabel(config: TranscribeConfig): string {
+  const audio =
+    config.audio.kind === 'clip'
+      ? `LibriSpeech clip, ${Math.round(LIBRISPEECH_CLIP.seconds)} s`
+      : config.audio.kind === 'long'
+        ? `LibriSpeech clip repeated ${repeatsFor(config.audio.minutes)} times, ${config.audio.minutes}+ min`
+        : `${config.audio.name}${config.audio.reference ? ', with a reference' : ''}`;
+  return `Transcribe ${audio} with ${config.model} on ${config.engine}`;
+}
+
 function medianOf(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -313,7 +398,10 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
     createdAt: session.createdAt,
     finishedAt: session.finishedAt,
     state: session.state,
-    prompt: session.config.prompt.slice(0, 160),
+    workload: session.workload,
+    prompt: isTextSession(session)
+      ? session.config.prompt.slice(0, 160)
+      : audioLabel(session.config as TranscribeConfig),
     rounds: session.rounds.length,
     votes: labelVotes(session),
     machines: session.machines.map((machine) => {
@@ -328,9 +416,14 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
         id: machine.id,
         name: machine.name,
         color: machine.color,
-        state: done.length > 0 ? 'done' : (last?.state ?? 'failed'),
+        state:
+          done.length > 0
+            ? 'done'
+            : (last?.state ?? (session.state === 'running' ? 'starting' : 'failed')),
         firstAnswerMs: pick((run) => run.client?.firstAnswerMs),
         decodeTokPerSec: pick((run) => run.client?.decodeTokPerSec),
+        rtf: pick((run) => run.transcription?.rtf),
+        wer: pick((run) => run.transcription?.wer?.wer),
       };
     }),
   };

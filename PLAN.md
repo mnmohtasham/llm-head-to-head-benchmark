@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.7, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.8, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -10,7 +10,8 @@ v2.3 records the session file, the stream messages and the measured send skew fr
 sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5. v2.5
 records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5. v2.6
 records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 records the report as
-built in phase 8, in section 7.
+built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
+6 and 9.
 
 ## 0. Decisions so far
 
@@ -181,6 +182,12 @@ Behaviours that matter:
 - `POST /api/inference/audio/stt/unload`.
 - Monitor rows exist for `/v1/audio/transcriptions`. Their `duration_ms` starts after the upload has been
   fully received, so it is the server-side processing time without the upload.
+- Status as read from the RTX machine (Studio v0.1.815-beta): top level `{available, loaded_model, loading,
+  device, keep_alive_seconds: 300, default_model: "small", models}`, and one object per engine
+  (`transformers`, `gguf`, `mtmd`) with `{available, loaded_model, loading, device, models,
+  downloaded_models, download}`. `mtmd` offers `qwen3-asr-0.6b` and `qwen3-asr-1.7b`. Loading a model that
+  is not in `downloaded_models` starts a download, so pre-flight refuses it.
+- `DELETE /api/inference/monitor` clears the caller's own monitor rows.
 
 ### 2.5 Image generation
 
@@ -314,6 +321,24 @@ Metrics: upload time; processing time (client: response start minus body sent; s
 against the reference (normalised text, word-level Levenshtein, implemented in `shared/`); the engine and
 device that actually served.
 
+As built in phase 9:
+
+- Sessions carry a `workload`, `text` or `transcribe`, with the matching config (schema version 6; older
+  files are text). One race runs at a time whatever its workload.
+- Pre-flight per machine: speech-to-text missing, a model or engine loading, an engine the machine lacks,
+  a curated model the engine does not offer, or a model not downloaded for the engine that would serve it
+  are errors. GGUF falling back to transformers, and machines serving different engines, are warnings.
+  Uploaded audio that is gone is an error.
+- Each round: `stt/status` and `stt/load` per machine in parallel before anything is timed, with the load
+  time kept on the run; clear the monitor; round trip; then the multipart POST, streamed so the moment the
+  last byte leaves is stamped. Upload is request to last byte; processing is last byte to response
+  headers; the monitor row gives Unsloth's own processing time. The warm-up sends the first 5 s of the
+  clip.
+- Word error rate is computed after the round, not while other machines are still being timed, because
+  aligning a half-hour transcript takes a noticeable moment.
+- Audio: the bundled clip (`server/assets/`), the clip repeated into one WAV of at least N minutes, or a
+  file uploaded to `POST /api/audio` (up to 256 MB, stored in `data/audio/` by SHA-256).
+
 ### 4.3 Image generation
 
 Config: model per machine (same repo and the same `gguf_filename` or quant on both), width, height,
@@ -408,6 +433,10 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   page reload resumes); `POST /api/sessions/:id/cancel`; `GET /api/sessions` (summaries, newest first);
   `GET /api/sessions/:id`; `DELETE /api/sessions/:id` (409 while running);
   `GET /api/sessions/:id/export.(json|csv|md)`; `POST /api/sessions/:id/vote`.
+- Transcription (phase 9): `POST /api/audio?name=` takes the raw file and answers `{id, name, bytes,
+  contentType, seconds}`; `GET /api/audio/clip.wav` serves the bundled clip; `GET /api/machines/:id/stt`
+  answers a machine's STT status. `POST /api/preflight` and `POST /api/sessions` take `workload`, which
+  defaults to `text`.
 - SSE messages as built in phase 4: `snapshot {session}`, `delta {round, runs: [{machineId, state,
   reasoning, answer, live}]}` every 50 ms, `run {round, run}` when one machine finishes, and
   `finished {session}`. A snapshot and the deltas after it never repeat text: joining flushes pending
@@ -456,8 +485,9 @@ dev server; the dev server shows a banner.
 `mock/` implements the routes in section 2 with configurable startup delay, per-token latency, jitter, a
 reasoning phase of N tokens, usage and timings in the final chunk, `context_truncated` injection, stalls,
 dropped connections, in-band error frames, tool frames, keep-alive comments, thinking sent as answer text,
-monitor rows and cancel by id, STT with a
-fixed delay per audio second, image progress at a fixed steps per second, and telemetry that ramps during
+monitor rows and cancel by id, STT with per-engine availability by profile (no whisper.cpp on the Mac
+profile), loads that refuse models not on disk, idle unload, a processing delay per audio second by
+profile and engine, and transcripts with deterministic word errors, image progress at a fixed steps per second, and telemetry that ramps during
 runs. It can also replay recorded fixtures with their original timing. `npm run demo` starts two mocks on
 different ports plus the app.
 
@@ -491,7 +521,8 @@ testable app.
    (llama.cpp on Metal) and MLX give different numbers and different cache behaviour; pick one backend for
    the comparison.
 2. Is whisper-server built on each machine (`scripts/build_whisper_cpp.sh`)? Without it, Mac
-   transcription runs the slow transformers path.
+   transcription runs the slow transformers path. The RTX machine: yes, its `gguf` engine is available and has
+   `large-v3-turbo` downloaded (read 2026-09-25). The Lenovo and the Mac: not yet read.
 3. Which image model? The same repo and quant must exist on both machines. Is `speed_mode: off` acceptable
    as the baseline?
 4. Bundled public-domain audio and text, or your own files with a reference transcript?

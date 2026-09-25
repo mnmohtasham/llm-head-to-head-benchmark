@@ -96,13 +96,15 @@ describe('stored sessions', () => {
     delete (v1.config as Record<string, unknown>).preset;
     delete (v1.config as Record<string, unknown>).prefill;
     const migrated = migrateSession(v1 as unknown as StoredSession);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(6);
     expect(migrated.config).toMatchObject({
       preset: 'custom',
       prefill: 'warm',
       sampling: { temperature: 0.6, topP: 0.95, topK: 20, minP: 0, repetitionPenalty: 1, seed: 42 },
     });
     expect(migrated.rounds[0]?.nonce).toBeNull();
+    expect(migrated.workload).toBe('text');
+    expect(migrated.rounds[0]?.runs[0]?.transcription).toBeNull();
     expect(migrated.plan).toEqual({
       rounds: 1,
       warmup: false,

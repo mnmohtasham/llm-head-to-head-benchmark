@@ -4,14 +4,15 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 8 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 9 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
 check that stops races that would not be fair. Every machine's GPU, power, CPU, RAM and
 temperature show live, and every run gets its energy. A finished race reads as a scoreboard with
 charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
-The transcription and image benchmarks come next. [PLAN.md](PLAN.md) is the full specification.
+Speech-to-text races the same way, with real-time factor and word error rate. The image benchmark
+comes next. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -215,6 +216,48 @@ interrupted.
 - A run stops when Unsloth sends nothing for 2 minutes, or after 30 minutes in total.
 - One race runs at a time.
 
+## Race machines on speech-to-text
+
+The **Transcribe** tab sends the same audio to every machine's Unsloth speech-to-text and compares
+how fast and how accurately each one writes it down.
+
+1. Pick the machines. Each chip says which speech model is in memory, if any.
+2. Pick the audio:
+   - **LibriSpeech clip**, 70 seconds of one speaker, bundled with its checked transcript. Listen
+     to it and read what is said from the form.
+   - **Long audio** repeats the clip into one file of 1 to 30 minutes, to see how speed holds up.
+   - **Upload a file**, WAV, MP3, FLAC, M4A, OGG or WebM up to 256 MB. Paste what was said to get
+     a word error rate, or leave it empty. The file is kept in `data/audio/`.
+3. Pick the engine, model, device and language. **GGUF** runs Whisper on whisper.cpp, the fastest
+   on most machines; a machine without it falls back to **Transformers**, and pre-flight says so.
+   **Qwen3-ASR** runs on llama.cpp. The model must already be downloaded for that engine on every
+   machine: pre-flight stops a race that would start a download.
+4. **Start**. A machine without the model in memory loads it first, and that time is shown apart,
+   not counted in the race. Unsloth unloads a speech model after five idle minutes, so every
+   round checks.
+
+Each pane shows:
+
+- **Real-time factor**: seconds of audio per second of processing. 40× writes a minute of speech
+  in 1.5 seconds.
+- **Word error rate**: wrong, missed and extra words over the words said, after lower-casing,
+  removing punctuation and spelling out numbers. The transcript marks each one: a highlighted word
+  is wrong (hover to see what was said), a red one is extra, a struck-through one was missed.
+  **Show the text as returned** shows the machine's own text.
+- **Upload** and **processing** apart. Processing runs from the last byte of the file sent to the
+  first byte of the answer. Unsloth's own processing time, from its monitor, is in the
+  measurements.
+
+Rounds, statistics, telemetry, the scoreboard, charts and exports work as for text. The scoreboard
+compares real-time factor, word error rate and energy per audio minute. The Transcribe tab's
+results log lists only transcription races.
+
+The clip is utterances 6930-75918-0000 to 0005 of LibriSpeech test-clean: V. Panayotov, G. Chen,
+D. Povey and S. Khudanpur, "LibriSpeech: an ASR corpus based on public domain audio books",
+ICASSP 2015, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The six
+utterances were decoded from the corpus's FLAC to 16 kHz mono WAV and joined end to end, with no
+other change. The file is `server/assets/librispeech-6930-75918.wav`.
+
 ## Security
 
 - The app has no login. It binds to 127.0.0.1 unless you pass `--host`, and then prints a
@@ -273,6 +316,15 @@ curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/
 curl -X POST http://127.0.0.1:18882/__mock/reset
 ```
 
+Speech-to-text has its own settings: how long a model takes to load, processing time per second
+of audio, and how soon an idle model unloads. Its transcripts get every 30th to 50th word wrong,
+the same words every time, so the word error rate differs by profile and engine.
+
+```bash
+curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
+     -d '{"stt": {"loadMs": 2000, "msPerAudioSecond": 40, "idleUnloadMs": 10000}}'
+```
+
 Other stream settings are `jitterMs`, `tokensPerChunk`, `keepaliveEveryMs`, `errorMessage`,
 `toolFrames` (Unsloth's UI frames, which clients must ignore), `truncated` (the prompt was cut to
 fit), `thinkingInAnswer` (the model skipped its thinking block), `cachedPromptTokens` and
@@ -316,6 +368,10 @@ out.
   running. Stop it first.
 - **"whisper.cpp is not installed on this machine."**: Whisper will run on the slower
   Transformers engine. Unsloth's `scripts/build_whisper_cpp.sh` builds the faster engine.
+- **"… is not downloaded for gguf on …"**: download that speech model in Unsloth Studio on that
+  machine, or pick one it has. Model Duel never starts a download during a race.
+- **"… cannot run GGUF speech models"**: that machine will use Transformers, so the race compares
+  engines as well as hardware. Build whisper.cpp there, or pick **Transformers** for every machine.
 - **Browser tests find no browser**: run `npx playwright install chromium`, or set
   `E2E_BROWSER=chromium` to force Playwright's own Chromium.
 

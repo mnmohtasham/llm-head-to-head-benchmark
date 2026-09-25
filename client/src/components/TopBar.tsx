@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 
-export type Page = 'machines' | 'models' | 'text';
+export type Page = 'machines' | 'models' | 'text' | 'transcribe';
 
 const TABS: ReadonlyArray<{ page: Page; label: string }> = [
   { page: 'machines', label: 'Machines' },
   { page: 'models', label: 'Models' },
   { page: 'text', label: 'Text' },
+  { page: 'transcribe', label: 'Transcribe' },
 ];
 
 export function TopBar({

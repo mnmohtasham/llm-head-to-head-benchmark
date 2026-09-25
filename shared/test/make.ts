@@ -47,6 +47,7 @@ export function makeRun(
     telemetry: null,
     timeline: null,
     requestedAtMs: null,
+    transcription: null,
   };
 }
 
@@ -71,7 +72,7 @@ export function makeSession(
   warmup: RunView[] | null = null,
 ): SessionView {
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     id: '11111111-1111-4111-8111-111111111111',
     workload: 'text',
     createdAt: '2026-09-25T00:00:00.000Z',

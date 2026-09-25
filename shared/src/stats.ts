@@ -1,5 +1,5 @@
 import type { RunView } from './chat';
-import { METRICS, type Better, type MetricUnit } from './compare';
+import { metricsFor, type Better, type MetricUnit } from './compare';
 import type { RoundFlag, SessionView } from './session';
 
 export interface Summary {
@@ -103,7 +103,7 @@ export function runsOf(session: SessionView, machineId: string): RunView[] {
 
 /** Per metric and machine, over the rounds that finished. Failed rounds do not count. */
 export function sessionStats(session: SessionView): StatRow[] {
-  return METRICS.map((metric) => {
+  return metricsFor(session.workload).map((metric) => {
     const summaries = session.machines.map((machine) =>
       summarize(
         runsOf(session, machine.id)

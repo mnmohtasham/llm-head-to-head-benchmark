@@ -60,15 +60,17 @@ export function SessionList({ sessions, currentId, onDelete }: Props) {
                       </span>{' '}
                       {m.state !== 'done'
                         ? m.state
-                        : m.firstAnswerMs === null
-                          ? `no answer, ${formatRate(m.decodeTokPerSec, 'tok/s')}`
-                          : `${formatSeconds(m.firstAnswerMs)} s first word, ${formatRate(m.decodeTokPerSec, 'tok/s')}`}
+                        : s.workload === 'transcribe'
+                          ? `${m.rtf === null ? 'n/a' : `${m.rtf.toFixed(m.rtf < 10 ? 1 : 0)}×`} real time${m.wer === null ? '' : `, WER ${(m.wer * 100).toFixed(1)}%`}`
+                          : m.firstAnswerMs === null
+                            ? `no answer, ${formatRate(m.decodeTokPerSec, 'tok/s')}`
+                            : `${formatSeconds(m.firstAnswerMs)} s first word, ${formatRate(m.decodeTokPerSec, 'tok/s')}`}
                     </li>
                   ))}
                 </ul>
               </div>
               <div className="session-actions">
-                <a className="btn btn-quiet" href={`#/text/${s.id}`}>
+                <a className="btn btn-quiet" href={`#/${s.workload ?? 'text'}/${s.id}`}>
                   Open
                 </a>
                 <button

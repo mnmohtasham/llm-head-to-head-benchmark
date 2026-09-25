@@ -464,7 +464,8 @@ Automated tests
   WER.
 
 Real-machine script (prerequisites: the same STT model on both machines; whisper-server built, open
-question 2)
+question 2. In phase 9 only pre-flight ran, on the RTX machine: a race loads a speech model next to the
+chat model, which waits for Mani's go-ahead)
 1. Run large-v3-turbo with the gguf engine on both machines for three rounds.
 2. Confirm the served engine on each machine. A Mac without whisper-server must show that it fell back to
    transformers.

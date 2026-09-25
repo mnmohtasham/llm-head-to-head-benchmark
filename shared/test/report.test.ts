@@ -37,6 +37,8 @@ function race(): SessionView {
       statusBefore: makeStatus({ activeModel: 'org/Model-A', quant: 'Q4_K_M' }),
       statusAfter: null,
       request: { model: 'org/Model-A' },
+      sttBefore: null,
+      sttAfter: null,
     },
     {
       machineId: 'slow',
@@ -47,6 +49,8 @@ function race(): SessionView {
       statusBefore: makeStatus({ activeModel: 'org/Model-B', quant: 'Q8_0' }),
       statusAfter: null,
       request: { model: 'org/Model-B' },
+      sttBefore: null,
+      sttAfter: null,
     },
   ];
   return session;

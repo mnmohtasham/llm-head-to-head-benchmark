@@ -303,7 +303,6 @@ export const PROFILES: Record<ProfileName, Profile> = {
   },
 };
 
-const STT_MODELS = ['tiny', 'base', 'small', 'large-v3-turbo', 'large-v3'];
 const round = (value: number, digits = 1) => Number(value.toFixed(digits));
 const jitter = (value: number, spread: number) => value + (Math.random() - 0.5) * 2 * spread;
 
@@ -668,32 +667,6 @@ export function loadResponseBody(
     native_context_length: m.entry.nativeContext,
     supports_reasoning: m.entry.supportsReasoning,
     is_mlx: m.entry.format === 'mlx',
-  };
-}
-
-export function sttBody(p: Profile): Record<string, unknown> {
-  const engine = (available: boolean, models: string[], defaultModel: string | null) => ({
-    available,
-    loaded_model: null,
-    loading: false,
-    device: null,
-    keep_alive_seconds: 300,
-    default_model: defaultModel,
-    models,
-    downloaded_models: available ? models.slice(3, 4) : [],
-    download: null,
-  });
-  return {
-    available: p.stt.transformers,
-    loaded_model: null,
-    loading: false,
-    device: null,
-    keep_alive_seconds: 300,
-    default_model: 'small',
-    models: STT_MODELS,
-    transformers: engine(p.stt.transformers, STT_MODELS, 'small'),
-    mtmd: engine(p.stt.mtmd, ['Qwen3-ASR-1.7B'], null),
-    gguf: engine(p.stt.gguf, STT_MODELS, 'small'),
   };
 }
 

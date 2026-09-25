@@ -114,6 +114,7 @@ textarea {
 /* Page tabs, like the preset chips in the reference tool: the current one is filled. */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -767,6 +768,10 @@ textarea {
 @media (max-width: 560px) {
   .brand h1 {
     font-size: 22px;
+  }
+
+  .tab {
+    padding: 0 10px;
   }
 
   .btn-primary {
@@ -1812,4 +1817,94 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+}
+
+/* Transcription */
+.transcript-diff {
+  margin: 0;
+}
+
+.wer-sub,
+.wer-ins {
+  padding: 0 2px;
+  border-radius: 2px;
+  color: var(--text);
+}
+
+.wer-sub {
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.wer-ins {
+  background: color-mix(in srgb, var(--error) 30%, transparent);
+}
+
+.wer-del {
+  color: var(--error);
+  text-decoration-thickness: 2px;
+}
+
+.audio-source {
+  display: grid;
+  gap: 10px;
+}
+
+.audio-source audio {
+  width: 100%;
+  max-width: 480px;
+}
+
+.audio-reference {
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.audio-source textarea {
+  min-height: 72px;
+}
+
+.phase-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.phase-row {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) 1fr;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.phase-name {
+  color: var(--machine);
+  font-weight: 700;
+}
+
+.phase-track {
+  display: flex;
+  height: 14px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+}
+
+.phase-upload {
+  background: color-mix(in srgb, var(--machine) 35%, transparent);
+}
+
+.phase-processing {
+  background: var(--machine);
+}
+
+.phase-value {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
