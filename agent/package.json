@@ -1,0 +1,14 @@
+{
+  "name": "@duel/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model Duel's agent: runs allowlisted commands such as ffmpeg encodes on a machine.",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@duel/shared": "*",
+    "fastify": "^5.12.5"
+  }
+}

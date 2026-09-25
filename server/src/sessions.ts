@@ -25,6 +25,9 @@ import {
   imagePrompt,
   imageRequestBody,
   stepMetrics,
+  commandLabel,
+  commandResult,
+  type CommandConfig,
   observeQueue,
   summarizeThroughput,
   type ImageConfig,
@@ -67,6 +70,7 @@ import {
   generateImage,
   readImageStatus,
 } from './imagegen';
+import { agentHealth, cancelJob, followJob, startJob } from './agent';
 import type { ImageStore } from './imagestore';
 import { watchQueue } from './queue';
 import {
@@ -127,6 +131,8 @@ type Listener = (message: SessionStreamMessage) => void;
 interface LiveRun {
   view: StoredRun;
   machine: StoredMachine;
+  /** The agent job running this run's command, for cancelling it. */
+  jobId?: string | null;
   provenance: MachineProvenance;
   unsentReasoning: string;
   unsentAnswer: string;
@@ -266,6 +272,7 @@ function newRun(machine: StoredMachine, config: RunLabel): StoredRun {
     transcription: null,
     image: null,
     throughput: null,
+    command: null,
     raw: null,
   };
 }
@@ -349,7 +356,9 @@ export class SessionManager {
         ? { workload: 'text', config: { ...request.config } }
         : request.workload === 'transcribe'
           ? { workload: 'transcribe', config: structuredClone(request.config) }
-          : { workload: 'image', config: structuredClone(request.config) };
+          : request.workload === 'command'
+            ? { workload: 'command', config: structuredClone(request.config) }
+            : { workload: 'image', config: structuredClone(request.config) };
     const session: StoredSession = {
       ...workload,
       schemaVersion: SESSION_SCHEMA_VERSION,
@@ -424,13 +433,17 @@ export class SessionManager {
     const cancelId = (run: LiveRun) => entry.current?.cancelId ?? run.view.id;
     await Promise.allSettled(
       inFlight.flatMap((run) =>
-        session.workload === 'image'
-          ? [cancelImage(run.machine)]
-          : batch > 0
-            ? Array.from({ length: batch }, (_unused, k) =>
-                cancelOnMachine(run.machine, `${cancelId(run)}-${k + 1}`),
-              )
-            : [cancelOnMachine(run.machine, cancelId(run))],
+        session.workload === 'command'
+          ? run.jobId
+            ? [cancelJob(run.machine, run.jobId)]
+            : []
+          : session.workload === 'image'
+            ? [cancelImage(run.machine)]
+            : batch > 0
+              ? Array.from({ length: batch }, (_unused, k) =>
+                  cancelOnMachine(run.machine, `${cancelId(run)}-${k + 1}`),
+                )
+              : [cancelOnMachine(run.machine, cancelId(run))],
       ),
     );
     // An image race still loads the chat models again after this, so do not wait for that.
@@ -513,6 +526,7 @@ export class SessionManager {
       imageBefore: null,
       imageAfter: null,
       restore: null,
+      agent: null,
     };
   }
 
@@ -638,6 +652,22 @@ export class SessionManager {
         return;
       }
       entry.models[index] = session.config.model;
+      return;
+    }
+    if (session.workload === 'command') {
+      const probe = await agentHealth(machine);
+      provenance.agent = probe.health;
+      if (!probe.health) {
+        entry.unready[index] = probe.error ?? `${machine.name} has no agent.`;
+        return;
+      }
+      const template = probe.health.templates.find((t) => t.id === session.config.template);
+      if (!template?.encoder) {
+        entry.unready[index] =
+          `${machine.name} cannot run this: ${template?.reason ?? 'unknown template'}`;
+        return;
+      }
+      entry.models[index] = template.encoder;
       return;
     }
     if (session.workload === 'image') {
@@ -817,6 +847,10 @@ export class SessionManager {
       await this.runImageRound(entry, session.config, index, warmup);
       return;
     }
+    if (session.workload === 'command') {
+      await this.runCommandRound(entry, session.config, index, warmup);
+      return;
+    }
     const signal = controller.signal;
     const config = warmup ? WARMUP : session.config;
     const cold = !warmup && config.prefill === 'cold';
@@ -938,6 +972,202 @@ export class SessionManager {
     this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
     entry.current = null;
     await this.deps.sessions.save(session);
+  }
+
+  /**
+   * A command round: a round-trip check to each agent, then the same encode of the same clip on
+   * every machine, together or in turns. The warm-up encodes one second, which also brings the clip
+   * into the machine's file cache.
+   */
+  private async runCommandRound(
+    entry: ActiveSession,
+    config: CommandConfig,
+    index: number,
+    warmup: boolean,
+  ): Promise<void> {
+    const { session, controller } = entry;
+    const signal = controller.signal;
+    const view: StoredRound = {
+      index,
+      startedAt: null,
+      finishedAt: null,
+      sendSkewMs: null,
+      order: [],
+      nonce: null,
+      runs: entry.machines.map((machine) =>
+        newRun(machine, {
+          prompt: commandLabel(config),
+          maxTokens: 0,
+          thinking: false,
+          reasoningEffort: null,
+        }),
+      ),
+      loopLagMs: null,
+      flags: [],
+    };
+    const round: LiveRound = {
+      view,
+      warmup,
+      lag: monitorEventLoopDelay({ resolution: 10 }),
+      cancelId: randomUUID(),
+      controller: new AbortController(),
+      truncatedBy: null,
+      runs: entry.machines.map((machine, i) => ({
+        view: view.runs[i] as StoredRun,
+        machine,
+        provenance: session.provenance[i] as MachineProvenance,
+        unsentReasoning: '',
+        unsentAnswer: '',
+        requestAt: null,
+        firstTokenAt: null,
+        lastTokenAt: null,
+      })),
+    };
+    for (const [i, run] of round.runs.entries()) run.view.modelBefore = entry.models[i] ?? null;
+    if (warmup) session.warmup = view;
+    else session.rounds.push(view);
+    entry.current = round;
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    for (const [i, run] of round.runs.entries()) {
+      const why = entry.unready[i];
+      if (why) this.finishRun(entry, round, run, 'failed', why);
+    }
+    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+    if (!warmup && ready.length > 0) {
+      this.setProgress(entry, 'rtt', index);
+      const rtts = await Promise.all(
+        ready.map((run) => measureRtt(run.machine.agentUrl ?? run.machine.baseUrl, { signal })),
+      );
+      ready.forEach((run, i) => {
+        run.view.rtt = rtts[i] ?? null;
+      });
+    }
+    if (!signal.aborted && ready.length > 0) {
+      this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
+      round.lag.enable();
+      view.startedAt = new Date().toISOString();
+      const job = warmup ? { ...config, maxSeconds: 1 } : config;
+      const send = (run: LiveRun) => this.sendCommand(entry, round, run, job);
+      if (session.plan.sequencing === 'concurrent') {
+        const pending = ready.map((run) => send(run));
+        view.order = ready.map((run) => run.machine.id);
+        const first = Math.min(...ready.map((run) => run.requestAt ?? 0));
+        const last = Math.max(...ready.map((run) => run.requestAt ?? 0));
+        view.sendSkewMs = round3(last - first);
+        for (const run of ready) run.view.sendOffsetMs = round3((run.requestAt ?? 0) - first);
+        await Promise.all(pending);
+      } else {
+        const order = abbaOrder(ready, warmup ? 0 : index);
+        view.order = order.map((run) => run.machine.id);
+        for (const run of order) run.view.state = 'queued';
+        for (const run of order) {
+          if (signal.aborted) break;
+          await send(run);
+        }
+      }
+      round.lag.disable();
+      view.loopLagMs = lagOf(round.lag);
+    }
+    for (const run of round.runs) {
+      if (signal.aborted) this.finishRun(entry, round, run, 'cancelled', null);
+    }
+    view.finishedAt = new Date().toISOString();
+    if (!warmup) {
+      const names = new Map(session.machines.map((m) => [m.id, m.name]));
+      view.flags = roundFlags(view.runs, names, view.loopLagMs);
+    }
+    this.flush(entry);
+    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    entry.current = null;
+    await this.deps.sessions.save(session);
+  }
+
+  /** Starts the encode on one machine's agent, follows it, and adds up what it reported. */
+  private async sendCommand(
+    entry: ActiveSession,
+    round: LiveRound,
+    run: LiveRun,
+    job: CommandConfig,
+  ): Promise<void> {
+    const { machine } = run;
+    const clip = run.provenance.agent?.clips.find((c) => c.name === job.clip) ?? null;
+    const totalFrames =
+      clip?.frames && job.maxSeconds && clip.durationSec
+        ? Math.min(clip.frames, Math.round((clip.frames / clip.durationSec) * job.maxSeconds))
+        : (clip?.frames ?? null);
+    run.view.state = 'streaming';
+    run.view.live = { ...run.view.live, frames: { done: 0, total: totalFrames } };
+    run.requestAt = performance.now();
+    run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
+    entry.starts.set(run.view.id, run.view.requestedAtMs);
+    const started = await startJob(machine, job);
+    if ('error' in started) {
+      this.finishRun(entry, round, run, 'failed', `${machine.name}'s agent: ${started.error}`);
+      return;
+    }
+    run.jobId = started.id;
+    if (!round.warmup) run.provenance.request ??= { ...job };
+    // Energy lines up with when the events arrived here, since the agent's clock is its own.
+    const arrived = { started: null as number | null, firstFrame: null as number | null };
+    const followed = await followJob(machine, started.id, {
+      signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
+      timeoutMs: this.deps.timings.totalTimeoutMs,
+      onEvent: (event) => {
+        const now = performance.now();
+        if (event.type === 'started') arrived.started ??= now;
+        if (event.type === 'progress' && event.frame !== null) {
+          if (event.frame > 0) arrived.firstFrame ??= now;
+          run.view.live = {
+            ...run.view.live,
+            elapsedMs: now - (run.requestAt ?? now),
+            frames: { done: event.frame, total: totalFrames },
+          };
+        }
+      },
+    });
+    const endAt = performance.now();
+    run.jobId = null;
+    const result = commandResult(
+      job.template,
+      job.clip,
+      followed.events,
+      round3(endAt - (run.requestAt ?? endAt)),
+    );
+    run.view.command = result;
+    run.view.live = { ...run.view.live, elapsedMs: endAt - (run.requestAt ?? endAt) };
+    run.view.loopLagMs = lagOf(round.lag);
+    const origin = performance.timeOrigin;
+    const start = origin + (arrived.started ?? run.requestAt ?? endAt);
+    entry.phases.set(run.view.id, {
+      phases: {
+        start,
+        firstToken: arrived.firstFrame === null ? null : origin + arrived.firstFrame,
+        lastToken: origin + endAt,
+        end: origin + endAt,
+      },
+      outputTokens: null,
+    });
+    const finished = followed.events.find((e) => e.type === 'finished');
+    if (entry.controller.signal.aborted || (finished?.type === 'finished' && finished.cancelled)) {
+      this.finishRun(entry, round, run, 'cancelled', null);
+      return;
+    }
+    if (followed.error) {
+      this.finishRun(entry, round, run, 'failed', `${machine.name}'s agent: ${followed.error}`);
+      return;
+    }
+    if (result.exitCode !== 0) {
+      const last = result.stderrTail.trim().split('\n').pop() ?? '';
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'failed',
+        `The encode on ${machine.name} ended with code ${result.exitCode ?? 'none'}${last ? `: ${last}` : '.'}`,
+      );
+      return;
+    }
+    this.finishRun(entry, round, run, 'done', null);
   }
 
   /**

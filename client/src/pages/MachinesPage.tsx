@@ -84,7 +84,11 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
       if (updated.lastProbe === null) void probe(updated);
       return;
     }
-    const created = await api.createMachine({ ...values, apiKey: values.apiKey ?? '' });
+    const created = await api.createMachine({
+      ...values,
+      apiKey: values.apiKey ?? '',
+      agentToken: values.agentToken ?? '',
+    });
     setMachines((list) => [...(list ?? []), created]);
     setDialog(null);
     addLog({ machineName: created.name, color: created.color, tone: 'info', text: 'Added.' });

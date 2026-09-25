@@ -22,6 +22,7 @@ import { listImageModels, readImageStatus } from '../imagegen';
 import type { ImageStore } from '../imagestore';
 import {
   platformName,
+  runCommandPreflight,
   runImagePreflight,
   runPreflight,
   runTranscribePreflight,
@@ -77,9 +78,11 @@ export function registerSessionRoutes(
       ? runPreflight(machines, request.config, isLoading)
       : request.workload === 'transcribe'
         ? runTranscribePreflight(machines, request.config, isLoading, audio)
-        : runImagePreflight(machines, request.config, isLoading, (id) =>
-            platformName(store.lastProbe(id)?.report ?? null),
-          );
+        : request.workload === 'command'
+          ? runCommandPreflight(machines, request.config)
+          : runImagePreflight(machines, request.config, isLoading, (id) =>
+              platformName(store.lastProbe(id)?.report ?? null),
+            );
 
   /** A machine's image model status, and the image models on its disk. */
   app.get<IdParams>('/api/machines/:id/image', async (request, reply) => {

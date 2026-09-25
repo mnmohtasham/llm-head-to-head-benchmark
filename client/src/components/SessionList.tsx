@@ -60,15 +60,17 @@ export function SessionList({ sessions, currentId, onDelete }: Props) {
                       </span>{' '}
                       {m.state !== 'done'
                         ? m.state
-                        : s.workload === 'image'
-                          ? `${m.imageMs === null ? 'n/a' : `${(m.imageMs / 1000).toFixed(1)} s`} per image, ${m.stepsPerSec === null ? 'n/a' : m.stepsPerSec.toFixed(2)} steps/s`
-                          : m.aggregateTokPerSec !== null && m.aggregateTokPerSec !== undefined
-                            ? `${formatRate(m.aggregateTokPerSec, 'tok/s')} together`
-                            : s.workload === 'transcribe'
-                              ? `${m.rtf === null ? 'n/a' : `${m.rtf.toFixed(m.rtf < 10 ? 1 : 0)}×`} real time${m.wer === null ? '' : `, WER ${(m.wer * 100).toFixed(1)}%`}`
-                              : m.firstAnswerMs === null
-                                ? `no answer, ${formatRate(m.decodeTokPerSec, 'tok/s')}`
-                                : `${formatSeconds(m.firstAnswerMs)} s first word, ${formatRate(m.decodeTokPerSec, 'tok/s')}`}
+                        : s.workload === 'command'
+                          ? `${m.encodeFps === null || m.encodeFps === undefined ? 'n/a' : Math.round(m.encodeFps)} fps`
+                          : s.workload === 'image'
+                            ? `${m.imageMs === null ? 'n/a' : `${(m.imageMs / 1000).toFixed(1)} s`} per image, ${m.stepsPerSec === null ? 'n/a' : m.stepsPerSec.toFixed(2)} steps/s`
+                            : m.aggregateTokPerSec !== null && m.aggregateTokPerSec !== undefined
+                              ? `${formatRate(m.aggregateTokPerSec, 'tok/s')} together`
+                              : s.workload === 'transcribe'
+                                ? `${m.rtf === null ? 'n/a' : `${m.rtf.toFixed(m.rtf < 10 ? 1 : 0)}×`} real time${m.wer === null ? '' : `, WER ${(m.wer * 100).toFixed(1)}%`}`
+                                : m.firstAnswerMs === null
+                                  ? `no answer, ${formatRate(m.decodeTokPerSec, 'tok/s')}`
+                                  : `${formatSeconds(m.firstAnswerMs)} s first word, ${formatRate(m.decodeTokPerSec, 'tok/s')}`}
                     </li>
                   ))}
                 </ul>

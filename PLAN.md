@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.10, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.11, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -12,7 +12,8 @@ records prefill, fixed length, pre-flight and the cache measurements of phase 6,
 records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 records the report as
 built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
-2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9.
+2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
+command workload of phase 12, in sections 3, 6 and 7.
 
 ## 0. Decisions so far
 
@@ -284,9 +285,27 @@ interface Workload<C> {
 }
 ```
 
-- Agent (phase 4 only): a small Node script started from this repo on a machine, exposing `POST /jobs`
-  for command workloads such as ffmpeg encodes, emitting the same event shape. Not needed for text,
-  transcription or images.
+- Agent (built in phase 12, `agent/`): a Fastify service started with `npm run agent` on a machine,
+  port 8765, with a bearer token. `GET /health` names the agent to anyone and, with the token, lists
+  its platform, ffmpeg version, the known encoders it has, which template each would use, its clips
+  (name, size, SHA-256, frames, length, from ffprobe), macmon or nvidia-smi, and whether it is busy.
+  `POST /jobs` takes `{template, clip, bitrateMbps, crf, x265Preset, maxSeconds}` and nothing else
+  (a strict schema); the agent resolves the encoder, builds the ffmpeg argument list itself, runs it
+  with `-progress pipe:1 -stats_period 0.1` into a temporary file, and deletes the file after
+  measuring it. One job at a time (409 otherwise). `GET /jobs/:id/stream` sends every event so far and
+  then the rest: `started {encoder, argv}`, `progress {frame, fps, outTimeMs, speed, totalSize, done}`,
+  `telemetry {cpuPowerW, gpuPowerW, anePowerW, gpuPct, encoderPct}` and `finished {exitCode,
+  cancelled, wallMs, outputBytes, stderrTail}`. `POST /jobs/:id/cancel` stops it. `--fake` adds a
+  scripted encode and clip for the demo and tests.
+- Command workload: templates `hevc-hardware` (hevc_nvenc, else hevc_videotoolbox), `prores-hardware`
+  (prores_videotoolbox), `x265` (libx265) and `fake`. Pre-flight needs an agent on every machine that
+  is free, accepts the token, has the encoder and has the clip with the same SHA-256; different
+  encoders are a note. Metrics: encode time (the agent's `wallMs`), frames per second, speed, time to
+  the first progress with a frame, output size, energy per encode from Unsloth's telemetry, and the
+  agent's own power readings. Energy lines up with when the agent's events arrived, since its clock is
+  its own. Sessions are schema version 9, with `command` on each run and the agent's health in the
+  provenance. Machines keep `agentUrl` and `agentToken` beside the API key; the token never reaches
+  the browser.
 
 ### 3.1 Probe
 
@@ -496,6 +515,8 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   contentType, seconds}`; `GET /api/audio/clip.wav` serves the bundled clip; `GET /api/machines/:id/stt`
   answers a machine's STT status. `POST /api/preflight` and `POST /api/sessions` take `workload`, which
   defaults to `text`.
+- Agents (phase 12): machines take `agentUrl` and `agentToken`; `GET /api/machines/:id/agent` answers
+  the agent's health, and the probe includes it as `agent`.
 - `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
   slots and its other settings, through the load manager, and answers 202 with the load job.
 - Images (phase 10): `GET /api/machines/:id/image` answers the image status and the image models on disk
@@ -521,7 +542,7 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
 
 ## 7. UI
 
-Tabs: TEXT, TRANSCRIBE, IMAGE (COMMAND later). Top bar: preset chips, rounds, START and CANCEL.
+Tabs: TEXT, TRANSCRIBE, IMAGE, COMMAND. Top bar: preset chips, rounds, START and CANCEL.
 One pane per machine: name, model line, telemetry chips (GPU %, power W, CPU %, RAM, temperature), big live
 numbers (first token, tok/s, elapsed), streamed text with the thinking block (expanded while thinking,
 collapsed once the answer starts), or a progress bar and the image, or the transcript.

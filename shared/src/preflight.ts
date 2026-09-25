@@ -1,4 +1,5 @@
 import type { TextConfig } from './chat';
+import type { AgentHealth, CommandConfig } from './commands';
 import type { ModelStatus } from './models';
 import { backendLabel, speculativeOn } from './session';
 import { STT_MODELS, type SttStatus, type TranscribeConfig } from './transcribe';
@@ -49,7 +50,12 @@ export interface PreflightIssue {
     | 'image-busy'
     | 'image-settings'
     | 'image-speed'
-    | 'handoff';
+    | 'handoff'
+    | 'no-agent'
+    | 'agent'
+    | 'template'
+    | 'clip'
+    | 'encoder';
   machineId: string | null;
   text: string;
 }
@@ -400,6 +406,92 @@ export function imagePreflightIssues(
         `The machines run on ${[...platforms].join(' and ')}, so Unsloth picks a different engine, precision or speed setting on each, and one seed gives different pixels. The report prints what each machine used.`,
       );
     }
+  }
+  return issues;
+}
+
+/** What pre-flight knows about one machine's agent before a command race. */
+export interface CommandPreflightMachine {
+  id: string;
+  name: string;
+  hasAgent: boolean;
+  health: AgentHealth | null;
+  error: string | null;
+}
+
+/**
+ * The checks before a command race: an agent on every machine that is free, has the template's
+ * encoder, and has the same clip, byte for byte.
+ */
+export function commandPreflightIssues(
+  machines: readonly CommandPreflightMachine[],
+  config: Pick<CommandConfig, 'template' | 'clip'>,
+): PreflightIssue[] {
+  const issues: PreflightIssue[] = [];
+  const add =
+    (level: PreflightIssue['level']) =>
+    (code: PreflightIssue['code'], machineId: string | null, text: string) =>
+      issues.push({ level, code, machineId, text });
+  const error = add('error');
+  const note = add('note');
+  const ready: Array<{ m: CommandPreflightMachine; encoder: string; sha: string }> = [];
+  for (const m of machines) {
+    if (!m.hasAgent) {
+      error(
+        'no-agent',
+        m.id,
+        `${m.name} has no agent. Start one there with npm run agent, then add its address and token on the Machines screen.`,
+      );
+      continue;
+    }
+    if (!m.health) {
+      error('agent', m.id, m.error ?? `${m.name}'s agent did not answer.`);
+      continue;
+    }
+    if (m.health.busy) {
+      error('agent', m.id, `${m.name}'s agent is running another job. Wait for it to finish.`);
+      continue;
+    }
+    const template = m.health.templates.find((t) => t.id === config.template);
+    if (!template?.encoder) {
+      error(
+        'template',
+        m.id,
+        `${m.name} cannot run this: ${template?.reason ?? 'unknown template'}`,
+      );
+      continue;
+    }
+    const clip = m.health.clips.find((c) => c.name === config.clip);
+    if (!clip) {
+      error(
+        'clip',
+        m.id,
+        `${m.name} has no clip named ${config.clip}. Copy the same file into its agent's clips folder.`,
+      );
+      continue;
+    }
+    ready.push({ m, encoder: template.encoder, sha: clip.sha256 });
+  }
+  if (new Set(ready.map((r) => r.sha)).size > 1) {
+    error(
+      'clip',
+      null,
+      `The clip ${config.clip} is not the same file everywhere: ${ready.map((r) => `${r.m.name} has ${r.sha.slice(0, 12)}…`).join(', ')}. Copy one file to every machine.`,
+    );
+  }
+  if (new Set(ready.map((r) => r.encoder)).size > 1) {
+    note(
+      'encoder',
+      null,
+      `The machines encode with different hardware: ${ready.map((r) => `${r.m.name} uses ${r.encoder}`).join(', ')}. That is the comparison.`,
+    );
+  }
+  if (config.template === 'fake') {
+    note(
+      'encoder',
+      null,
+      'The fake encode is scripted: it shows how the tab works, not how fast a machine is.',
+    );
   }
   return issues;
 }

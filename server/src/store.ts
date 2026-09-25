@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { MACHINE_COLORS, type LoadJob, type ProbeRaw, type ProbeReport } from '@duel/shared';
+import {
+  MACHINE_COLORS,
+  type AgentProbe,
+  type LoadJob,
+  type ProbeRaw,
+  type ProbeReport,
+} from '@duel/shared';
 
 export const MACHINES_SCHEMA_VERSION = 1;
 
@@ -13,6 +19,9 @@ export interface StoredMachine {
   notes: string;
   color: string;
   apiKey: string | null;
+  /** The Model Duel agent on this machine, and its token; null when there is none. */
+  agentUrl: string | null;
+  agentToken: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,6 +33,7 @@ export interface StoredProbe {
   durationMs: number;
   raw: ProbeRaw;
   report: ProbeReport;
+  agent?: AgentProbe | null;
 }
 
 export interface NewMachine {
@@ -32,6 +42,8 @@ export interface NewMachine {
   notes: string;
   color?: string | undefined;
   apiKey: string | null;
+  agentUrl?: string | null;
+  agentToken?: string | null;
 }
 
 export interface MachinePatch {
@@ -41,6 +53,9 @@ export interface MachinePatch {
   color?: string | undefined;
   /** undefined keeps the saved key, null removes it, a string replaces it. */
   apiKey?: string | null | undefined;
+  /** As for the key: undefined keeps, null removes, a string replaces. */
+  agentUrl?: string | null | undefined;
+  agentToken?: string | null | undefined;
 }
 
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -60,6 +75,9 @@ function isStoredMachine(value: unknown): value is StoredMachine {
     typeof m.notes === 'string' &&
     typeof m.color === 'string' &&
     (m.apiKey === null || typeof m.apiKey === 'string') &&
+    // Files from before the agent have neither field.
+    (m.agentUrl === undefined || m.agentUrl === null || typeof m.agentUrl === 'string') &&
+    (m.agentToken === undefined || m.agentToken === null || typeof m.agentToken === 'string') &&
     typeof m.createdAt === 'string' &&
     typeof m.updatedAt === 'string'
   );
@@ -142,7 +160,11 @@ export class MachineStore {
     }
     const bad = file.machines.findIndex((entry) => !isStoredMachine(entry));
     if (bad >= 0) throw new Error(`Machine ${bad + 1} in ${this.machinesFile} is malformed.`);
-    return file.machines as StoredMachine[];
+    return (file.machines as StoredMachine[]).map((m) => ({
+      ...m,
+      agentUrl: m.agentUrl ?? null,
+      agentToken: m.agentToken ?? null,
+    }));
   }
 
   private async readProbe(id: string): Promise<StoredProbe | null> {
@@ -208,6 +230,8 @@ export class MachineStore {
       notes: input.notes,
       color: input.color ?? this.nextColor(),
       apiKey: input.apiKey,
+      agentUrl: input.agentUrl ?? null,
+      agentToken: input.agentToken ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -232,6 +256,8 @@ export class MachineStore {
       notes: patch.notes ?? current.notes,
       color: patch.color ?? current.color,
       apiKey,
+      agentUrl: patch.agentUrl === undefined ? current.agentUrl : patch.agentUrl,
+      agentToken: patch.agentToken === undefined ? current.agentToken : patch.agentToken,
       updatedAt: new Date().toISOString(),
     };
     this.machines[index] = next;

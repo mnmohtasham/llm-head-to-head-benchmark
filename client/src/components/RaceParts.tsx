@@ -329,6 +329,8 @@ function progressText(workload: Workload, progress: SessionProgress, rounds: num
     case 'restoring':
       return 'Loading each machine’s chat model again…';
     case 'warmup':
+      if (workload === 'command')
+        return 'Warm-up: one second of the clip per machine, not counted.';
       return workload === 'transcribe'
         ? 'Warm-up: five seconds of audio per machine, not counted.'
         : workload === 'image'

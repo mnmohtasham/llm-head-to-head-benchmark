@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 11 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: all twelve phases of [ROADMAP.md](ROADMAP.md) are built.** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -13,7 +13,8 @@ temperature show live, and every run gets its energy. A finished race reads as a
 charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
 Speech-to-text races the same way, with real-time factor and word error rate, and so does image
 generation, with a live step timeline and the images side by side. Throughput mode measures how
-many tokens a machine delivers with several requests at once. A command agent comes next. [PLAN.md](PLAN.md) is the full specification.
+many tokens a machine delivers with several requests at once, and a small agent races video encodes
+and other allowlisted commands. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -312,6 +313,39 @@ optimisations that engaged, quantisation and offload. Apple Silicon and CUDA res
 and the same seed gives different pixels on them, so pre-flight warns and the images are a sanity
 check rather than a comparison.
 
+## Race machines on video encodes
+
+The **Command** tab runs the same ffmpeg encode on every machine through Model Duel's **agent**, a
+small service from this repository that runs only its own command templates.
+
+1. On each machine, install ffmpeg, clone this repository, run `npm ci`, then start the agent:
+
+   ```bash
+   npm run agent -- --host 0.0.0.0              # prints its token; add --token to choose one
+   npm run agent -- --make-clip                 # once: a 20-second 1080p30 reference clip
+   ```
+
+   Clips live in the agent's clips folder (`data/clips`, or `--clips <dir>`). Every machine must
+   have the same file: pre-flight compares them by SHA-256, and the clip `--make-clip` makes can
+   differ between ffmpeg versions, so make it once and copy it.
+2. On the **Machines** screen, **Edit** each machine and fill in **Agent address** (port 8765 by
+   default) and **Agent token**. **Probe** then checks the agent too, and the card lists its
+   ffmpeg, encoders and clips.
+3. On the **Command** tab pick the encode and the clip, and **Start**:
+   - **HEVC hardware** uses the video encoder: NVENC on an NVIDIA GPU, VideoToolbox on a Mac. The
+     race compares the encoder hardware, and pre-flight says which each machine uses.
+   - **ProRes hardware** uses a Mac's media engine.
+   - **x265 software** encodes on the CPU, the same encoder everywhere.
+
+Each pane shows frames per second and speed (seconds of video per second) as the encode runs,
+then the encode time as ffmpeg's run took on the machine, the output size, and a chart of frames
+against time. Where installed, the agent also reads macmon on a Mac (CPU, GPU and Neural Engine
+power) or nvidia-smi on Linux (GPU power and video encoder use). Energy comes from Unsloth's GPU
+reading, so an x265 encode's CPU energy is not in it.
+
+The agent never runs a string it is sent: a job names a template, a clip in its folder and a few
+numbers, and the agent builds the ffmpeg argument list itself. Anything else is refused.
+
 ## Security
 
 - The app has no login. It binds to 127.0.0.1 unless you pass `--host`, and then prints a
@@ -320,6 +354,9 @@ check rather than a comparison.
   stops web pages from reaching it through DNS rebinding. `--allow-host <name>` adds a name.
 - API keys live in `data/machines.json`, readable by your user only (mode 600). They never reach
   the browser, the logs or an export. The app shows only `sk-unsloth-…1234`.
+- The agent needs its token for everything but a bare health check, and runs only its own
+  templates on clips in its own folder. It binds to 127.0.0.1 unless you pass `--host`. Its token,
+  like the API keys, stays in `data/machines.json`.
 - Unsloth's LAN access is plain HTTP. Anyone on the same network can read the traffic,
   including the key. Use it on a network you trust.
 
@@ -332,6 +369,7 @@ check rather than a comparison.
 | `npm start`                                               | Serves the build. Options: `--port`, `--host`, `--data-dir`        |
 | `npm run demo`                                            | Builds, then starts two fake machines and the app with both added  |
 | `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
+| `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
@@ -455,6 +493,7 @@ out.
 | `server/`     | The controller: Fastify API, Unsloth client, probe, machine store |
 | `client/`     | The React app                                                     |
 | `mock/`       | The fake Unsloth backend                                          |
+| `agent/`      | The agent that runs allowlisted commands on a machine             |
 | `e2e/`        | Playwright browser tests                                          |
 | `scripts/`    | Build, demo, and the probe and stream recorders                   |
 | `fixtures/`   | Recorded probes, model lists and streams used by the tests        |

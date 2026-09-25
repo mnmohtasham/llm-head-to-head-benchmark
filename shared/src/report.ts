@@ -1,10 +1,12 @@
 import { metricKind, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
+import { TEMPLATE_INFO } from './commands';
 import { imagePrompt } from './images';
 import { PRESETS } from './presets';
 import { LIBRISPEECH_CLIP } from './transcribe';
 import {
   audioLabel,
+  commandLabel,
   backendLabel,
   speculativeOn,
   type MachineProvenance,
@@ -179,6 +181,24 @@ const ROUND_CELLS = {
             t?.ttftMedianMs === null || !t ? '' : `first token ${formatMsValue(t.ttftMedianMs)}`,
         },
         { value: t ? done : null, text: t ? `${done} of ${t.concurrency} done` : '' },
+      ];
+    },
+  },
+  command: {
+    names: ['encode (ms)', 'frames per second', 'speed (×)'],
+    cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
+      const done = run?.state === 'done';
+      const c = done ? (run?.command ?? null) : null;
+      const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
+      return [
+        done
+          ? { value: c?.wallMs ?? null, text: formatMsValue(c?.wallMs ?? null) }
+          : { value: state, text: state },
+        { value: c?.fps ?? null, text: done ? formatValue(c?.fps ?? null, 'fps') : '' },
+        {
+          value: c?.speed ?? null,
+          text: done ? `${formatValue(c?.speed ?? null, '×')} real time` : '',
+        },
       ];
     },
   },
@@ -459,6 +479,46 @@ const IMAGE_SETUP: readonly SetupSpec[] = [
   ...SETUP.filter((spec) => ['unsloth', 'gpu', 'os', 'ram', 'notes', 'address'].includes(spec.key)),
 ];
 
+/** Command setup: the agent, the encoder that ran, and the exact command. */
+const COMMAND_SETUP: readonly SetupSpec[] = [
+  {
+    key: 'command-encoder',
+    label: 'Encoder',
+    matters: true,
+    pick: (_p, s, i) => {
+      const id = s.machines[i]?.id;
+      const run = s.rounds.flatMap((r) => r.runs).find((r) => r.machineId === id && r.command);
+      return text(run?.command?.encoder);
+    },
+  },
+  {
+    key: 'command-ffmpeg',
+    label: 'ffmpeg',
+    matters: true,
+    pick: (p) => (p.agent ? (p.agent.ffmpeg?.version ?? 'not installed') : 'n/a'),
+  },
+  {
+    key: 'command-clip',
+    label: 'Clip checksum',
+    matters: true,
+    pick: (p, s) => {
+      const name = s.workload === 'command' ? s.config.clip : null;
+      const clip = p.agent?.clips.find((c) => c.name === name);
+      return clip ? `${clip.sha256.slice(0, 16)}…` : 'n/a';
+    },
+  },
+  {
+    key: 'command-agent',
+    label: 'Agent',
+    matters: false,
+    pick: (p) =>
+      p.agent
+        ? `${p.agent.version} on ${p.agent.platform} ${p.agent.arch}${p.agent.telemetry.macmon ? ', macmon' : ''}${p.agent.telemetry.nvidiaSmi ? ', nvidia-smi' : ''}`
+        : 'n/a',
+  },
+  ...SETUP.filter((spec) => ['gpu', 'os', 'ram', 'notes', 'address'].includes(spec.key)),
+];
+
 /** What each machine ran, from the snapshot taken with the race. */
 export function setupTable(session: SessionView): TableModel {
   const provenance = session.machines.map(
@@ -469,7 +529,9 @@ export function setupTable(session: SessionView): TableModel {
       ? STT_SETUP
       : session.workload === 'image'
         ? IMAGE_SETUP
-        : SETUP;
+        : session.workload === 'command'
+          ? COMMAND_SETUP
+          : SETUP;
   return {
     title: 'Setup',
     columns: ['Setting', ...session.machines.map((m) => m.name)],
@@ -518,6 +580,14 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
       win: (w, r) => `${w} uses ${r}× less energy per audio minute`,
     },
     imageTime: { noun: 'Time per image', win: (w, r) => `${w} makes an image ${r}× faster` },
+    encodeFps: {
+      noun: 'Encoding speed',
+      win: (w, r) => `${w} encodes ${r}× more frames per second`,
+    },
+    energyPerEncode: {
+      noun: 'Energy per encode',
+      win: (w, r) => `${w} uses ${r}× less energy for the encode`,
+    },
     aggregate: {
       noun: 'Aggregate output speed',
       win: (w, r) => `${w} delivers ${r}× more tokens per second in total`,
@@ -679,6 +749,16 @@ export function toMarkdown(session: SessionView): string {
         `- Throughput: ${cfg.concurrency} identical requests sent at once to each machine every round. The aggregate speed is every finished request's output tokens over the time from the first sent to the last done, so it includes each request's prompt processing and any wait for a slot.`,
       );
     }
+  } else if (session.workload === 'command') {
+    const cfg = session.config;
+    lines.push(
+      '## Settings',
+      '',
+      `- ${commandLabel(cfg)}`,
+      `- ${TEMPLATE_INFO[cfg.template].description}`,
+      "- Encode time is ffmpeg's own run on each machine, measured by the agent there; frames per second divide the frames by it, and speed is seconds of video per second.",
+      '- Every machine encodes the same clip, checked by its SHA-256 checksum before the race.',
+    );
   } else if (session.workload === 'image') {
     const cfg = session.config;
     const prompt = imagePrompt(cfg);
@@ -713,13 +793,15 @@ export function toMarkdown(session: SessionView): string {
     '',
     '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
     `- A machine wins a row only when its median is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
-    metricKind(session) === 'throughput'
-      ? '- Ratio headlines cover aggregate output speed, time to first token under load and tokens per joule, for the same number of requests at once on every machine.'
-      : session.workload === 'image'
-        ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
-        : session.workload === 'transcribe'
-          ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
-          : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
+    session.workload === 'command'
+      ? '- Ratio headlines cover frames per second and energy per encode, for the same clip and settings.'
+      : metricKind(session) === 'throughput'
+        ? '- Ratio headlines cover aggregate output speed, time to first token under load and tokens per joule, for the same number of requests at once on every machine.'
+        : session.workload === 'image'
+          ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
+          : session.workload === 'transcribe'
+            ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
+            : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
     '- Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, read twice a second and added up over the run.',
     '',
     'Made with Model Duel.',
