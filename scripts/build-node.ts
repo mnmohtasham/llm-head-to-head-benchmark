@@ -1,5 +1,5 @@
 /**
- * Bundles the controller and the mock into single ESM files. Workspace packages (@duel/*) are
+ * Bundles the controller, the mock and the agent into single ESM files. Workspace packages (@duel/*) are
  * compiled in; third-party packages stay external and load from node_modules.
  */
 import { readFileSync } from 'node:fs';
@@ -16,7 +16,7 @@ function dependenciesOf(pkg: string): string[] {
   return Object.keys(manifest.dependencies ?? {});
 }
 
-for (const pkg of ['server', 'mock']) {
+for (const pkg of ['server', 'mock', 'agent']) {
   const external = [...new Set([...dependenciesOf(pkg), ...dependenciesOf('shared')])].filter(
     (name) => !name.startsWith('@duel/'),
   );

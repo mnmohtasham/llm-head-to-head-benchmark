@@ -42,6 +42,7 @@ function race(): SessionView {
       imageBefore: null,
       imageAfter: null,
       restore: null,
+      agent: null,
     },
     {
       machineId: 'slow',
@@ -57,6 +58,7 @@ function race(): SessionView {
       imageBefore: null,
       imageAfter: null,
       restore: null,
+      agent: null,
     },
   ];
   return session;

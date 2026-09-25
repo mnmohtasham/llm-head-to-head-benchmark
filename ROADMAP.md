@@ -565,7 +565,8 @@ Automated tests
 - End-to-end, also the manual demo script: the agent on localhost runs the fake command through the
   COMMAND tab.
 
-Real-machine script (prerequisites: ffmpeg and the source clip on both machines, the agent running)
+Real-machine script (prerequisites: ffmpeg and the source clip on both machines, the agent running. In
+phase 12 it ran on the RTX machine alone, NVENC and x265; the Mac's macmon step waits for the Mac)
 1. Run the HEVC hardware encode and the x265 software encode on both machines.
 2. Confirm that the Mac's extra telemetry appears when macmon is installed.
 

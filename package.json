@@ -12,6 +12,7 @@
     "server",
     "client",
     "mock",
+    "agent",
     "e2e"
   ],
   "scripts": {
@@ -24,8 +25,9 @@
     "start": "node server/dist/index.js",
     "demo": "npm run build && tsx scripts/demo.ts",
     "mock": "tsx mock/src/index.ts",
+    "agent": "tsx agent/src/index.ts",
     "record:probe": "tsx scripts/record-probe.ts",
-    "typecheck": "tsc -p shared && tsc -p shared/test && tsc -p server && tsc -p mock && tsc -p client && tsc -p client/tsconfig.node.json && tsc -p e2e && tsc -p scripts",
+    "typecheck": "tsc -p shared && tsc -p shared/test && tsc -p server && tsc -p mock && tsc -p agent && tsc -p client && tsc -p client/tsconfig.node.json && tsc -p e2e && tsc -p scripts",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",

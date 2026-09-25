@@ -12,7 +12,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEMO_APP_PORT, DEMO_MACHINES, DEMO_MOCK_PORTS } from './demo-config';
+import { DEMO_AGENT_PORTS, DEMO_APP_PORT, DEMO_MACHINES, DEMO_MOCK_PORTS } from './demo-config';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -20,6 +20,7 @@ const { values } = parseArgs({
   options: {
     port: { type: 'string', default: String(DEMO_APP_PORT) },
     'mock-ports': { type: 'string', default: DEMO_MOCK_PORTS.join(',') },
+    'agent-ports': { type: 'string', default: DEMO_AGENT_PORTS.join(',') },
     'data-dir': { type: 'string', default: '.demo-data' },
     'no-seed': { type: 'boolean', default: false },
     'keep-data': { type: 'boolean', default: false },
@@ -28,6 +29,7 @@ const { values } = parseArgs({
 
 const appPort = Number(values.port);
 const mockPorts = values['mock-ports'].split(',').map(Number);
+const agentPorts = values['agent-ports'].split(',').map(Number);
 const dataDir = path.resolve(root, values['data-dir']);
 const children: ChildProcess[] = [];
 let stopping = false;
@@ -84,7 +86,12 @@ async function post(url: string, body?: unknown): Promise<unknown> {
   return response.json();
 }
 
-for (const file of ['server/dist/index.js', 'mock/dist/index.js', 'client/dist/index.html']) {
+for (const file of [
+  'server/dist/index.js',
+  'mock/dist/index.js',
+  'agent/dist/index.js',
+  'client/dist/index.html',
+]) {
   if (!existsSync(path.join(root, file))) {
     process.stderr.write(
       `[demo] ${file} is missing. Run npm run build first (npm run demo does).\n`,
@@ -119,11 +126,30 @@ DEMO_MACHINES.forEach((machine, index) => {
     machine.name,
   ]);
 });
+DEMO_MACHINES.forEach((machine, index) => {
+  start(`agent ${machine.profile}`, 'agent/dist/index.js', [
+    '--port',
+    String(agentPorts[index]),
+    '--token',
+    machine.agentToken,
+    '--clips',
+    path.join(dataDir, `clips-${index + 1}`),
+    '--fake',
+    '--fake-fps',
+    String(machine.fakeFps),
+    '--no-telemetry',
+  ]);
+});
 start('app', 'server/dist/index.js', ['--port', String(appPort), '--data-dir', dataDir]);
 
 await Promise.all(
   mockPorts.map((port, index) =>
     waitFor(`http://127.0.0.1:${port}/api/health`, `mock ${DEMO_MACHINES[index]?.profile}`),
+  ),
+);
+await Promise.all(
+  agentPorts.map((port, index) =>
+    waitFor(`http://127.0.0.1:${port}/health`, `agent ${DEMO_MACHINES[index]?.profile}`),
   ),
 );
 const app = `http://127.0.0.1:${appPort}`;
@@ -137,6 +163,8 @@ if (!values['no-seed']) {
       name: machine.name,
       baseUrl: `127.0.0.1:${mockPorts[index]}`,
       apiKey: machine.apiKey,
+      agentUrl: `127.0.0.1:${agentPorts[index]}`,
+      agentToken: machine.agentToken,
       notes: machine.notes,
       color: machine.color,
     })) as { id: string };
@@ -149,7 +177,8 @@ process.stdout.write(
     '',
     `Demo ready: open http://localhost:${appPort}`,
     ...DEMO_MACHINES.map(
-      (m, i) => `  ${m.name} (${m.profile}) at http://127.0.0.1:${mockPorts[i]}, key ${m.apiKey}`,
+      (m, i) =>
+        `  ${m.name} (${m.profile}) at http://127.0.0.1:${mockPorts[i]}, key ${m.apiKey}; fake agent at 127.0.0.1:${agentPorts[i]}`,
     ),
     'Break a mock to see the error messages, for example a revoked key:',
     `  curl -X POST http://127.0.0.1:${mockPorts[1]}/__mock/config -H 'content-type: application/json' -d '{"rejectKey":true}'`,

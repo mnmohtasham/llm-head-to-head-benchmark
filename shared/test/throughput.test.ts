@@ -128,7 +128,7 @@ describe('stored sessions', () => {
     delete config.concurrency;
     v7.config = config;
     const migrated = migrateSession(v7 as unknown as StoredSession);
-    expect(migrated.schemaVersion).toBe(8);
+    expect(migrated.schemaVersion).toBe(9);
     expect(migrated.config).toMatchObject({ mode: 'latency', concurrency: 1 });
     expect(migrated.rounds[0]?.runs[0]?.throughput).toBeNull();
   });

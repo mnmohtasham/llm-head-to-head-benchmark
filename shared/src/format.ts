@@ -28,5 +28,6 @@ export function formatValue(value: number | null, unit: MetricUnit): string {
   if (unit === '×') return `${value.toFixed(1)}×`;
   // Slow machines manage well under one step a second, so two decimals.
   if (unit === 'steps/s') return `${value.toFixed(2)} steps/s`;
+  if (unit === 'MB') return `${value.toFixed(value < 10 ? 2 : 1)} MB`;
   return formatRate(value, unit);
 }

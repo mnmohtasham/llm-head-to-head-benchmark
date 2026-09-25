@@ -27,7 +27,10 @@ function hasExplicitPort(withScheme: string): boolean {
  *
  * The result is stable: normalising it again returns the same string.
  */
-export function normalizeBaseUrl(input: string): NormalizedUrl {
+export function normalizeBaseUrl(
+  input: string,
+  defaultPort: number = DEFAULT_UNSLOTH_PORT,
+): NormalizedUrl {
   const typed = input.trim();
   if (!typed) return { ok: false, error: 'Enter the machine address, for example 192.168.1.10.' };
 
@@ -56,7 +59,7 @@ export function normalizeBaseUrl(input: string): NormalizedUrl {
   if (hasExplicitPort(text)) {
     port = url.port || (url.protocol === 'http:' ? '80' : '443');
   } else {
-    port = url.protocol === 'http:' ? String(DEFAULT_UNSLOTH_PORT) : '';
+    port = url.protocol === 'http:' ? String(defaultPort) : '';
   }
   if (port === '0') return { ok: false, error: 'Port 0 is not a usable port.' };
 

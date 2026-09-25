@@ -192,6 +192,41 @@ function StepChart({ session, round }: { session: SessionView; round: RoundView 
   );
 }
 
+/** Frames encoded against time, one line per machine, from ffmpeg's progress. */
+function FrameChart({ session, round }: { session: SessionView; round: RoundView }) {
+  const { options, data } = useMemo(() => {
+    const series: Array<Array<[number, number | null]>> = [];
+    const specs: uPlot.Series[] = [{}];
+    for (const machine of session.machines) {
+      const run = round.runs.find((r) => r.machineId === machine.id);
+      series.push(
+        (run?.command?.timeline ?? []).map(([ms, frame]) => [Math.round(ms) / 1000, frame]),
+      );
+      specs.push({ label: machine.name, stroke: machine.color, width: 2, spanGaps: true });
+    }
+    const options: Omit<uPlot.Options, 'width'> = {
+      height: 240,
+      series: specs,
+      scales: { x: { time: false } },
+      axes: [
+        { ...AXIS, label: 'seconds since ffmpeg started', labelSize: 18 },
+        { ...AXIS, label: 'frames', labelSize: 18 },
+      ],
+      legend: { show: true },
+      cursor: { drag: { x: false, y: false } },
+    };
+    return { options, data: alignSeries(series) };
+  }, [session, round]);
+  return (
+    <Chart
+      options={options}
+      data={data}
+      label="Frames encoded against time for each machine"
+      testId="frame-chart"
+    />
+  );
+}
+
 /**
  * Where each machine's time went in a transcription: sending the file, then processing it, on
  * one scale so the bars compare directly.
@@ -255,6 +290,8 @@ export function RaceCharts({
         <PhaseBars session={session} round={round} />
       ) : session.workload === 'image' ? (
         <StepChart session={session} round={round} />
+      ) : session.workload === 'command' ? (
+        <FrameChart session={session} round={round} />
       ) : (
         <RaceChart session={session} round={round} />
       )}

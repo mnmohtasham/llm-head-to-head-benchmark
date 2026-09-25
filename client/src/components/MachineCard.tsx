@@ -105,6 +105,26 @@ export function MachineCard({
           <dt>Key</dt>
           <dd className="mono">{machine.apiKeyMasked ?? 'none'}</dd>
         </div>
+        {machine.agentUrl ? (
+          <div>
+            <dt>Agent</dt>
+            <dd data-testid="agent-line">
+              {!probe?.agent
+                ? `${machine.agentUrl}, not probed yet`
+                : probe.agent.health
+                  ? [
+                      probe.agent.health.ffmpeg
+                        ? `ffmpeg ${probe.agent.health.ffmpeg.version}`
+                        : 'no ffmpeg',
+                      probe.agent.health.encoders.join(', ') || null,
+                      `${probe.agent.health.clips.length} ${probe.agent.health.clips.length === 1 ? 'clip' : 'clips'}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  : probe.agent.error}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt>Probed</dt>
           <dd>
