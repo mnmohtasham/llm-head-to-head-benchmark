@@ -7,8 +7,10 @@ import {
   type MachineStatusView,
 } from '@duel/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { z } from 'zod';
 import type { LoadManager, LoadTimings } from '../loads';
 import { readModelStatus, type ModelCatalog } from '../models';
+import { startChatReload } from '../restore';
 import type { MachineStore, StoredMachine } from '../store';
 import { UnslothClient } from '../unsloth';
 
@@ -37,6 +39,26 @@ export function registerModelRoutes(
       checkedAt: new Date().toISOString(),
     };
   };
+
+  /**
+   * Loads the machine's chat model again with more request slots, keeping its other settings:
+   * pre-flight's shortcut when a throughput race asks for more requests than the model serves.
+   */
+  app.post<IdParams>('/api/machines/:id/reload-slots', async (request, reply) => {
+    const machine = store.get(request.params.id);
+    if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    const parsed = z.object({ slots: z.number().int().min(1).max(64) }).safeParse(request.body);
+    if (!parsed.success) return fail(reply, 400, 'validation', 'Ask for 1 to 64 slots.');
+    const { status, error } = await readModelStatus(machine);
+    if (!status?.activeModel) {
+      return fail(reply, 409, 'no_model', error ?? `No model is loaded on ${machine.name}.`);
+    }
+    const started = await startChatReload({ catalog, loads, store }, machine, status, {
+      parallelSlots: parsed.data.slots,
+    });
+    if ('error' in started) return fail(reply, 409, 'reload', started.error);
+    return reply.code(202).send({ job: started.job });
+  });
 
   app.get<IdParams & { Querystring: { refresh?: string } }>(
     '/api/machines/:id/models',

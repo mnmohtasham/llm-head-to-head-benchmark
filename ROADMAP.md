@@ -530,7 +530,7 @@ Automated tests
 - Unit: throughput aggregation; queue accounting.
 - End-to-end, also the manual demo script: a throughput run on the mocks with four concurrent requests.
 
-Real-machine script
+Real-machine script (run on the RTX machine alone, whose model was already loaded with four slots)
 1. Load the model with four slots on both machines, then run with one, two and four concurrent requests.
 2. Record the throughput curve in the phase record.
 

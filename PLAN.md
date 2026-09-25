@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.9, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.10, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -12,7 +12,7 @@ records prefill, fixed length, pre-flight and the cache measurements of phase 6,
 records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 records the report as
 built in phase 8, in section 7. v2.8 records transcription as built in phase 9, in sections 2.4, 4.2,
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
-2.5, 4.3, 6 and 9.
+2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9.
 
 ## 0. Decisions so far
 
@@ -328,8 +328,18 @@ Flags on a run: `context_truncated` seen; `cache_n > 0` or `cached_tokens > 0` (
 coalesced-read ratio; `stop_reason = length` (hit `max_tokens`); thinking requested but none arrived on
 its own; speculative decoding engaged (`draft_n > 0`); the loaded model changed during the run.
 
-Concurrency mode (later): N simultaneous requests per machine; needs `n_parallel >= N` at load; reports
-aggregate tok/s and the per-request TTFT distribution.
+Throughput mode (built in phase 11): N identical requests per machine, sent in the same tick, each with
+its own `cancel_id` (the round's id and its number). The first streams into the pane; each is measured
+on its own. Aggregate tok/s is every finished request's output tokens over the time from the first
+request sent to the last done, so prompt processing and slot waits count against it. Also the median
+request speed, TTFT median and 95th percentile (nearest rank), and the admission queue read from the
+monitor's `queue` every 250 ms: peak active, peak queued, and the time at least one request waited.
+Energy covers the whole batch, and tokens per joule uses every request's tokens. Pre-flight takes the
+slots from `parallel_slots` in the status, else `total_slots` in `/v1/props`; more requests than slots
+is an error with a "reload with N slots" shortcut, unknown slots a warning, and a prompt plus Max
+tokens over the context divided by the slots a warning, since llama.cpp may split the context. On
+the RTX machine, with 4 slots and a 15,360-token context, `/v1/props` also reported `n_ctx` 15,360.
+Sessions are schema version 8: `mode` and `concurrency` in the text config, `throughput` on each run.
 
 ### 4.2 Transcription
 
@@ -486,6 +496,8 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   contentType, seconds}`; `GET /api/audio/clip.wav` serves the bundled clip; `GET /api/machines/:id/stt`
   answers a machine's STT status. `POST /api/preflight` and `POST /api/sessions` take `workload`, which
   defaults to `text`.
+- `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
+  slots and its other settings, through the load manager, and answers 202 with the load job.
 - Images (phase 10): `GET /api/machines/:id/image` answers the image status and the image models on disk
   with their complete GGUF files; `GET /api/sessions/:id/images/:runId` serves a kept image. Sessions are
   schema version 7, with `image` on each run and `imageBefore`, `imageAfter` and `restore` in the
@@ -542,7 +554,8 @@ monitor rows and cancel by id, STT with per-engine availability by profile (no w
 profile), loads that refuse models not on disk, idle unload, a processing delay per audio second by
 profile and engine, and transcripts with deterministic word errors, image loads that answer at once and finish in the
 background, the chat and image hand-off, step progress that follows Unsloth's phases, a failing load,
-and a PNG per seed, image progress at a fixed steps per second, and telemetry that ramps during
+a PNG per seed, and request slots with a first-in, first-out admission queue and a slowdown per
+busy slot, image progress at a fixed steps per second, and telemetry that ramps during
 runs. It can also replay recorded fixtures with their original timing. `npm run demo` starts two mocks on
 different ports plus the app.
 

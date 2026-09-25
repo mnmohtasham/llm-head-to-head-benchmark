@@ -221,6 +221,7 @@ export function PreflightPanel({
   errors,
   warnings,
   notes = [],
+  action,
   clear,
   details,
   raceAnyway,
@@ -235,6 +236,8 @@ export function PreflightPanel({
   warnings: PreflightIssue[];
   /** Things to know that never hold a race back. */
   notes?: PreflightIssue[];
+  /** A button or note after an issue, such as a shortcut that fixes it. */
+  action?: (issue: PreflightIssue) => ReactNode;
   /** What an all-clear means for this workload. */
   clear: string;
   details: string;
@@ -269,7 +272,7 @@ export function PreflightPanel({
             <ul className="start-check" data-testid="start-blockers">
               {errors.map((issue) => (
                 <li key={issue.text} className="field-error">
-                  {issue.text}
+                  {issue.text} {action?.(issue)}
                 </li>
               ))}
             </ul>

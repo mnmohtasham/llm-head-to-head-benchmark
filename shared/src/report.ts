@@ -1,4 +1,4 @@
-import type { MetricUnit } from './compare';
+import { metricKind, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { imagePrompt } from './images';
 import { PRESETS } from './presets';
@@ -160,6 +160,28 @@ const ROUND_CELLS = {
       ];
     },
   },
+  throughput: {
+    names: ['aggregate (tok/s)', 'median first token (ms)', 'requests done'],
+    cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
+      const t = run?.throughput ?? null;
+      const state = !run ? 'n/a' : run.state === 'queued' ? 'waiting' : run.state;
+      const done = t ? t.requests.filter((r) => r.state === 'done').length : 0;
+      return [
+        run?.state === 'done' && t
+          ? {
+              value: t.aggregateTokPerSec,
+              text: `${formatValue(t.aggregateTokPerSec, 'tok/s')} together`,
+            }
+          : { value: state, text: state },
+        {
+          value: t?.ttftMedianMs ?? null,
+          text:
+            t?.ttftMedianMs === null || !t ? '' : `first token ${formatMsValue(t.ttftMedianMs)}`,
+        },
+        { value: t ? done : null, text: t ? `${done} of ${t.concurrency} done` : '' },
+      ];
+    },
+  },
   image: {
     names: ['time (ms)', 'speed (steps/s)', 'first step (ms)'],
     cells: (run: RoundView['runs'][number] | undefined): TableCell[] => {
@@ -187,7 +209,7 @@ const ROUND_CELLS = {
 } as const;
 
 function roundRow(session: SessionView, round: RoundView, label: string, key: string): TableRow {
-  const spec = ROUND_CELLS[session.workload];
+  const spec = ROUND_CELLS[metricKind(session)];
   const cells: TableCell[] = [];
   for (const machine of session.machines) {
     cells.push(...spec.cells(round.runs.find((r) => r.machineId === machine.id)));
@@ -199,7 +221,7 @@ function roundRow(session: SessionView, round: RoundView, label: string, key: st
 
 /** One row per round; each machine has three cells, which depend on the workload. */
 export function roundTable(session: SessionView): TableModel {
-  const names = ROUND_CELLS[session.workload].names;
+  const names = ROUND_CELLS[metricKind(session)].names;
   return {
     title: 'Rounds',
     columns: [
@@ -496,6 +518,14 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
       win: (w, r) => `${w} uses ${r}× less energy per audio minute`,
     },
     imageTime: { noun: 'Time per image', win: (w, r) => `${w} makes an image ${r}× faster` },
+    aggregate: {
+      noun: 'Aggregate output speed',
+      win: (w, r) => `${w} delivers ${r}× more tokens per second in total`,
+    },
+    ttftMedian: {
+      noun: 'Time to first token under load',
+      win: (w, r) => `${w} reaches the first token ${r}× sooner under load`,
+    },
     stepsPerSec: {
       noun: 'Denoising speed',
       win: (w, r) => `${w} runs ${r}× more denoising steps per second`,
@@ -644,6 +674,11 @@ export function toMarkdown(session: SessionView): string {
       `- ${cfg.prefill === 'cold' ? 'Cold' : 'Warm'} prefill: ${cfg.prefill === 'cold' ? "a fresh line started each round's prompt and the seed was sent, so no cached prompt helped" : 'the same prompt every round without a seed, so later rounds could reuse the cache'}`,
       `- Sampling: temperature ${sampling.temperature}, top-p ${sampling.topP}, top-k ${sampling.topK}, min-p ${sampling.minP}, repetition penalty ${sampling.repetitionPenalty}${cfg.prefill === 'cold' ? `, seed ${sampling.seed}` : ''}`,
     );
+    if (cfg.mode === 'throughput') {
+      lines.push(
+        `- Throughput: ${cfg.concurrency} identical requests sent at once to each machine every round. The aggregate speed is every finished request's output tokens over the time from the first sent to the last done, so it includes each request's prompt processing and any wait for a slot.`,
+      );
+    }
   } else if (session.workload === 'image') {
     const cfg = session.config;
     const prompt = imagePrompt(cfg);
@@ -678,11 +713,13 @@ export function toMarkdown(session: SessionView): string {
     '',
     '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
     `- A machine wins a row only when its median is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
-    session.workload === 'image'
-      ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
-      : session.workload === 'transcribe'
-        ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
-        : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
+    metricKind(session) === 'throughput'
+      ? '- Ratio headlines cover aggregate output speed, time to first token under load and tokens per joule, for the same number of requests at once on every machine.'
+      : session.workload === 'image'
+        ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
+        : session.workload === 'transcribe'
+          ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
+          : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
     '- Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, read twice a second and added up over the run.',
     '',
     'Made with Model Duel.',

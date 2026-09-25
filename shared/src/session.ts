@@ -23,10 +23,10 @@ import { imageConfigSchema, imagePrompt, type ImageConfig, type ImageStatus } fr
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
  * full sampling and per-round nonce; version 4 telemetry; version 5 blind votes and each run's
- * token timeline; version 6 the transcription workload; version 7 the image workload. Older files
- * are migrated on read.
+ * token timeline; version 6 the transcription workload; version 7 the image workload; version 8
+ * throughput mode for text. Older files are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 7;
+export const SESSION_SCHEMA_VERSION = 8;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -271,6 +271,8 @@ export interface SessionSummary {
     /** Transcription only: audio seconds per processing second, and the word error rate. */
     rtf: number | null;
     wer: number | null;
+    /** Throughput mode: every request's tokens per second, added up. */
+    aggregateTokPerSec: number | null;
     /** Image only: time for one image, and denoising steps per second. */
     imageMs: number | null;
     stepsPerSec: number | null;
@@ -359,6 +361,7 @@ export function migrateSession(value: StoredSession): StoredSession {
       requestedAtMs: run.requestedAtMs ?? null,
       transcription: run.transcription ?? null,
       image: run.image ?? null,
+      throughput: run.throughput ?? null,
     })),
   });
   const provenance = (old.provenance ?? []).map((p) => ({
@@ -369,6 +372,20 @@ export function migrateSession(value: StoredSession): StoredSession {
     imageAfter: p.imageAfter ?? null,
     restore: p.restore ?? null,
   }));
+  if (value.workload === 'text' && (old.schemaVersion ?? 0) >= 6) {
+    return {
+      ...value,
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      provenance,
+      config: {
+        ...value.config,
+        mode: value.config.mode ?? 'latency',
+        concurrency: value.config.concurrency ?? 1,
+      },
+      rounds: value.rounds.map(round),
+      warmup: value.warmup ? round(value.warmup) : null,
+    };
+  }
   if (value.workload === 'transcribe' || value.workload === 'image') {
     return {
       ...value,
@@ -385,6 +402,8 @@ export function migrateSession(value: StoredSession): StoredSession {
     provenance,
     config: {
       ...(oldConfig as TextConfig),
+      mode: oldConfig.mode ?? 'latency',
+      concurrency: oldConfig.concurrency ?? 1,
       preset: oldConfig.preset ?? 'custom',
       prefill: oldConfig.prefill ?? 'warm',
       sampling: {
@@ -477,6 +496,7 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
         decodeTokPerSec: pick((run) => run.client?.decodeTokPerSec),
         rtf: pick((run) => run.transcription?.rtf),
         wer: pick((run) => run.transcription?.wer?.wer),
+        aggregateTokPerSec: pick((run) => run.throughput?.aggregateTokPerSec),
         imageMs: pick((run) => run.image?.totalMs),
         stepsPerSec: pick((run) => run.image?.stepsPerSec),
       };

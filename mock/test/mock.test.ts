@@ -126,3 +126,36 @@ describe('the control routes', () => {
     ]);
   });
 });
+
+describe('request slots', () => {
+  it('queue requests beyond the slots, first in first out, and the monitor shows it', async () => {
+    await control('/__mock/config', {
+      stream: { startupMs: 20, tokenMs: 20, jitterMs: 0, reasoningTokens: 0, answerTokens: 10 },
+    });
+    const ask = (label: string) =>
+      fetch(`${mock.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'x',
+          stream: true,
+          enable_thinking: false,
+          messages: [{ role: 'user', content: label }],
+        }),
+      }).then(async (response) => {
+        await response.text();
+        return { label, at: performance.now() };
+      });
+    const first = ask('first');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = ask('second');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const busy = await get('/api/inference/monitor', KEY);
+    expect(busy.body.queue).toEqual({ capacity: 1, active: 1, queued: 1, free: 0 });
+    const [a, b] = await Promise.all([first, second]);
+    // The second waited for the first, so it ended a whole request later.
+    expect(b.at - a.at).toBeGreaterThan(150);
+    const idle = await get('/api/inference/monitor', KEY);
+    expect(idle.body.queue).toEqual({ capacity: 1, active: 0, queued: 0, free: 1 });
+  });
+});

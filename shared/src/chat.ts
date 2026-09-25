@@ -416,6 +416,11 @@ export const PREFILL_MODES = ['cold', 'warm'] as const;
 export type PrefillMode = (typeof PREFILL_MODES)[number];
 
 /** What a text run asks every machine for. */
+/** Latency sends one request per machine; throughput sends several at once and adds them up. */
+export const TEXT_MODES = ['latency', 'throughput'] as const;
+export type TextMode = (typeof TEXT_MODES)[number];
+export const MAX_CONCURRENCY = 32;
+
 export const textConfigSchema = z
   .object({
     preset: z.enum(PRESET_IDS).default('custom'),
@@ -430,6 +435,14 @@ export const textConfigSchema = z
     reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
     prefill: z.enum(PREFILL_MODES).default('cold'),
     sampling: samplingSchema.prefault({}),
+    mode: z.enum(TEXT_MODES).default('latency'),
+    /** Requests in flight at once on each machine, in throughput mode. */
+    concurrency: z
+      .number()
+      .int('Use a whole number of requests.')
+      .min(1, 'Send at least 1 request.')
+      .max(MAX_CONCURRENCY, `Send at most ${MAX_CONCURRENCY} requests at once.`)
+      .default(4),
   })
   .refine((config) => config.preset !== 'custom' || config.prompt.length > 0, {
     message: 'Write a prompt.',
@@ -456,6 +469,46 @@ export interface LiveMetrics {
   decodeTokPerSec: number | null;
   /** Image runs: the denoising step reached, while the image is made. */
   steps?: { done: number; total: number } | null;
+  /** Throughput runs: requests finished out of those sent. */
+  requests?: { done: number; total: number } | null;
+}
+
+/** One of the requests a machine served at once in throughput mode. */
+export interface RequestResult {
+  index: number;
+  state: RunState;
+  error: string | null;
+  /** When it left, after the first request of the batch. */
+  sendOffsetMs: number;
+  ttftMs: number | null;
+  totalMs: number | null;
+  outputTokens: number | null;
+  decodeTokPerSec: number | null;
+}
+
+/** The admission queue as the monitor showed it while the requests ran. */
+export interface QueueObservation {
+  capacity: number | null;
+  maxActive: number;
+  maxQueued: number;
+  /** How long at least one request was waiting for a slot. */
+  queuedMs: number;
+  samples: number;
+}
+
+/** What a machine delivered with several requests in flight at once. */
+export interface ThroughputResult {
+  concurrency: number;
+  requests: RequestResult[];
+  /** Output tokens of every finished request over the time from the first sent to the last done. */
+  aggregateTokPerSec: number | null;
+  outputTokens: number;
+  totalMs: number | null;
+  ttftMedianMs: number | null;
+  ttftP95Ms: number | null;
+  /** The typical request's own decode speed. */
+  perRequestTokPerSec: number | null;
+  queue: QueueObservation | null;
 }
 
 export interface RunView {
@@ -496,6 +549,8 @@ export interface RunView {
   transcription: TranscriptionResult | null;
   /** The image workload's result; null otherwise. */
   image: ImageResult | null;
+  /** Throughput mode: every request of the batch, added up; null in latency mode. */
+  throughput: ThroughputResult | null;
 }
 
 export interface RunTelemetry {

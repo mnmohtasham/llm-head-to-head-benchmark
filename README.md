@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 10 of [ROADMAP.md](ROADMAP.md), milestone M3.** The app registers machines, probes what each one
+**Status: phase 11 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -12,8 +12,8 @@ check that stops races that would not be fair. Every machine's GPU, power, CPU, 
 temperature show live, and every run gets its energy. A finished race reads as a scoreboard with
 charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
 Speech-to-text races the same way, with real-time factor and word error rate, and so does image
-generation, with a live step timeline and the images side by side. Throughput mode and a command
-agent come next. [PLAN.md](PLAN.md) is the full specification.
+generation, with a live step timeline and the images side by side. Throughput mode measures how
+many tokens a machine delivers with several requests at once. A command agent comes next. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -107,6 +107,24 @@ them side by side. Pick one machine for a single run.
   more than 64 cached prompt tokens.
 - **Sampling** holds temperature, top-p, top-k, min-p, repetition penalty and seed. Every field
   goes to every machine, so server defaults can never differ.
+
+### Throughput mode
+
+**Mode** on the Text tab switches from **Latency**, one request per machine, to **Throughput**:
+each machine gets **Requests at once** copies of the prompt in the same moment, as a server would
+from several users.
+
+- A model serves as many requests at once as it was loaded with slots. Pre-flight stops a race
+  that asks for more, since the rest would only wait in Unsloth's queue, and offers **Reload with N
+  slots**, which loads the same model again with the same settings and more slots.
+- Each pane shows the **aggregate** speed, every request's tokens over the time from the first sent
+  to the last done, and how many requests are done. The text is the first request's; the others run
+  alongside it.
+- The comparison adds each request's own speed, the median and 95th-percentile time to first
+  token, and how long a request waited for a slot, read from Unsloth's monitor. Under
+  **Measurements** a table lists every request.
+- Run the same prompt at 1, 2 and 4 requests at once to see the curve: the total rises while each
+  request slows.
 
 ### Live hardware and energy
 
@@ -370,6 +388,10 @@ depend only on the seed.
 curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
      -d '{"image": {"loadMs": 3000, "stepMs": 200, "decodeMs": 500, "failNextLoad": "Out of memory"}}'
 ```
+
+Chat requests take the loaded model's slots; extra ones wait first in, first out, and each busy
+slot slows every stream by `stream.slotSlowdown` (0.3 by default). `slotCapacity` makes the mock
+serve fewer requests at once than it reports, to fill the queue on purpose.
 
 Other stream settings are `jitterMs`, `tokensPerChunk`, `keepaliveEveryMs`, `errorMessage`,
 `toolFrames` (Unsloth's UI frames, which clients must ignore), `truncated` (the prompt was cut to
