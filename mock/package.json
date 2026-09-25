@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/server.ts",
-    "./cloud": "./src/cloud.ts"
+    "./cloud": "./src/cloud.ts",
+    "./share": "./src/share.ts"
   },
   "dependencies": {
     "@duel/shared": "*",

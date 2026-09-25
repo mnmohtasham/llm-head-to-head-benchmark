@@ -19,6 +19,8 @@ import type {
   SessionRequest,
   SessionSummary,
   SessionView,
+  ShareOptions,
+  ShareRecord,
   Statistic,
   AgentHealth,
   ImageModelView,
@@ -42,6 +44,27 @@ export interface PresetView {
   description: string;
   words: number;
   preview: string;
+}
+
+/** A record the results service took, as the server remembers it. */
+export interface SentShare {
+  at: string;
+  host: string;
+  sha256: string;
+  id: string | null;
+  url: string | null;
+  status?: number;
+  message?: string | null;
+}
+
+/** Sharing settings as the server shows them: never the token or the signing key. */
+export interface ShareSettingsView {
+  endpoint: string | null;
+  hasToken: boolean;
+  tokenMasked: string | null;
+  publicKey: string;
+  fingerprint: string;
+  sent: Record<string, SentShare>;
 }
 
 export class ApiError extends Error {
@@ -110,6 +133,21 @@ const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
   runs: () => call<{ runs: DeviceRun[] }>('GET', '/api/runs'),
+  shareSettings: () => call<ShareSettingsView>('GET', '/api/share/settings'),
+  updateShareSettings: (input: { endpoint: string | null; token?: string | null }) =>
+    call<ShareSettingsView>('PUT', '/api/share/settings', input),
+  sharePreview: (input: { sessionId: string; machineId: string; options: ShareOptions }) =>
+    call<{ record: ShareRecord; sha256: string; endpoint: string | null }>(
+      'POST',
+      '/api/share/preview',
+      input,
+    ),
+  shareSend: (input: {
+    sessionId: string;
+    machineId: string;
+    options: ShareOptions;
+    sha256: string;
+  }) => call<SentShare>('POST', '/api/share/send', input),
   setStatistic: (id: string, statistic: Statistic) =>
     call<SessionView>('POST', `/api/sessions/${encodeURIComponent(id)}/statistic`, { statistic }),
   createMachine: (input: MachineCreateInput) => call<MachineView>('POST', '/api/machines', input),

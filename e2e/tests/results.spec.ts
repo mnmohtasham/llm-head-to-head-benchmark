@@ -1,13 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { DEMO_MACHINES } from '../../scripts/demo-config';
-import { E2E_MOCK_PORTS } from '../ports';
+import { E2E_MOCK_PORTS, E2E_SHARE_PORT } from '../ports';
 
 // Phase 15 demo script: after a race, find each machine's run in the Results tab, filter and sort
 // the table, pick columns, and download what it shows.
 const [MAC, LINUX] = DEMO_MACHINES;
 const MOCKS = [`http://127.0.0.1:${E2E_MOCK_PORTS[0]}`, `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`];
 const MARKER = 'results-spec: why do GPUs have more memory bandwidth than CPUs?';
+const SERVICE = `http://127.0.0.1:${E2E_SHARE_PORT}`;
 
 test.describe.configure({ mode: 'serial' });
 
@@ -80,6 +81,8 @@ test.beforeAll(async ({ request }) => {
 });
 test.afterAll(async ({ request }) => {
   await reset(request);
+  await request.put('/api/share/settings', { data: { endpoint: null } });
+  await request.post(`${SERVICE}/__mock/reset`);
   for (const id of added) await request.delete(`/api/machines/${id}`);
 });
 
@@ -197,4 +200,55 @@ test('downloads the rows shown as CSV, and fits a phone screen', async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(rows(page)).toHaveCount(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test('sends one run to the results service, after showing exactly what goes', async ({
+  page,
+  request,
+}) => {
+  await request.post(`${SERVICE}/__mock/reset`);
+  await page.goto('/#/results');
+  await page.getByLabel('Search').fill('results-spec');
+  await page.getByRole('button', { name: 'Results service' }).click();
+  const settings = page.getByTestId('share-settings');
+  await settings.getByLabel('Service address').fill('http://results.example.com/api/runs');
+  await expect(settings.getByText('Use https.')).toBeVisible();
+  await settings.getByLabel('Service address').fill(`${SERVICE}/api/runs`);
+  await expect(settings.getByTestId('share-fingerprint')).toHaveText(/^[0-9a-f]{16}$/);
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await expect(settings).toBeHidden();
+
+  await row(page, LINUX.name).getByTestId('row-send').click();
+  const dialog = page.getByTestId('share-dialog');
+  const shown = dialog.getByTestId('share-record');
+  await expect(shown).toContainText('"format": "model-duel-run"');
+  await expect(shown).toContainText('NVIDIA GeForce RTX 5090');
+  // Neither the machine's name nor the custom prompt is in the record.
+  await expect(shown).not.toContainText(LINUX.name);
+  await expect(shown).not.toContainText('memory bandwidth than CPUs');
+  await dialog.getByLabel('Include my prompt').check();
+  await expect(shown).toContainText('memory bandwidth than CPUs');
+  await dialog.getByLabel('Include my prompt').uncheck();
+  await expect(shown).not.toContainText('memory bandwidth than CPUs');
+  await dialog.getByLabel('Name shown publicly (optional)').fill('E2E bench');
+  await expect(shown).toContainText('"displayName": "E2E bench"');
+
+  await dialog.getByRole('button', { name: `Send to 127.0.0.1:${E2E_SHARE_PORT}` }).click();
+  await expect(dialog.getByTestId('share-sent')).toContainText('took the record: Thank you.');
+  await expect(dialog.getByRole('link', { name: /Open it on/ })).toHaveAttribute(
+    'href',
+    new RegExp(`^${SERVICE}/runs/`),
+  );
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await expect(row(page, LINUX.name).getByTestId('row-send')).toHaveText('Sent ✓');
+
+  const received = (await (await request.get(`${SERVICE}/__mock/received`)).json()) as Array<{
+    record: { displayName: string; raceId: string; settings: { promptText: string | null } };
+  }>;
+  expect(received).toHaveLength(1);
+  expect(received[0]?.record).toMatchObject({
+    displayName: 'E2E bench',
+    raceId: sessionId,
+    settings: { promptText: null },
+  });
 });

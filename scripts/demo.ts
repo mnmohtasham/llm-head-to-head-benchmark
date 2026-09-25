@@ -19,6 +19,7 @@ import {
   DEMO_CLOUDS,
   DEMO_MACHINES,
   DEMO_MOCK_PORTS,
+  DEMO_SHARE_PORT,
 } from './demo-config';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -29,6 +30,7 @@ const { values } = parseArgs({
     'mock-ports': { type: 'string', default: DEMO_MOCK_PORTS.join(',') },
     'agent-ports': { type: 'string', default: DEMO_AGENT_PORTS.join(',') },
     'cloud-ports': { type: 'string', default: DEMO_CLOUD_PORTS.join(',') },
+    'share-port': { type: 'string', default: String(DEMO_SHARE_PORT) },
     'data-dir': { type: 'string', default: '.demo-data' },
     'no-seed': { type: 'boolean', default: false },
     'keep-data': { type: 'boolean', default: false },
@@ -39,6 +41,7 @@ const appPort = Number(values.port);
 const mockPorts = values['mock-ports'].split(',').map(Number);
 const agentPorts = values['agent-ports'].split(',').map(Number);
 const cloudPorts = values['cloud-ports'].split(',').map(Number);
+const sharePort = Number(values['share-port']);
 const dataDir = path.resolve(root, values['data-dir']);
 const children: ChildProcess[] = [];
 let stopping = false;
@@ -76,6 +79,20 @@ async function waitFor(url: string, label: string): Promise<void> {
   while (Date.now() < deadline) {
     try {
       if ((await fetch(url)).ok) return;
+    } catch {
+      // not up yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  process.stderr.write(`[demo] ${label} did not start at ${url}.\n`);
+  stopAll(1);
+}
+
+async function waitForPost(url: string, label: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    try {
+      if ((await fetch(url, { method: 'POST' })).ok) return;
     } catch {
       // not up yet
     }
@@ -159,6 +176,7 @@ DEMO_CLOUDS.forEach((cloud, index) => {
     cloud.apiKey,
   ]);
 });
+start('mock results service', 'mock/dist/index.js', ['--share', '--port', String(sharePort)]);
 start('app', 'server/dist/index.js', ['--port', String(appPort), '--data-dir', dataDir]);
 
 await Promise.all(
@@ -188,6 +206,7 @@ await Promise.all(
     stopAll(1);
   }),
 );
+await waitForPost(`http://127.0.0.1:${sharePort}/__mock/reset`, 'mock results service');
 const app = `http://127.0.0.1:${appPort}`;
 await waitFor(`${app}/api/health`, 'app');
 
@@ -206,6 +225,12 @@ if (!values['no-seed']) {
     })) as { id: string };
     await post(`${app}/api/machines/${created.id}/probe`);
   }
+  // The Results tab's Send button goes to the fake results service.
+  await fetch(`${app}/api/share/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint: `http://127.0.0.1:${sharePort}/api/runs` }),
+  });
   for (const [index, cloud] of DEMO_CLOUDS.entries()) {
     if (existing.some((m) => m.name === cloud.name)) continue;
     const baseUrl = `http://127.0.0.1:${cloudPorts[index]}`;
@@ -236,6 +261,7 @@ process.stdout.write(
       (c, i) =>
         `  ${c.name} (fake ${c.provider} API, ${c.model}) at http://127.0.0.1:${cloudPorts[i]}`,
     ),
+    `  Fake results service at http://127.0.0.1:${sharePort}/api/runs; what it took: GET /__mock/received`,
     'Break a mock to see the error messages, for example a revoked key:',
     `  curl -X POST http://127.0.0.1:${mockPorts[1]}/__mock/config -H 'content-type: application/json' -d '{"rejectKey":true}'`,
     `  curl -X POST http://127.0.0.1:${mockPorts[1]}/__mock/reset`,

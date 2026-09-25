@@ -1,0 +1,633 @@
+{
+  "$id": "urn:model-duel:schema:run:1",
+  "title": "Model Duel run record",
+  "description": "One machine's run in one race, as Model Duel sends it to a results service: the record, its SHA-256 and the sender's Ed25519 signature. See docs/share-api.md.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "record": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "model-duel-run"
+        },
+        "formatVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "submissionId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "raceId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "raceDate": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "generator": {
+          "type": "object",
+          "properties": {
+            "app": {
+              "type": "string",
+              "const": "model-duel"
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "build": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["app", "version", "build"],
+          "additionalProperties": false
+        },
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 60
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "race": {
+          "type": "object",
+          "properties": {
+            "workload": {
+              "type": "string",
+              "enum": ["text", "transcribe", "image", "command"]
+            },
+            "kind": {
+              "type": "string",
+              "enum": ["text", "throughput", "transcribe", "image", "command"]
+            },
+            "state": {
+              "type": "string",
+              "enum": ["done", "partial"]
+            },
+            "rounds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "roundsDone": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "warmup": {
+              "type": "boolean"
+            },
+            "sequencing": {
+              "type": "string",
+              "enum": ["concurrent", "sequential"]
+            },
+            "statistic": {
+              "type": "string",
+              "enum": ["median", "mean"]
+            },
+            "machines": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          },
+          "required": [
+            "workload",
+            "kind",
+            "state",
+            "rounds",
+            "roundsDone",
+            "warmup",
+            "sequencing",
+            "statistic",
+            "machines"
+          ],
+          "additionalProperties": false
+        },
+        "machine": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["local", "cloud"]
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["openai", "anthropic", "gemini"]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gpus": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "memoryGb": {
+                    "type": ["number", "null"]
+                  }
+                },
+                "required": ["name", "memoryGb"],
+                "additionalProperties": false
+              }
+            },
+            "gpuMemoryGb": {
+              "type": ["number", "null"]
+            },
+            "platform": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memoryGb": {
+              "type": ["number", "null"]
+            },
+            "os": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "studio": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "llamaCpp": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "gpus",
+            "gpuMemoryGb",
+            "platform",
+            "memoryGb",
+            "os",
+            "studio",
+            "llamaCpp"
+          ],
+          "additionalProperties": false
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "quant": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "engine": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contextLength": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kvCache": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gpuLayers": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "totalLayers": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "slots": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "speculative": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 60
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gpuMemoryMode": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "quant",
+            "engine",
+            "contextLength",
+            "kvCache",
+            "gpuLayers",
+            "totalLayers",
+            "slots",
+            "speculative",
+            "gpuMemoryMode"
+          ],
+          "additionalProperties": false
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "promptText": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "promptTokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "prefill": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["cold", "warm"]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "thinking": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxTokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "concurrency": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sampling": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": ["number", "null"]
+                    },
+                    "topP": {
+                      "type": ["number", "null"]
+                    },
+                    "topK": {
+                      "type": ["number", "null"]
+                    },
+                    "minP": {
+                      "type": ["number", "null"]
+                    },
+                    "repetitionPenalty": {
+                      "type": ["number", "null"]
+                    },
+                    "seed": {
+                      "type": ["number", "null"]
+                    }
+                  },
+                  "required": ["temperature", "topP", "topK", "minP", "repetitionPenalty", "seed"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "summary": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "prompt",
+            "promptText",
+            "promptTokens",
+            "prefill",
+            "thinking",
+            "maxTokens",
+            "concurrency",
+            "sampling",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        "metrics": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9]{1,40}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "unit": {
+                "type": "string",
+                "maxLength": 12
+              },
+              "better": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["lower", "higher"]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "median": {
+                "type": ["number", "null"]
+              },
+              "mean": {
+                "type": ["number", "null"]
+              },
+              "min": {
+                "type": ["number", "null"]
+              },
+              "max": {
+                "type": ["number", "null"]
+              },
+              "stdev": {
+                "type": ["number", "null"]
+              },
+              "values": {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": ["number", "null"]
+                }
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "unit",
+              "better",
+              "n",
+              "median",
+              "mean",
+              "min",
+              "max",
+              "stdev",
+              "values"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "finish": {
+          "anyOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "format",
+        "formatVersion",
+        "submissionId",
+        "raceId",
+        "raceDate",
+        "generator",
+        "displayName",
+        "race",
+        "machine",
+        "model",
+        "settings",
+        "metrics",
+        "finish"
+      ],
+      "additionalProperties": false
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519"
+        },
+        "publicKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      },
+      "required": ["algorithm", "publicKey", "value"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["record", "sha256", "signature"],
+  "additionalProperties": false
+}

@@ -1,8 +1,13 @@
-/** Writes docs/result-format.schema.json from the result format's own definition. */
+/** Writes the JSON Schemas in docs/ from the formats' own definitions. */
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { resultJsonSchema } from '@duel/shared';
+import { resultJsonSchema, shareJsonSchema } from '@duel/shared';
 
-const file = fileURLToPath(new URL('../docs/result-format.schema.json', import.meta.url));
-await writeFile(file, `${JSON.stringify(resultJsonSchema(), null, 2)}\n`);
-process.stdout.write(`wrote ${file}\n`);
+for (const [name, schema] of [
+  ['result-format.schema.json', resultJsonSchema()],
+  ['share-format.schema.json', shareJsonSchema()],
+] as const) {
+  const file = fileURLToPath(new URL(`../docs/${name}`, import.meta.url));
+  await writeFile(file, `${JSON.stringify(schema, null, 2)}\n`);
+  process.stdout.write(`wrote ${file}\n`);
+}
