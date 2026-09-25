@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 14 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 15 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -16,7 +16,8 @@ generation, with a live step timeline and the images side by side. Throughput mo
 many tokens a machine delivers with several requests at once, and a small agent races video encodes
 and other allowlisted commands. Every race is kept as a JSON result file in a documented format, ready
 to share. Models from OpenAI, Anthropic and Google Gemini can join text races as references, picked
-from each provider's own model list. [PLAN.md](PLAN.md) is the full specification.
+from each provider's own model list. The **Results** tab puts every machine's run from every race in
+one table to filter, sort and download. [PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -402,6 +403,34 @@ reading, so an x265 encode's CPU energy is not in it.
 
 The agent never runs a string it is sent: a job names a template, a clip in its folder and a few
 numbers, and the agent builds the ffmpeg argument list itself. Anything else is refused.
+
+## Compare every run in the Results tab
+
+**Results** lists every machine's run in every finished race, one row each, so runs from different
+races can be compared: which GPU runs a model fastest, what a quant or a context length costs.
+
+- **What a row holds.** The machine, its GPU, GPU memory, GPU platform (CUDA, ROCm, MLX), RAM, system
+  and Unsloth and llama.cpp versions, as probed before the race; the model, quant, engine, context,
+  context per slot, KV cache type, GPU layers, slots, speculative decoding and GPU memory mode it
+  ran with; the prompt, its length in tokens, prefill, thinking and Max tokens; and the medians of
+  its counted rounds, the same numbers as the race's report.
+- **Workload** picks the kind of race, since each has its own measurements: Text, Throughput,
+  Transcribe, Image or Command. **All** shows every kind with one headline number each.
+- **Filter** by typing in **Search**, which matches the cells shown and the full prompt, or with the
+  lists: machine, GPU, model, quant, engine, context, KV cache, slots, prompt and thinking, and more
+  under **More filters**. Each list shows how many rows each value has with the other filters set.
+  Failed and cancelled runs are left out unless you tick **Include failed and cancelled runs**.
+- **Sort** by any column header; press it again to reverse. The best value of each measurement
+  among the rows shown is starred.
+- **Columns** picks what the table shows, for each workload separately. The choice is kept in this
+  browser; **Reset columns** goes back to the default.
+- **Download CSV** saves the rows and columns shown, with raw numbers and units in the headers.
+- The date opens the race.
+
+Unsloth reports the KV cache's type (for example `q8_0`, or the bits on MLX), not how much memory it
+takes, so the table shows the type; "default" means none was set at load. GPU layers shows "auto"
+when Unsloth fitted the layers to the GPU itself, as it does unless told otherwise. Integrated GPUs,
+such as AMD's 780M, report the memory they may share as their GPU memory.
 
 ## Security
 

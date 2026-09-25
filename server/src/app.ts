@@ -15,6 +15,8 @@ import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
 import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerRunRoutes } from './routes/runs';
+import { DeviceRunIndex } from './runs';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
 import { DEFAULT_RUN_TIMINGS, SessionManager, type RunTimings } from './sessions';
@@ -157,6 +159,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     images,
     results,
   });
+  registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
   app.addHook('onClose', async () => {
     await backfilled;
     await loads.close();
