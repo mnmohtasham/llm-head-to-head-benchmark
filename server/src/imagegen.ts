@@ -94,9 +94,16 @@ export async function imageFilesOnDisk(
     : { ok: false, detail: `${config.model} is not fully downloaded on ${machine.name}.` };
 }
 
+/** Stops an image load in flight, or unloads the image model; answers once it is done. */
+export async function unloadImage(machine: StoredMachine): Promise<void> {
+  await once(machine, (c) => c.postJson(`${IMAGES}/unload`, {}, { timeoutMs: 60_000 }));
+}
+
 /**
  * Loads the image model unless the right one is resident. The load route answers at once and
- * the load runs on, so this follows load-progress until the model is ready or has failed.
+ * the load runs on, so this follows load-progress until the model is ready or has failed. A load
+ * this app started is stopped again when the race is cancelled or the load runs out of time, so it
+ * does not finish later and hold the GPU.
  */
 export async function ensureImageModel(
   machine: StoredMachine,
@@ -107,6 +114,8 @@ export async function ensureImageModel(
     pollMs?: number;
     /** Called just before the load is asked for: from then on the chat model is gone. */
     onLoad?: () => void;
+    /** Each progress reading: the phase and, while downloading, the share done. */
+    onProgress?: (phase: string | null, fraction: number | null) => void;
   },
 ): Promise<{ loadMs: number | null; error: string | null }> {
   const before = await readImageStatus(machine);
@@ -126,33 +135,50 @@ export async function ensureImageModel(
         `Loading ${config.model} failed with HTTP ${answer.status ?? 'nothing'}.`,
     };
   }
+  const stop = async (error: string) => {
+    await unloadImage(machine).catch(() => undefined);
+    return { loadMs: null, error };
+  };
   const deadline = started + options.timeoutMs;
+  // Unsloth reports no phase when nothing is loading and nothing is loaded. Right after a load
+  // starts that can be a moment before its thread registers, so only a long silence counts.
+  const graceMs = 30_000;
   while (performance.now() < deadline) {
-    if (options.signal.aborted) return { loadMs: null, error: 'The load was cancelled.' };
-    await sleep(options.pollMs ?? 250);
+    if (options.signal.aborted) return stop('The load was cancelled.');
+    await sleep(options.pollMs ?? 500);
     const progress = await once(machine, (c) =>
       c.getJson(`${IMAGES}/load-progress`, { timeoutMs: 10_000 }),
     );
-    const body = (progress.body ?? {}) as { phase?: unknown; error?: unknown };
     if (progress.status !== 200) continue;
-    if (body.phase === 'error') {
+    const body = (progress.body ?? {}) as { phase?: unknown; error?: unknown; fraction?: unknown };
+    const phase = typeof body.phase === 'string' ? body.phase : null;
+    options.onProgress?.(phase, typeof body.fraction === 'number' ? body.fraction : null);
+    if (phase === 'error') {
       return {
         loadMs: null,
         error: typeof body.error === 'string' ? body.error : `Loading ${config.model} failed.`,
       };
     }
-    // Ready, or no load in flight any more: the status says which model is resident.
-    if (body.phase === 'ready' || (body.phase === null && performance.now() - started > 2000)) {
+    if (phase === 'ready' || phase === null) {
       const after = await readImageStatus(machine);
       if (after.status && imageModelReady(after.status, config)) {
         return { loadMs: performance.now() - started, error: null };
       }
-      if (body.phase === null) {
-        return { loadMs: null, error: `The load of ${config.model} ended without the model.` };
+      if (phase === null && performance.now() - started > graceMs) {
+        return {
+          loadMs: null,
+          error: `Unsloth stopped reporting the load of ${config.model} without the model in memory.`,
+        };
       }
     }
   }
-  return { loadMs: null, error: `${config.model} did not finish loading in time.` };
+  const limit =
+    options.timeoutMs >= 120_000
+      ? `${Math.round(options.timeoutMs / 60_000)} minutes`
+      : `${Math.round(options.timeoutMs / 1000)} seconds`;
+  return stop(
+    `${config.model} did not finish loading in ${limit}, so Model Duel stopped the load.`,
+  );
 }
 
 export interface ImageOutcome {

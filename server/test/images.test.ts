@@ -274,6 +274,58 @@ describe('an image race', () => {
     expect(session.provenance[0]?.restore?.state).toBe('loaded');
   });
 
+  it('does not try a model that failed to load again in later rounds', async () => {
+    await control(linux, { image: { failNextLoad: 'Not enough memory for the transformer.' } });
+    const session = await race([linuxId], {}, { rounds: 3 });
+    expect(session.rounds.map((r) => r.runs[0]?.error)).toEqual([
+      'Not enough memory for the transformer.',
+      'The image model did not load: Not enough memory for the transformer.',
+      'The image model did not load: Not enough memory for the transformer.',
+    ]);
+    const loads = linux.requests().filter((r) => r.path === '/api/inference/images/load');
+    expect(loads).toHaveLength(1);
+  });
+
+  it('waits out a load that reports no phase, trusting the status', async () => {
+    await control(linux, {
+      routes: {
+        '/api/inference/images/load-progress': {
+          body: { phase: null, bytes_downloaded: 0, bytes_total: 0, fraction: 0, error: null },
+        },
+      },
+    });
+    const session = await race([linuxId]);
+    expect(session.rounds[0]?.runs[0]?.state).toBe('done');
+    expect(session.rounds[0]?.runs[0]?.image?.loadMs).toBeGreaterThanOrEqual(150);
+  });
+
+  it('stops a load that runs out of time, so it does not finish later and hold the GPU', async () => {
+    await ctx.app.close();
+    ctx = await testApp({ runTimings: { imagePollMs: 20, modelLoadTimeoutMs: 1500 } });
+    linuxId = await addMachine('Linux', linux, LINUX_KEY);
+    await control(linux, { image: { loadMs: 60_000 } });
+    const session = await race([linuxId], {}, { rounds: 2 });
+    expect(session.rounds[0]?.runs[0]?.error).toBe(
+      `${FLUX} did not finish loading in 2 seconds, so Model Duel stopped the load.`,
+    );
+    const status = await unsloth(linux, LINUX_KEY, '/api/inference/images/load-progress');
+    expect(status.phase).toBeNull();
+    expect((await unsloth(linux, LINUX_KEY, '/api/inference/images/status')).loaded).toBe(false);
+  });
+
+  it('stops its own load when the race is cancelled', async () => {
+    await control(linux, { image: { loadMs: 60_000 } });
+    const started = await post(payload([linuxId]));
+    const id = started.json<SessionView>().id;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const progress = await unsloth(linux, LINUX_KEY, '/api/inference/images/load-progress');
+    expect(progress.phase).toBe('finalizing');
+    await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` });
+    await finished(id);
+    const after = await unsloth(linux, LINUX_KEY, '/api/inference/images/load-progress');
+    expect(after.phase).toBeNull();
+  });
+
   it('cancels a generation in flight on the machine too', async () => {
     await control(linux, { image: { stepMs: 16_000 } });
     const started = await post(payload([linuxId]));

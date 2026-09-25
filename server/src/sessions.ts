@@ -81,6 +81,7 @@ import {
   readTranscriptionMonitor,
   servedEngine,
   transcribe,
+  type TranscribeRequest,
 } from './stt';
 import type { SessionStore } from './session-store';
 import type { MachineStore, StoredMachine } from './store';
@@ -97,6 +98,8 @@ export interface RunTimings {
   imagePollMs: number;
   /** How often the admission queue is read during a throughput batch. */
   queuePollMs: number;
+  /** How long an image or speech model may take to load before the load is stopped. */
+  modelLoadTimeoutMs: number;
 }
 
 export const DEFAULT_RUN_TIMINGS: RunTimings = {
@@ -106,6 +109,7 @@ export const DEFAULT_RUN_TIMINGS: RunTimings = {
   telemetryBaselineMs: 5000,
   imagePollMs: 100,
   queuePollMs: 250,
+  modelLoadTimeoutMs: 20 * 60_000,
 };
 
 /** Finished sessions kept in memory, so the page does not wait for the disk right after a race. */
@@ -922,7 +926,10 @@ export class SessionManager {
       const why = entry.unready[i];
       if (why) this.finishRun(entry, round, run, 'failed', why);
     }
-    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+    // Machines that failed before the round, or whose model would not load, sit it out.
+    const ready = round.runs.filter(
+      (run, i) => entry.models[i] !== null && run.view.finishedAt === null,
+    );
 
     if (!warmup && ready.length > 0) {
       this.setProgress(entry, 'rtt', index);
@@ -1061,7 +1068,10 @@ export class SessionManager {
       const why = entry.unready[i];
       if (why) this.finishRun(entry, round, run, 'failed', why);
     }
-    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+    // Machines that failed before the round, or whose model would not load, sit it out.
+    const ready = round.runs.filter(
+      (run, i) => entry.models[i] !== null && run.view.finishedAt === null,
+    );
     if (!warmup && ready.length > 0) {
       this.setProgress(entry, 'rtt', index);
       const rtts = await Promise.all(
@@ -1251,7 +1261,10 @@ export class SessionManager {
       const why = entry.unready[i];
       if (why) this.finishRun(entry, round, run, 'failed', why);
     }
-    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+    // Machines that failed before the round, or whose model would not load, sit it out.
+    const ready = round.runs.filter(
+      (run, i) => entry.models[i] !== null && run.view.finishedAt === null,
+    );
 
     this.setProgress(entry, 'loading', warmup ? null : index);
     const loads = new Map<string, number | null>();
@@ -1260,13 +1273,20 @@ export class SessionManager {
         const i = entry.machines.indexOf(run.machine);
         const loaded = await ensureImageModel(run.machine, config, {
           signal,
-          timeoutMs: this.deps.timings.totalTimeoutMs,
+          timeoutMs: this.deps.timings.modelLoadTimeoutMs,
           onLoad: () => {
             entry.imageLoads[i] = true;
           },
+          onProgress: (phase, fraction) => {
+            run.view.live = { ...run.view.live, load: { phase, fraction } };
+          },
         });
-        if (loaded.error) this.finishRun(entry, round, run, 'failed', loaded.error);
-        else loads.set(run.view.id, loaded.loadMs);
+        run.view.live = { ...run.view.live, load: null };
+        if (loaded.error) {
+          this.finishRun(entry, round, run, 'failed', loaded.error);
+          // A model that did not load is not tried again in the next rounds.
+          if (!signal.aborted) entry.unready[i] = `The image model did not load: ${loaded.error}`;
+        } else loads.set(run.view.id, loaded.loadMs);
       }),
     );
     const sending = ready.filter((run) => run.view.finishedAt === null);
@@ -1484,7 +1504,10 @@ export class SessionManager {
       const why = entry.unready[i];
       if (why) this.finishRun(entry, round, run, 'failed', why);
     }
-    const ready = round.runs.filter((_run, i) => entry.models[i] !== null);
+    // Machines that failed before the round, or whose model would not load, sit it out.
+    const ready = round.runs.filter(
+      (run, i) => entry.models[i] !== null && run.view.finishedAt === null,
+    );
 
     // The sidecar unloads after idle minutes, so every round makes sure the model is there.
     this.setProgress(entry, 'loading', warmup ? null : index);
@@ -1492,8 +1515,12 @@ export class SessionManager {
     await Promise.all(
       ready.map(async (run) => {
         const loaded = await ensureSttModel(run.machine, config);
-        if (loaded.error) this.finishRun(entry, round, run, 'failed', loaded.error);
-        else loads.set(run.view.id, loaded.loadMs);
+        if (loaded.error) {
+          this.finishRun(entry, round, run, 'failed', loaded.error);
+          // A model that did not load is not tried again in the next rounds.
+          const i = entry.machines.indexOf(run.machine);
+          if (!signal.aborted) entry.unready[i] = `The speech model did not load: ${loaded.error}`;
+        } else loads.set(run.view.id, loaded.loadMs);
       }),
     );
     const sending = ready.filter((run) => run.view.finishedAt === null);
@@ -1511,10 +1538,11 @@ export class SessionManager {
       this.setProgress(entry, warmup ? 'warmup' : 'running', warmup ? null : index);
       round.lag.enable();
       view.startedAt = new Date().toISOString();
-      const fields = {
+      const fields: TranscribeRequest = {
         model: config.model,
         language: config.language,
-        response_format: 'verbose_json',
+        engine: config.engine,
+        device: config.device,
       };
       const send = (run: LiveRun) =>
         this.sendAudio(entry, round, run, audio, fields, loads.get(run.view.id) ?? null);
@@ -1563,13 +1591,10 @@ export class SessionManager {
     round: LiveRound,
     run: LiveRun,
     audio: Audio,
-    fields: Record<string, string>,
+    fields: TranscribeRequest,
     loadMs: number | null,
   ): Promise<void> {
     const { machine } = run;
-    if (!round.warmup) {
-      run.provenance.request ??= { ...fields, file: `${audio.name}, ${audio.bytes.length} bytes` };
-    }
     run.view.state = 'streaming';
     run.requestAt = performance.now();
     run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
@@ -1578,6 +1603,16 @@ export class SessionManager {
       signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
       timeoutMs: this.deps.timings.totalTimeoutMs,
     });
+    if (!round.warmup) {
+      run.provenance.request ??= {
+        ...fields,
+        route:
+          outcome.route === 'raw'
+            ? '/api/inference/audio/transcribe/raw'
+            : '/v1/audio/transcriptions',
+        file: `${audio.name}, ${audio.bytes.length} bytes`,
+      };
+    }
     if (outcome.cancelled) {
       this.finishRun(entry, round, run, 'cancelled', null);
       return;
@@ -1604,9 +1639,13 @@ export class SessionManager {
     const headersAt = outcome.headersAt ?? outcome.endAt;
     const uploadMs = bodySentAt - outcome.requestAt;
     const processingMs = headersAt - bodySentAt;
+    // Only the OpenAI-shaped route leaves a monitor row with Unsloth's own processing time.
     const [serverProcessingMs, after] = round.warmup
       ? [null, null]
-      : await Promise.all([readTranscriptionMonitor(machine), readSttStatus(machine)]);
+      : await Promise.all([
+          outcome.route === 'openai' ? readTranscriptionMonitor(machine) : Promise.resolve(null),
+          readSttStatus(machine),
+        ]);
     if (after?.status) run.provenance.sttAfter = after.status;
     const rate = (ms: number | null) =>
       audioSeconds && ms !== null && ms > 0 ? audioSeconds / (ms / 1000) : null;

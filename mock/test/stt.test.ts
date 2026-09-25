@@ -90,7 +90,7 @@ describe('the fake speech-to-text', () => {
     expect(after.body.transformers.loaded_model).toBe('small');
     expect(after.body.loaded_model).toBe('small');
     const tiny = await call('POST', '/api/inference/audio/stt/load', { model: 'tiny' });
-    expect(tiny.status).toBe(400);
+    expect(tiny.status).toBe(409);
   });
 
   it('transcribes, logs a monitor row that DELETE clears, and unloads when idle', async () => {
