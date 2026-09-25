@@ -5,8 +5,10 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import { MachineCard } from '../components/MachineCard';
 import { MachineDialog, type MachineFormValues } from '../components/MachineDialog';
+import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
 import { useNow } from '../useNow';
+import { useTelemetry } from '../useTelemetry';
 
 type DialogState = { mode: 'add' } | { mode: 'edit'; machine: MachineView } | null;
 
@@ -32,7 +34,9 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
   const [probing, setProbing] = useState<ReadonlySet<string>>(() => new Set());
   const [dialog, setDialog] = useState<DialogState>(null);
   const [deleting, setDeleting] = useState<MachineView | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const now = useNow();
+  const telemetry = useTelemetry((machines ?? []).map((m) => m.id));
 
   const probe = useCallback(
     async (machine: MachineView) => {
@@ -135,6 +139,12 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
         {machines === null && !loadError ? <p className="loading">Loading machines…</p> : null}
         {machines && machines.length === 0 ? <EmptyState onAdd={openAdd} /> : null}
         {machines && machines.length > 0 ? (
+          <section className="panel telemetry-panel" aria-label="Live hardware">
+            <TelemetrySwitch enabled={telemetry.enabled} onError={setTelemetryError} />
+            {telemetryError ? <p className="field-error">{telemetryError}</p> : null}
+          </section>
+        ) : null}
+        {machines && machines.length > 0 ? (
           <div className="machine-grid">
             {machines.map((machine) => (
               <MachineCard
@@ -145,6 +155,11 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
                 onProbe={() => void probe(machine)}
                 onEdit={() => setDialog({ mode: 'edit', machine })}
                 onDelete={() => setDeleting(machine)}
+                telemetry={{
+                  enabled: telemetry.enabled,
+                  status: telemetry.statuses[machine.id],
+                  sample: telemetry.latest[machine.id],
+                }}
               />
             ))}
           </div>

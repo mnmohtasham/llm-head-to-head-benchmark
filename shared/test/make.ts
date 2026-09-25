@@ -44,6 +44,7 @@ export function makeRun(
     loopLagMs: null,
     sendOffsetMs: 0,
     rtt: null,
+    telemetry: null,
   };
 }
 
@@ -68,7 +69,7 @@ export function makeSession(
   warmup: RunView[] | null = null,
 ): SessionView {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: '11111111-1111-4111-8111-111111111111',
     workload: 'text',
     createdAt: '2026-09-25T00:00:00.000Z',
@@ -89,6 +90,7 @@ export function makeSession(
     warmup: warmup ? makeRound(-1, warmup) : null,
     rounds: rounds.map((runs, i) => makeRound(i, runs)),
     progress: { phase: 'finished', round: null },
+    telemetry: { enabled: false },
     provenance: [],
     loopLagMs: null,
   };

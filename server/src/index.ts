@@ -63,6 +63,10 @@ const app = await buildApp({
   logger: { level: process.env.LOG_LEVEL ?? 'warn' },
   allowedHosts: values['allow-host'],
   mode: values['api-only'] ? 'dev' : 'production',
+  // The telemetry baseline before and after a race; tests shorten it.
+  ...(process.env.MODEL_DUEL_TELEMETRY_BASELINE_MS
+    ? { runTimings: { telemetryBaselineMs: Number(process.env.MODEL_DUEL_TELEMETRY_BASELINE_MS) } }
+    : {}),
 });
 
 try {

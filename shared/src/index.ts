@@ -9,4 +9,5 @@ export * from './secrets';
 export * from './session';
 export * from './sse';
 export * from './stats';
+export * from './telemetry';
 export * from './url';

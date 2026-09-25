@@ -1655,3 +1655,45 @@ textarea {
   font-size: 14px;
   cursor: pointer;
 }
+
+/* Live telemetry */
+.telemetry-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.telemetry-chips li {
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--inset);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.telemetry-label {
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.telemetry-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetry-note {
+  margin: 0;
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.telemetry-panel .field-hint {
+  max-width: 60ch;
+}

@@ -10,6 +10,8 @@ import {
 import type { CSSProperties } from 'react';
 import { api } from '../api';
 import { formatGb, osLabel, relativeTime } from '../format';
+import type { TelemetrySample, TelemetryStatus } from '@duel/shared';
+import { TelemetryChips } from './TelemetryChips';
 
 const STATUS_TEXT: Record<Capability['status'], string> = {
   ok: 'works',
@@ -33,9 +35,22 @@ interface Props {
   onProbe: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  telemetry?: {
+    enabled: boolean | null;
+    status: TelemetryStatus | undefined;
+    sample: TelemetrySample | undefined;
+  };
 }
 
-export function MachineCard({ machine, probing, now, onProbe, onEdit, onDelete }: Props) {
+export function MachineCard({
+  machine,
+  probing,
+  now,
+  onProbe,
+  onEdit,
+  onDelete,
+  telemetry,
+}: Props) {
   const probe = machine.lastProbe;
   const report = probe?.report ?? null;
   const state = probing ? 'probing' : report ? report.overall : 'idle';
@@ -61,6 +76,14 @@ export function MachineCard({ machine, probing, now, onProbe, onEdit, onDelete }
           {STATE_LABEL[state]}
         </span>
       </header>
+
+      {telemetry ? (
+        <TelemetryChips
+          enabled={telemetry.enabled}
+          status={telemetry.status}
+          sample={telemetry.sample}
+        />
+      ) : null}
 
       {report ? <Stats report={report} /> : null}
 

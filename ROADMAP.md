@@ -388,7 +388,7 @@ Automated tests
 - Integration: poller backoff and recovery.
 - End-to-end, also the manual demo script: chips move during a race on the mocks.
 
-Real-machine script
+Real-machine script (run on the RTX machine alone, against nvidia-smi, while the Lenovo was offline)
 1. Compare the chips with Unsloth's own GPU monitor on each machine.
 2. Check that energy per run is close to mean power times duration.
 3. Run the same round with telemetry on and off, and record the cost of polling.

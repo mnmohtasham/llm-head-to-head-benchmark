@@ -321,7 +321,11 @@ test.describe('rounds', () => {
         'Tie',
       );
     }
-    await expect(compare.locator('td[data-best]')).toHaveCount(0);
+    // Timing is a tie; energy is not, since the fake Mac draws far less power than the fake RTX.
+    await expect(
+      compare.locator('tr:not([data-key="energy"]):not([data-key="tokensPerJoule"]) td[data-best]'),
+    ).toHaveCount(0);
+    await expect(compare.locator('tr[data-key="energy"]')).toHaveAttribute('data-verdict', 'win');
   });
 
   test('machines on one computer are asked to take turns, and then they do', async ({ page }) => {
@@ -400,6 +404,47 @@ test.describe('presets, prefill and pre-flight', () => {
     for (const row of await page.getByTestId('round-row').all()) {
       await expect(row.locator('.round-flags')).toHaveText('');
     }
+  });
+});
+
+test.describe('telemetry', () => {
+  test('the chips follow a race, and energy lands in the measurements', async ({
+    page,
+    request,
+  }) => {
+    for (const mock of MOCKS) await stream(request, mock, { tokenMs: 40, answerTokens: 120 });
+    await setUp(page, [MAC.name, LINUX.name]);
+    const gpu = pane(page, LINUX.name)
+      .getByTestId('telemetry')
+      .locator('li[data-kind="GPU"] .telemetry-value');
+    await expect(gpu).toHaveText(/^\d+%$/);
+    const idle = Number.parseInt((await gpu.textContent()) ?? '0', 10);
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect
+      .poll(async () => Number.parseInt((await gpu.textContent()) ?? '0', 10), { timeout: 10_000 })
+      .toBeGreaterThan(Math.max(idle, 40));
+    // Apple's unified memory has no separate VRAM chip.
+    await expect(
+      pane(page, MAC.name).getByTestId('telemetry').locator('li[data-kind="VRAM"]'),
+    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    const energy = page.getByTestId('compare').locator('tr[data-key="energy"]');
+    await expect(energy.locator(`td[data-machine="${LINUX.name}"]`)).toHaveText(/ J/);
+  });
+
+  test('the switch turns telemetry off everywhere, and on again', async ({ page }) => {
+    await setUp(page, [LINUX.name]);
+    await expect(pane(page, LINUX.name).getByTestId('telemetry')).toBeVisible();
+    const group = page.getByRole('radiogroup', { name: 'Telemetry' });
+    await group.getByRole('radio', { name: 'Off' }).click();
+    await expect(pane(page, LINUX.name).getByTestId('telemetry')).toHaveCount(0);
+    await page.goto('/#/machines');
+    await expect(page.getByTestId('machine-card').first().getByTestId('telemetry')).toHaveCount(0);
+    await page
+      .getByRole('radiogroup', { name: 'Telemetry' })
+      .getByRole('radio', { name: 'On' })
+      .click();
+    await expect(page.getByTestId('machine-card').first().getByTestId('telemetry')).toBeVisible();
   });
 });
 

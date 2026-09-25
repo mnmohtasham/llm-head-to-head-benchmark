@@ -40,8 +40,10 @@ import { RunPane } from '../components/RunPane';
 import { SessionList } from '../components/SessionList';
 import { SetupTable } from '../components/SetupTable';
 import { StatsTable } from '../components/StatsTable';
+import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
 import { formatMsValue, formatRate } from '../format';
+import { useTelemetry } from '../useTelemetry';
 
 const DEFAULT_PROMPT =
   'Explain in about 150 words why memory bandwidth limits how fast a local language model writes text.';
@@ -530,6 +532,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         model: statuses[m.id]?.status?.activeModel ?? null,
       }));
   const finishedRuns = round?.runs.filter((run) => run.finishedAt !== null && run.client) ?? [];
+  const telemetry = useTelemetry(panes.map((pane) => pane.key));
   const counted = session?.rounds.some((r) => r.runs.some((run) => run.state === 'done')) ?? false;
   const manyRounds = (session?.rounds.length ?? 0) > 1 || session?.warmup !== null;
   const columns = Math.min(Math.max(panes.length, 1), 4);
@@ -751,6 +754,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                     : 'The same prompt every round and no seed: rounds after the first may reuse the cache.'}
                 </p>
               </div>
+              <TelemetrySwitch enabled={telemetry.enabled} onError={setFormError} />
             </div>
             <details className="sampling">
               <summary>Sampling</summary>
@@ -973,6 +977,11 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 machine={pane.machine}
                 modelName={pane.model}
                 run={pane.run}
+                telemetry={{
+                  enabled: telemetry.enabled,
+                  status: telemetry.statuses[pane.key],
+                  sample: telemetry.latest[pane.key],
+                }}
               />
             ))}
           </div>

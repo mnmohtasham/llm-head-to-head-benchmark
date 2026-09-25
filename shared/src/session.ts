@@ -13,9 +13,9 @@ import type { ModelStatus } from './models';
 /**
  * A session is one benchmark: the same request on one or more machines, over one or more rounds.
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
- * full sampling and per-round nonce. Older files are migrated on read.
+ * full sampling and per-round nonce; version 4 telemetry. Older files are migrated on read.
  */
-export const SESSION_SCHEMA_VERSION = 3;
+export const SESSION_SCHEMA_VERSION = 4;
 export const MAX_RACE_MACHINES = 8;
 export const MAX_ROUNDS = 10;
 
@@ -103,7 +103,8 @@ export interface RoundView {
   flags: RoundFlag[];
 }
 
-export type SessionPhase = 'preparing' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
+export type SessionPhase =
+  'preparing' | 'baseline' | 'warmup' | 'rtt' | 'running' | 'settling' | 'finished';
 
 export interface SessionProgress {
   phase: SessionPhase;
@@ -126,6 +127,8 @@ export interface SessionView {
   warmup: RoundView | null;
   rounds: RoundView[];
   progress: SessionProgress;
+  /** Whether hardware was polled during the session. */
+  telemetry: { enabled: boolean };
   provenance: MachineProvenance[];
   loopLagMs: { max: number; p99: number } | null;
 }
@@ -239,7 +242,7 @@ export function migrateSession(value: StoredSession): StoredSession {
     nonce: r.nonce ?? null,
     loopLagMs: r.loopLagMs ?? value.loopLagMs ?? null,
     flags: r.flags ?? [],
-    runs: r.runs.map((run) => ({ ...run, rtt: run.rtt ?? null })),
+    runs: r.runs.map((run) => ({ ...run, rtt: run.rtt ?? null, telemetry: run.telemetry ?? null })),
   });
   return {
     ...value,
@@ -260,6 +263,7 @@ export function migrateSession(value: StoredSession): StoredSession {
     plan: old.plan ?? { rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' },
     warmup: old.warmup ? round(old.warmup) : null,
     progress: old.progress ?? { phase: 'finished', round: null },
+    telemetry: old.telemetry ?? { enabled: false },
     rounds: (old.rounds ?? []).map(round),
   };
 }

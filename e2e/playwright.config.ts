@@ -42,6 +42,8 @@ export default defineConfig({
     url: `http://127.0.0.1:${E2E_APP_PORT}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,
+    // A short telemetry baseline keeps every race in the suite quick.
+    env: { MODEL_DUEL_TELEMETRY_BASELINE_MS: '300' },
     stdout: 'pipe',
     stderr: 'pipe',
   },
