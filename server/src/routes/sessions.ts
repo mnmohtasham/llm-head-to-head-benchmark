@@ -1,6 +1,11 @@
 import {
+  comparisonTable,
   hasErrors,
   hasWarnings,
+  roundTable,
+  tallyVotes,
+  toCsv,
+  toMarkdown,
   MAX_RACE_MACHINES,
   sessionRequestSchema,
   textConfigSchema,
@@ -14,6 +19,18 @@ import { runPreflight } from '../preflight';
 import { presetViews, resolvePrompt } from '../presets';
 import type { SessionManager } from '../sessions';
 import type { MachineStore, StoredMachine } from '../store';
+
+const voteSchema = z.object({
+  round: z.number().int().min(0),
+  left: z.string().min(1),
+  right: z.string().min(1),
+  choice: z.enum(['left', 'right', 'tie']),
+});
+
+/** A file name like `model-duel-2026-09-25-1a2b3c4d.md`. */
+function fileName(session: { id: string; createdAt: string }, extension: string): string {
+  return `model-duel-${session.createdAt.slice(0, 10)}-${session.id.slice(0, 8)}.${extension}`;
+}
 
 const preflightRequestSchema = z.object({
   machineIds: z
@@ -113,6 +130,55 @@ export function registerSessionRoutes(
   });
 
   app.get('/api/sessions', async () => ({ sessions: sessions.list() }));
+
+  /** Blind votes added up per pair of models, across every saved race. */
+  app.get('/api/votes/tally', async () => ({
+    tally: tallyVotes(sessions.list().flatMap((summary) => summary.votes)),
+  }));
+
+  app.post<IdParams>('/api/sessions/:id/vote', async (request, reply) => {
+    const parsed = voteSchema.safeParse(request.body);
+    if (!parsed.success) return fail(reply, 400, 'validation', 'The vote is not valid.');
+    const result = await sessions.vote(request.params.id, {
+      ...parsed.data,
+      at: new Date().toISOString(),
+    });
+    if (typeof result === 'string') {
+      const status = result.startsWith('There is no race') ? 404 : 400;
+      return fail(reply, status, status === 404 ? 'not_found' : 'bad_vote', result);
+    }
+    return result;
+  });
+
+  /** The full session, raw events included; API keys never enter a session. */
+  app.get<IdParams>('/api/sessions/:id/export.json', async (request, reply) => {
+    const stored = await sessions.getStored(request.params.id);
+    if (!stored) return fail(reply, 404, 'not_found', NO_SESSION);
+    return reply
+      .header('content-type', 'application/json; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${fileName(stored, 'json')}"`)
+      .send(`${JSON.stringify(stored, null, 2)}\n`);
+  });
+
+  /** The comparison and round tables as the page shows them, one after the other. */
+  app.get<IdParams>('/api/sessions/:id/export.csv', async (request, reply) => {
+    const view = await sessions.get(request.params.id);
+    if (!view) return fail(reply, 404, 'not_found', NO_SESSION);
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${fileName(view, 'csv')}"`)
+      .send(toCsv([comparisonTable(view), roundTable(view)]));
+  });
+
+  /** A summary that reads on its own. */
+  app.get<IdParams>('/api/sessions/:id/export.md', async (request, reply) => {
+    const view = await sessions.get(request.params.id);
+    if (!view) return fail(reply, 404, 'not_found', NO_SESSION);
+    return reply
+      .header('content-type', 'text/markdown; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${fileName(view, 'md')}"`)
+      .send(toMarkdown(view));
+  });
 
   app.get<IdParams>('/api/sessions/:id', async (request, reply) => {
     const view = await sessions.get(request.params.id);

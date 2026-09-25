@@ -481,6 +481,13 @@ export interface RunView {
   rtt: RttResult | null;
   /** Hardware samples around the run and what they add up to; null with telemetry off. */
   telemetry: RunTelemetry | null;
+  /**
+   * Tokens against time for the race chart: `[ms since the request, tokens so far, 1 while
+   * thinking]`, thinned to a few hundred points.
+   */
+  timeline: Array<[number, number, 0 | 1]> | null;
+  /** When the request left, epoch ms on the controller's clock, to line up telemetry. */
+  requestedAtMs: number | null;
 }
 
 export interface RunTelemetry {

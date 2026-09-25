@@ -18,6 +18,7 @@ import {
   runEnergy,
   SESSION_SCHEMA_VERSION,
   summarizeSession,
+  tokenTimeline,
   withNonce,
   type ClientMetrics,
   type LiveMetrics,
@@ -37,6 +38,7 @@ import {
   type TextConfig,
   type TimedEvent,
   type Timings,
+  type Vote,
 } from '@duel/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { streamChatCompletion, type StreamOutcome } from './chat-stream';
@@ -188,6 +190,8 @@ function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
     sendOffsetMs: null,
     rtt: null,
     telemetry: null,
+    timeline: null,
+    requestedAtMs: null,
     raw: null,
   };
 }
@@ -283,6 +287,7 @@ export class SessionManager {
       rounds: [],
       progress: { phase: 'preparing', round: null },
       telemetry: { enabled: this.deps.telemetry.enabled },
+      votes: [],
       provenance: machines.map((m) => this.provenanceOf(m)),
       loopLagMs: null,
     };
@@ -323,6 +328,36 @@ export class SessionManager {
     );
     await entry.done;
     return this.get(id);
+  }
+
+  /** The whole session as stored, raw events included, for the JSON export. */
+  async getStored(id: string): Promise<StoredSession | null> {
+    const live = this.active.get(id)?.session ?? this.recent.get(id);
+    if (live) return structuredClone(live);
+    return this.deps.sessions.load(id);
+  }
+
+  /**
+   * Records a blind vote on one round of a finished two-machine session; a second vote on the
+   * same round replaces the first.
+   */
+  async vote(id: string, vote: Vote): Promise<SessionView | string> {
+    if (this.active.has(id)) return 'The race is still running.';
+    const stored = await this.getStored(id);
+    if (!stored) return 'There is no race with that id.';
+    if (stored.machines.length !== 2) return 'Blind votes need a race between two machines.';
+    if (!stored.rounds.some((round) => round.index === vote.round))
+      return 'There is no such round.';
+    const ids = new Set(stored.machines.map((m) => m.id));
+    if (vote.left === vote.right || !ids.has(vote.left) || !ids.has(vote.right)) {
+      return 'The vote must name the two machines of the race.';
+    }
+    stored.votes = [...stored.votes.filter((v) => v.round !== vote.round), vote].sort(
+      (a, b) => a.round - b.round,
+    );
+    await this.deps.sessions.save(stored);
+    if (this.recent.has(id)) this.recent.set(id, stored);
+    return publicSession(stored);
   }
 
   /** Deletes a finished session. */
@@ -707,7 +742,8 @@ export class SessionManager {
     if (!round.warmup) run.provenance.request ??= body;
     run.view.state = 'streaming';
     run.requestAt = performance.now();
-    entry.starts.set(run.view.id, performance.timeOrigin + run.requestAt);
+    run.view.requestedAtMs = performance.timeOrigin + run.requestAt;
+    entry.starts.set(run.view.id, run.view.requestedAtMs);
     return streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
       signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
       idleTimeoutMs: this.deps.timings.idleTimeoutMs,
@@ -738,6 +774,7 @@ export class SessionManager {
     const client = computeClientMetrics(outcome.timeline);
     run.view.client = client;
     const { requestAt, headersAt, endAt, events } = outcome.timeline;
+    run.view.timeline = tokenTimeline(events, requestAt);
     run.view.raw = {
       headersAtMs: headersAt === null ? null : round3(headersAt - requestAt),
       endAtMs: round3(endAt - requestAt),

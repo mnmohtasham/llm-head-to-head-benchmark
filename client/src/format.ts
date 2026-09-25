@@ -51,20 +51,4 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
-/** Seconds with two decimals, like the big numbers of the reference tool. */
-export function formatSeconds(ms: number | null): string {
-  return ms === null ? 'n/a' : (ms / 1000).toFixed(2);
-}
-
-export function formatMsValue(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined) return 'n/a';
-  return ms < 10
-    ? `${ms.toFixed(1)} ms`
-    : ms < 10_000
-      ? `${Math.round(ms)} ms`
-      : `${(ms / 1000).toFixed(1)} s`;
-}
-
-export function formatRate(value: number | null | undefined, unit: string): string {
-  return value === null || value === undefined ? 'n/a' : `${value.toFixed(1)} ${unit}`;
-}
+export { formatMsValue, formatRate, formatSeconds, formatValue } from '@duel/shared';

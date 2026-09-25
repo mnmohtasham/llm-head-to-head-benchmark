@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { DEMO_MACHINES } from '../../scripts/demo-config';
 import { E2E_MOCK_PORTS } from '../ports';
@@ -445,6 +446,71 @@ test.describe('telemetry', () => {
       .getByRole('radio', { name: 'On' })
       .click();
     await expect(page.getByTestId('machine-card').first().getByTestId('telemetry')).toBeVisible();
+  });
+});
+
+test.describe('the report', () => {
+  test('shows a scoreboard and charts, and exports JSON, CSV and Markdown', async ({
+    page,
+    request,
+  }) => {
+    await stream(request, LINUX_MOCK, { tokenMs: 8 });
+    await setUp(page, [MAC.name, LINUX.name], { rounds: 2 });
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('scoreboard')).toContainText(`${LINUX.name} decodes`);
+    await expect(page.getByTestId('race-chart').locator('canvas')).toBeVisible();
+    await expect(page.getByTestId('telemetry-chart').locator('canvas')).toBeVisible();
+
+    const exported = async (label: string) => {
+      const download = page.waitForEvent('download');
+      await page.getByTestId('exports').getByRole('link', { name: label }).click();
+      return readFile(await (await download).path(), 'utf8');
+    };
+    const json = JSON.parse(await exported('JSON')) as {
+      schemaVersion: number;
+      rounds: Array<{ runs: Array<{ raw: { events: unknown[] } }> }>;
+    };
+    expect(json.schemaVersion).toBe(5);
+    expect(json.rounds).toHaveLength(2);
+    expect(json.rounds[0]?.runs[0]?.raw.events.length).toBeGreaterThan(10);
+    const csv = await exported('CSV');
+    const blocks = csv.trim().split('\r\n\r\n');
+    expect(blocks[0]?.split('\r\n')[0]).toBe(`Metric,Unit,${MAC.name},${LINUX.name},Result`);
+    expect(blocks[1]?.split('\r\n')).toHaveLength(3);
+    const markdown = await exported('Markdown');
+    expect(markdown.split('\n')[0]).toBe(`# Model Duel: ${MAC.name} against ${LINUX.name}`);
+    expect(markdown).toContain(`${LINUX.name} decodes`);
+    expect(markdown).toContain('## How to read this');
+  });
+
+  test('a blind vote hides the machines until the reveal', async ({ page }) => {
+    await setUp(page, [MAC.name, LINUX.name], { rounds: 2 });
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Blind vote' }).click();
+    await expect(page.getByTestId('blind-round')).toHaveCount(2);
+    const before = (await page.locator('body').textContent()) ?? '';
+    expect(before).not.toContain(MAC.name);
+    expect(before).not.toContain(LINUX.name);
+    expect(before).not.toContain('Qwen');
+    await expect(page.getByRole('button', { name: 'Reveal', exact: true })).toBeDisabled();
+    for (const round of await page.getByTestId('blind-round').all()) {
+      await round.getByRole('radio', { name: 'Left is better' }).click();
+      await expect(round.getByRole('radio', { name: 'Left is better' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    }
+    await page.getByRole('button', { name: 'Reveal', exact: true }).click();
+    const reveal = page.getByTestId('blind-reveal');
+    await expect(reveal).toContainText(MAC.name);
+    await expect(reveal).toContainText(LINUX.name);
+    await expect(reveal.getByTestId('tally')).toContainText('unsloth/Qwen3.8-27B-GGUF');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByText('2 blind votes cast')).toBeVisible();
   });
 });
 

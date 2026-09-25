@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.6, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.7, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -9,7 +9,8 @@ client and server agreement in section 4.1, and the per-run connection in sectio
 v2.3 records the session file, the stream messages and the measured send skew from phase 4, in
 sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5. v2.5
 records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5. v2.6
-records the telemetry measurements of phase 7, in sections 2.6 and 4.4.
+records the telemetry measurements of phase 7, in sections 2.6 and 4.4. v2.7 records the report as
+built in phase 8, in section 7.
 
 ## 0. Decisions so far
 
@@ -433,7 +434,11 @@ collapsed once the answer starts), or a progress bar and the image, or the trans
 Below the panes: scoreboard sentences with ratios and the confidence gate; race chart (cumulative tokens
 against time, both machines overlaid, reasoning in a lighter shade); comparison table with client and server
 columns; per-round table; telemetry chart overlaying power on token rate; results log (history, reloadable);
-blind-vote control that hides machine names until a vote is cast; export buttons.
+blind-vote control that hides machine names until a vote is cast; export buttons. As built in phase 8: the
+comparison, round and setup tables are shared table models that the page, the CSV and the Markdown all
+render, so the three cannot disagree; each run keeps a token timeline of at most 400 points for the chart;
+the blind vote shows only the answers, sides shuffled per round, records `{round, left, right, choice}` in
+the session, and the tally counts per pair of model-and-quant labels across sessions; charts use uPlot.
 Machine setup screen: cards with base URL, API key, name, notes, a Probe button showing versions, GPU and
 engines, model dropdowns with Load buttons and load progress.
 

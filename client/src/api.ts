@@ -8,6 +8,7 @@ import type {
   MachineStatusView,
   MachineUpdateInput,
   MachineView,
+  PairTally,
   PreflightIssue,
   PreflightResult,
   ProbeSummary,
@@ -15,6 +16,7 @@ import type {
   SessionSummary,
   SessionView,
   TextConfig,
+  Vote,
 } from '@duel/shared';
 
 export interface PresetView {
@@ -121,6 +123,11 @@ export const api = {
   getSession: (id: string) => call<SessionView>('GET', sessionUrl(id)),
   cancelSession: (id: string) => call<SessionView>('POST', `${sessionUrl(id)}/cancel`),
   deleteSession: (id: string) => call<void>('DELETE', sessionUrl(id)),
+  vote: (
+    id: string,
+    vote: { round: number; left: string; right: string; choice: Vote['choice'] },
+  ) => call<SessionView>('POST', `${sessionUrl(id)}/vote`, vote),
+  voteTally: () => call<{ tally: PairTally[] }>('GET', '/api/votes/tally'),
   sessionStreamUrl: (id: string) => `${sessionUrl(id)}/stream`,
 };
 

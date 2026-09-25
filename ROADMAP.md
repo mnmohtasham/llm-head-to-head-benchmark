@@ -425,7 +425,7 @@ Automated tests
   mode puts no machine identity in the page before the reveal.
 - End-to-end, also the manual demo script: export all three formats and parse them; complete a blind vote.
 
-Real-machine script
+Real-machine script (run on the RTX machine alone while the Lenovo was offline and the Mac unreachable)
 1. Produce the 8K, cold, five-round report for Mac against Linux.
 2. Read the Markdown export outside the app and check that it stands alone.
 

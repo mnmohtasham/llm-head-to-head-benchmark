@@ -1,38 +1,6 @@
-import {
-  GATE_RATIO,
-  runsOf,
-  sessionStats,
-  type MetricUnit,
-  type SessionView,
-  type StatRow,
-  type Summary,
-} from '@duel/shared';
+import { comparisonTable, GATE_RATIO, runsOf, type SessionView } from '@duel/shared';
 import type { CSSProperties } from 'react';
-import { formatMsValue, formatRate } from '../format';
-
-export function formatValue(value: number | null, unit: MetricUnit): string {
-  if (value === null) return 'n/a';
-  if (unit === 'ms') return formatMsValue(value);
-  if (unit === 'tokens') return Math.round(value).toLocaleString('en-US');
-  return formatRate(value, unit);
-}
-
-function spread(summary: Summary, unit: MetricUnit): string | null {
-  if (summary.n < 2 || summary.min === null || summary.max === null) return null;
-  const sd = summary.stdev === null ? '' : ` · sd ${formatValue(summary.stdev, unit)}`;
-  return `${formatValue(summary.min, unit)} to ${formatValue(summary.max, unit)}${sd}`;
-}
-
-function textValues(session: SessionView, machineId: string, key: string): string {
-  const values = runsOf(session, machineId).map((run) =>
-    key === 'finish' ? (run.client?.finishReason ?? run.state) : run.state,
-  );
-  const counts = new Map<string, number>();
-  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
-  return [...counts.entries()]
-    .map(([value, count]) => (count > 1 ? `${value} ×${count}` : value))
-    .join(', ');
-}
+import { formatMsValue } from '../format';
 
 /** "failed 1 of 3" next to a machine that did not finish every round. */
 function failures(session: SessionView, machineId: string) {
@@ -47,25 +15,12 @@ function failures(session: SessionView, machineId: string) {
   );
 }
 
-function verdictText(row: StatRow, session: SessionView): string {
-  const { verdict } = row;
-  if (verdict.kind === 'none') return '';
-  const leader = session.machines[verdict.leader ?? -1]?.name ?? '';
-  if (verdict.kind === 'tie') return 'Tie';
-  const ratio =
-    verdict.ratio === null || !Number.isFinite(verdict.ratio)
-      ? ''
-      : `, ${verdict.ratio.toFixed(2)}×`;
-  return `${leader}${ratio}`;
-}
-
 /**
- * Metric rows by machine columns, as medians over the counted rounds. A winner is named only
- * when the gate says the difference is bigger than the noise; otherwise the row says tie.
+ * Metric rows by machine columns, as medians over the counted rounds, from the same table model
+ * the CSV and Markdown exports use. A winner is named only when the gate says so.
  */
 export function StatsTable({ session }: { session: SessionView }) {
-  const rows = sessionStats(session);
-  const counted = session.rounds.length;
+  const table = comparisonTable(session);
   const skews = session.rounds
     .map((round) => round.sendSkewMs)
     .filter((v): v is number => v !== null);
@@ -73,7 +28,7 @@ export function StatsTable({ session }: { session: SessionView }) {
   return (
     <section className="panel compare" aria-labelledby="compare-title" data-testid="compare">
       <h2 id="compare-title" className="section-title">
-        {counted > 1 ? `Comparison · medians of ${counted} rounds` : 'Comparison'}
+        {table.title}
       </h2>
       <div className="table-scroll">
         <table className="metrics-table compare-table">
@@ -95,37 +50,27 @@ export function StatsTable({ session }: { session: SessionView }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.key} data-key={row.key} data-verdict={row.verdict.kind}>
+            {table.rows.map((row) => (
+              <tr key={row.key} data-key={row.key} data-verdict={row.verdict}>
                 <th scope="row">
                   {row.label}
-                  {row.better ? (
-                    <span className="better-hint">
-                      {row.better === 'lower' ? 'lower is better' : 'higher is better'}
-                    </span>
-                  ) : null}
+                  {row.hint ? <span className="better-hint">{row.hint}</span> : null}
                 </th>
-                {row.summaries.map((summary, i) => {
-                  const machine = session.machines[i];
-                  const winner = row.verdict.kind === 'win' && row.verdict.leader === i;
-                  const detail = spread(summary, row.unit);
-                  return (
-                    <td
-                      key={machine?.id ?? i}
-                      data-machine={machine?.name}
-                      data-best={winner ? 'true' : undefined}
-                      className={winner ? 'best' : undefined}
-                    >
-                      {row.unit === 'text'
-                        ? textValues(session, machine?.id ?? '', row.key)
-                        : formatValue(summary.median, row.unit)}
-                      {detail ? <span className="cell-detail">{detail}</span> : null}
-                    </td>
-                  );
-                })}
+                {row.cells.slice(0, session.machines.length).map((cell, i) => (
+                  <td
+                    key={session.machines[i]?.id ?? i}
+                    data-machine={session.machines[i]?.name}
+                    data-best={cell.best ? 'true' : undefined}
+                    className={cell.best ? 'best' : undefined}
+                  >
+                    {cell.text}
+                    {cell.best ? <span className="best-mark"> ★</span> : null}
+                    {cell.detail ? <span className="cell-detail">{cell.detail}</span> : null}
+                  </td>
+                ))}
                 {multi ? (
-                  <td className={`verdict verdict-${row.verdict.kind}`} data-testid="verdict">
-                    {verdictText(row, session)}
+                  <td className={`verdict verdict-${row.verdict ?? 'none'}`} data-testid="verdict">
+                    {row.cells[session.machines.length]?.text}
                   </td>
                 ) : null}
               </tr>

@@ -515,7 +515,7 @@ describe('saved races', () => {
     expect(text).not.toContain(LINUX_KEY);
     expect(text).not.toContain(MAC_KEY);
     const stored = JSON.parse(text) as StoredSession;
-    expect(stored.schemaVersion).toBe(4);
+    expect(stored.schemaVersion).toBe(5);
     const run = stored.rounds[0]?.runs[0];
     const raw = run?.raw;
     expect(raw?.events.length).toBeGreaterThan(20);
@@ -710,7 +710,7 @@ describe('rounds', () => {
     await ctx.app.close();
     ctx = await testApp({ dataDir: ctx.dataDir });
     const view = await getSession(original.id);
-    expect(view.schemaVersion).toBe(4);
+    expect(view.schemaVersion).toBe(5);
     expect(view.plan).toEqual({ rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' });
     expect(view.warmup).toBeNull();
     expect(view.rounds).toHaveLength(1);
@@ -719,5 +719,105 @@ describe('rounds', () => {
     expect(view.rounds[0]?.runs[0]?.client?.decodeTokPerSec).toBe(
       original.rounds[0]?.runs[0]?.client?.decodeTokPerSec,
     );
+  });
+});
+
+describe('report and votes', () => {
+  async function finishedRace(rounds = 2): Promise<SessionView> {
+    return finished((await startSession([linuxId, macId], {}, { rounds })).id);
+  }
+
+  it('exports the session as JSON, CSV and Markdown, without keys', async () => {
+    const session = await finishedRace();
+    const json = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/export.json`,
+    });
+    expect(json.headers['content-type']).toMatch(/^application\/json/);
+    expect(json.headers['content-disposition']).toMatch(
+      /^attachment; filename="model-duel-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.json"$/,
+    );
+    expect(json.body).not.toContain(LINUX_KEY);
+    expect(json.body).not.toContain(MAC_KEY);
+    const stored = JSON.parse(json.body) as StoredSession;
+    expect(stored.rounds[0]?.runs[0]?.raw?.events.length).toBeGreaterThan(10);
+
+    const csv = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/export.csv`,
+    });
+    expect(csv.headers['content-type']).toMatch(/^text\/csv/);
+    const [comparison, roundsBlock] = csv.body.trim().split('\r\n\r\n');
+    expect(comparison?.split('\r\n')[0]).toBe('Metric,Unit,Linux,Mac,Result');
+    expect(roundsBlock?.split('\r\n').map((line) => line.split(',')[0])).toEqual([
+      'Round',
+      'Round 1',
+      'Round 2',
+    ]);
+
+    const md = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/export.md`,
+    });
+    expect(md.headers['content-type']).toMatch(/^text\/markdown/);
+    expect(md.body.split('\n')[0]).toBe('# Model Duel: Linux against Mac');
+    expect(md.body).toContain('| Decode speed (higher is better) |');
+  });
+
+  it('keeps one blind vote per round, checks it, and tallies per model pair', async () => {
+    await fetch(`${linux.url}/api/inference/load`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${LINUX_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model_path: 'unsloth/Qwen3.8-27B-GGUF',
+        gguf_variant: 'UD-IQ2_XXS',
+        max_seq_length: 0,
+        speculative_type: 'off',
+      }),
+    });
+    const started = await post({
+      ...sessionPayload([linuxId, macId], {}, { rounds: 2 }),
+      acknowledgeWarnings: true,
+    });
+    const session = await finished(started.json<SessionView>().id);
+    const vote = (body: Record<string, unknown>, id = session.id) =>
+      ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/vote`, payload: body });
+
+    const first = await vote({ round: 0, left: linuxId, right: macId, choice: 'left' });
+    expect(first.statusCode).toBe(200);
+    expect(first.json<SessionView>().votes).toHaveLength(1);
+    const changed = await vote({ round: 0, left: macId, right: linuxId, choice: 'tie' });
+    expect(changed.json<SessionView>().votes).toEqual([
+      expect.objectContaining({ round: 0, left: macId, choice: 'tie' }),
+    ]);
+    await vote({ round: 1, left: macId, right: linuxId, choice: 'right' });
+
+    expect(
+      (await vote({ round: 0, left: linuxId, right: linuxId, choice: 'left' })).statusCode,
+    ).toBe(400);
+    expect((await vote({ round: 7, left: linuxId, right: macId, choice: 'left' })).statusCode).toBe(
+      400,
+    );
+    expect(
+      (
+        await vote(
+          { round: 0, left: linuxId, right: macId, choice: 'left' },
+          '0f0f0f0f-0000-4000-8000-000000000000',
+        )
+      ).statusCode,
+    ).toBe(404);
+
+    const tally = (await ctx.app.inject({ method: 'GET', url: '/api/votes/tally' })).json<{
+      tally: Array<{ a: string; b: string; winsA: number; winsB: number; ties: number }>;
+    }>().tally;
+    expect(tally).toEqual([
+      {
+        a: 'unsloth/Qwen3.8-27B-GGUF Q4_K_M',
+        b: 'unsloth/Qwen3.8-27B-GGUF UD-IQ2_XXS',
+        winsA: 0,
+        winsB: 1,
+        ties: 1,
+      },
+    ]);
   });
 });
