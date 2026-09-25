@@ -27,7 +27,27 @@ export function summarize(values: readonly number[]): Summary {
   return { n, median, min: sorted[0] ?? null, max: sorted[n - 1] ?? null, mean, stdev };
 }
 
-/** A clear winner needs a gap of more than this between the medians. */
+/** How a machine's rounds are summed up: the median, or the average (mean). */
+export const STATISTICS = ['median', 'mean'] as const;
+export type Statistic = (typeof STATISTICS)[number];
+
+/** The plan's statistic; races from before the choice existed used the median. */
+export function statisticOf(plan: { statistic?: Statistic } | null | undefined): Statistic {
+  return plan?.statistic === 'mean' ? 'mean' : 'median';
+}
+
+/** The value a summary stands for under a statistic. */
+export function centre(summary: Summary | undefined, statistic: Statistic): number | null {
+  if (!summary) return null;
+  return statistic === 'mean' ? summary.mean : summary.median;
+}
+
+/** "median" or "average", for sentences. */
+export function statisticWord(statistic: Statistic, plural = false): string {
+  return statistic === 'mean' ? (plural ? 'averages' : 'average') : plural ? 'medians' : 'median';
+}
+
+/** A clear winner needs a gap of more than this between the medians or averages. */
 export const GATE_RATIO = 1.1;
 
 export interface Verdict {
@@ -37,34 +57,39 @@ export interface Verdict {
   leader: number | null;
   /** Index of the runner-up. */
   runnerUp: number | null;
-  /** Leader's median against the runner-up's, as "times better": always 1 or more. */
+  /** Leader's median or average against the runner-up's, as "times better": always 1 or more. */
   ratio: number | null;
-  /** Why it is a win: ranges apart, or the medians more than 10 percent apart. */
+  /** Why it is a win: ranges apart, or the medians or averages more than 10 percent apart. */
   reason: 'ranges' | 'gap' | null;
 }
 
 /**
- * The winner gate: the best median wins only when its per-round range does not overlap the
- * runner-up's, or the medians differ by more than 10 percent. Otherwise it is a tie. Ranges
- * need two rounds on both sides; a single round can only win on the gap.
+ * The winner gate: the best median (or average) wins only when its per-round range does not
+ * overlap the runner-up's, or the two differ by more than 10 percent. Otherwise it is a tie.
+ * Ranges need two rounds on both sides; a single round can only win on the gap.
  */
-export function gate(summaries: readonly Summary[], better: Better): Verdict {
+export function gate(
+  summaries: readonly Summary[],
+  better: Better,
+  statistic: Statistic = 'median',
+): Verdict {
   const none: Verdict = { kind: 'none', leader: null, runnerUp: null, ratio: null, reason: null };
   if (better === null) return none;
+  const value = (summary: Summary) => centre(summary, statistic) ?? 0;
   const ranked = summaries
     .map((summary, index) => ({ summary, index }))
-    .filter((entry) => entry.summary.median !== null)
+    .filter((entry) => centre(entry.summary, statistic) !== null)
     .sort((a, b) =>
       better === 'lower'
-        ? (a.summary.median ?? 0) - (b.summary.median ?? 0)
-        : (b.summary.median ?? 0) - (a.summary.median ?? 0),
+        ? value(a.summary) - value(b.summary)
+        : value(b.summary) - value(a.summary),
     );
   const [first, second] = ranked;
   if (!first || !second) return none;
   const a = first.summary;
   const b = second.summary;
-  const low = Math.min(Math.abs(a.median ?? 0), Math.abs(b.median ?? 0));
-  const high = Math.max(Math.abs(a.median ?? 0), Math.abs(b.median ?? 0));
+  const low = Math.min(Math.abs(value(a)), Math.abs(value(b)));
+  const high = Math.max(Math.abs(value(a)), Math.abs(value(b)));
   const ratio = low === 0 ? (high === 0 ? 1 : Infinity) : high / low;
   const base = { leader: first.index, runnerUp: second.index, ratio };
   if (ratio > GATE_RATIO) return { ...base, kind: 'win', reason: 'gap' };
@@ -91,6 +116,8 @@ export interface StatRow {
   better: Better;
   /** One summary per machine, in the order of `session.machines`. */
   summaries: Summary[];
+  /** What the verdict and the report compare: each summary's median or average. */
+  statistic: Statistic;
   verdict: Verdict;
 }
 
@@ -101,8 +128,14 @@ export function runsOf(session: SessionView, machineId: string): RunView[] {
     .filter((run): run is RunView => !!run);
 }
 
-/** Per metric and machine, over the rounds that finished. Failed rounds do not count. */
-export function sessionStats(session: SessionView): StatRow[] {
+/**
+ * Per metric and machine, over the rounds that finished. Failed rounds do not count. The
+ * statistic is the race's own unless another is asked for.
+ */
+export function sessionStats(
+  session: SessionView,
+  statistic: Statistic = statisticOf(session.plan),
+): StatRow[] {
   return metricsFor(metricKind(session)).map((metric) => {
     const summaries = session.machines.map((machine) =>
       summarize(
@@ -118,7 +151,8 @@ export function sessionStats(session: SessionView): StatRow[] {
       unit: metric.unit,
       better: metric.better,
       summaries,
-      verdict: gate(summaries, metric.better),
+      statistic,
+      verdict: gate(summaries, metric.better, statistic),
     };
   });
 }

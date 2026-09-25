@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { metricKind, metricsFor, type MetricKind } from './compare';
 import { scoreboard, setupTable } from './report';
 import { publicRun, publicSession, type StoredSession } from './session';
-import { sessionStats } from './stats';
+import { sessionStats, statisticOf } from './stats';
 
 /**
  * The public result file: one finished race, with every measurement Model Duel took, in a stable,
@@ -107,6 +107,8 @@ export const resultSchema = z.object({
       warmup: z.boolean(),
       settleMs: z.number(),
       sequencing: z.enum(['concurrent', 'sequential']),
+      /** What the verdicts compare: each machine's median or average. Files before it: median. */
+      statistic: z.enum(['median', 'mean']).optional(),
     }),
     telemetry: z.object({ enabled: z.boolean() }),
   }),
@@ -325,7 +327,7 @@ export function buildResult(
     kind,
     settings: {
       config: structuredClone(session.config) as unknown as Record<string, unknown>,
-      plan: { ...session.plan },
+      plan: { ...session.plan, statistic: statisticOf(session.plan) },
       telemetry: { ...session.telemetry },
     },
     machines: session.machines.map((machine, i) => {

@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.14, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.15, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -14,7 +14,8 @@ built in phase 8, in section 7. v2.8 records transcription as built in phase 9, 
 6 and 9. v2.9 records image generation, verified from source and built in phase 10, in sections
 2.5, 4.3, 6 and 9. v2.10 records throughput mode as built in phase 11, in sections 4.1, 6 and 9. v2.11 records the agent and the
 command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
-sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2.
+sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2. v2.15 allows up to 100 rounds summed up by
+median or average (phase 16), in sections 5 and 6.
 
 ## 0. Decisions so far
 
@@ -552,6 +553,9 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
     (more than 1.10), the leader is compared with the runner-up only, and ranges count only when both
     machines have at least two finished rounds. Phase 5 measured the noise floor on the RTX machine at a
     decode-speed standard deviation of 1.6 percent of the median over five rounds, well inside the gate.
+    Since phase 16 the plan's `statistic` (`median` by default, or `mean`) picks what the gate, the
+    comparison, the scoreboard, the exports and the result file compare; a finished race can switch,
+    and races without the field used the median. A race runs 1 to 100 rounds.
 15. Decoding path: `speculative_type` is sent explicitly and identically at load, `off` by default for
     benchmarks; `auto` can be tested as a labelled variant. Pre-flight compares the engaged speculative
     method, KV cache type, backend (GGUF or MLX) and GPU memory mode across machines, and a
@@ -581,6 +585,8 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   {provider, apiKey?, baseUrl?, machineId?}` answers `{models}` from the provider, with a saved
   participant's key when `apiKey` is empty, or 502 with the provider's refusal in words. A cloud
   participant answers 400 to a probe and is left out of hosts, status and telemetry.
+- `POST /api/sessions/:id/statistic {statistic: median | mean}` switches a finished race and rewrites
+  its result file (phase 16). Session summaries carry `statistic`.
 - Results (phase 15): `GET /api/runs` answers `{runs}`, one row per machine per finished race,
   newest race first (section 7.2).
 - `POST /api/machines/:id/reload-slots {slots}` loads the machine's chat model again with that many
@@ -646,7 +652,7 @@ ran for the workload (the chat model for text, the STT model and engine for tran
 image repo and the quant in its GGUF file name for images, the encoder for commands); the chat
 model's context, KV cache type, GPU layers, slots, speculative decoding and GPU memory mode; the
 prompt, prompt tokens, prefill, thinking and Max tokens; the workload's other settings in a few
-words; every metric's median; the metrics it won in its race; and its state (`done`, `partial`,
+words; every metric's median and average; the metrics it won in its race; and its state (`done`, `partial`,
 `failed`, `cancelled`, `interrupted`). Unsloth reports the KV cache's type, not its size.
 
 The server builds a race's rows once and keeps them until the race is saved again or deleted. The
@@ -702,7 +708,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: fifteen phases in five milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: sixteen phases in five milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions

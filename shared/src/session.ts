@@ -18,6 +18,7 @@ import {
   type TranscribeConfig,
 } from './transcribe';
 import type { CloudConfig } from './cloud';
+import { statisticOf, type Statistic } from './stats';
 import {
   commandConfigSchema,
   TEMPLATE_INFO,
@@ -35,7 +36,7 @@ import { imageConfigSchema, imagePrompt, type ImageConfig, type ImageStatus } fr
  */
 export const SESSION_SCHEMA_VERSION = 9;
 export const MAX_RACE_MACHINES = 8;
-export const MAX_ROUNDS = 10;
+export const MAX_ROUNDS = 100;
 
 /** How a session runs: rounds, warm-up, pause between rounds, and whether machines take turns. */
 export const runPlanSchema = z.object({
@@ -54,6 +55,8 @@ export const runPlanSchema = z.object({
     .default(2000),
   /** `sequential` runs one machine at a time, in ABBA order. */
   sequencing: z.enum(['concurrent', 'sequential']).default('concurrent'),
+  /** How the rounds are summed up; races from before it existed used the median. */
+  statistic: z.enum(['median', 'mean']).optional(),
 });
 export type RunPlan = z.infer<typeof runPlanSchema>;
 export const DEFAULT_PLAN: RunPlan = runPlanSchema.parse({});
@@ -281,6 +284,8 @@ export interface SessionSummary {
   /** The prompt, or a line about the audio and model. */
   prompt: string;
   rounds: number;
+  /** How its rounds are summed up in the log line and the report. */
+  statistic: Statistic;
   /** Blind votes cast on this session, with the models named. */
   votes: LabeledVote[];
   machines: Array<{
@@ -497,6 +502,10 @@ export function audioLabel(config: TranscribeConfig): string {
   return `Transcribe ${audioSource(config)} with ${config.model} on ${config.engine}`;
 }
 
+function meanOf(values: number[]): number | null {
+  return values.length === 0 ? null : values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
 function medianOf(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -516,14 +525,16 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
     workload: session.workload,
     prompt: sessionLabel(session),
     rounds: session.rounds.length,
+    statistic: statisticOf(session.plan),
     votes: labelVotes(session),
     machines: session.machines.map((machine) => {
       const runs = session.rounds
         .map((round) => round.runs.find((r) => r.machineId === machine.id))
         .filter((run): run is RunView => !!run);
       const done = runs.filter((run) => run.state === 'done');
+      const average = statisticOf(session.plan) === 'mean' ? meanOf : medianOf;
       const pick = (get: (run: RunView) => number | null | undefined) =>
-        medianOf(done.map(get).filter((v): v is number => typeof v === 'number'));
+        average(done.map(get).filter((v): v is number => typeof v === 'number'));
       const last = runs[runs.length - 1];
       return {
         id: machine.id,

@@ -19,6 +19,7 @@ import type {
   SessionRequest,
   SessionSummary,
   SessionView,
+  Statistic,
   AgentHealth,
   ImageModelView,
   ImageStatus,
@@ -109,6 +110,8 @@ const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
   runs: () => call<{ runs: DeviceRun[] }>('GET', '/api/runs'),
+  setStatistic: (id: string, statistic: Statistic) =>
+    call<SessionView>('POST', `/api/sessions/${encodeURIComponent(id)}/statistic`, { statistic }),
   createMachine: (input: MachineCreateInput) => call<MachineView>('POST', '/api/machines', input),
   updateMachine: (id: string, input: MachineUpdateInput) =>
     call<MachineView>('PUT', machineUrl(id), input),

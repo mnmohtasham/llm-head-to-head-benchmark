@@ -5,10 +5,12 @@ import {
   sessionStats,
   type DeviceRun,
   type MachineView,
+  type ResultFile,
   type RunPlan,
   type SessionView,
 } from '@duel/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { verifyResult } from '../src/results';
 import { testApp } from './helpers';
 
 const LINUX_KEY = 'sk-unsloth-runs-linux-00000000000000001';
@@ -19,7 +21,7 @@ let mac: RunningMock;
 let ctx: Awaited<ReturnType<typeof testApp>>;
 let ids: string[];
 
-async function race(): Promise<SessionView> {
+async function race(plan: Partial<RunPlan> = {}): Promise<SessionView> {
   const started = await ctx.app.inject({
     method: 'POST',
     url: '/api/sessions',
@@ -32,7 +34,7 @@ async function race(): Promise<SessionView> {
         thinking: false,
         reasoningEffort: null,
       },
-      plan: TWO_ROUNDS,
+      plan: { ...TWO_ROUNDS, ...plan },
     },
   });
   expect(started.statusCode, started.body).toBe(201);
@@ -137,5 +139,70 @@ describe('the Results rows', () => {
     ]);
     await ctx.app.inject({ method: 'DELETE', url: `/api/sessions/${second.id}` });
     expect((await runs()).map((r) => r.sessionId)).toEqual([first.id, first.id]);
+  });
+});
+
+describe('median or average', () => {
+  it('runs more than ten rounds, and summarises them as the plan asks', async () => {
+    const session = await race({ rounds: 12, statistic: 'mean' });
+    expect(session.rounds).toHaveLength(12);
+    expect(session.plan.statistic).toBe('mean');
+    const rows = await runs();
+    expect(rows[0]).toMatchObject({ rounds: 12, roundsDone: 12 });
+    const stats = sessionStats(publicSession(session));
+    expect(rows[0]?.means.decode).toBe(stats.find((r) => r.key === 'decode')?.summaries[0]?.mean);
+
+    const tooMany = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      payload: {
+        workload: 'text',
+        machineIds: ids,
+        config: { prompt: 'Hi', maxTokens: 64, thinking: false, reasoningEffort: null },
+        plan: { ...TWO_ROUNDS, rounds: 101 },
+      },
+    });
+    expect(tooMany.statusCode).toBe(400);
+    expect(tooMany.body).toContain('Run at most 100 rounds.');
+  });
+
+  it('switches a finished race between median and average, result file included', async () => {
+    const session = await race();
+    expect(session.plan.statistic).toBeUndefined();
+    const result = async () =>
+      (
+        await ctx.app.inject({ method: 'GET', url: `/api/sessions/${session.id}/result.json` })
+      ).json<ResultFile>();
+    expect((await result()).settings.plan.statistic).toBe('median');
+
+    const switched = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/statistic`,
+      payload: { statistic: 'mean' },
+    });
+    expect(switched.statusCode, switched.body).toBe(200);
+    expect(switched.json<SessionView>().plan.statistic).toBe('mean');
+    const file = await result();
+    expect(file.settings.plan.statistic).toBe('mean');
+    expect(verifyResult(file)).toBe(true);
+    const list = (await ctx.app.inject({ method: 'GET', url: '/api/sessions' })).json<
+      | Array<{ id: string; statistic: string }>
+      | { sessions: Array<{ id: string; statistic: string }> }
+    >();
+    const summaries = Array.isArray(list) ? list : list.sessions;
+    expect(summaries.find((s) => s.id === session.id)?.statistic).toBe('mean');
+
+    const bad = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/statistic`,
+      payload: { statistic: 'mode' },
+    });
+    expect(bad.statusCode).toBe(400);
+    const missing = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/sessions/00000000-0000-4000-8000-000000000000/statistic',
+      payload: { statistic: 'mean' },
+    });
+    expect(missing.statusCode).toBe(404);
   });
 });

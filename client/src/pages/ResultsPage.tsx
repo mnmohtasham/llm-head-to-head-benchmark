@@ -6,6 +6,7 @@ import {
   type MetricKind,
   type RunColumn,
   type RunsView,
+  type Statistic,
 } from '@duel/shared';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { api, messageOf } from '../api';
@@ -29,6 +30,15 @@ const MAIN_FILTERS = new Set([
   'settings',
 ]);
 const columnsKey = (view: RunsView) => `model-duel:results-columns:${view}`;
+const STATISTIC_KEY = 'model-duel:results-statistic';
+
+function savedStatistic(): Statistic {
+  try {
+    return localStorage.getItem(STATISTIC_KEY) === 'mean' ? 'mean' : 'median';
+  } catch {
+    return 'median';
+  }
+}
 
 /** The columns this viewer picked for a view, kept in this browser only. */
 function savedColumns(view: RunsView): string[] | null {
@@ -84,6 +94,15 @@ export function ResultsPage() {
   const [unfinished, setUnfinished] = useState(false);
   const [sort, setSort] = useState<Sort>({ id: 'date', dir: 'desc' });
   const [picked, setPicked] = useState<Partial<Record<RunsView, string[] | null>>>({});
+  const [statistic, setStatisticState] = useState<Statistic>(savedStatistic);
+  const setStatistic = (next: Statistic) => {
+    setStatisticState(next);
+    try {
+      localStorage.setItem(STATISTIC_KEY, next);
+    } catch {
+      // Kept until reload.
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +138,7 @@ export function ResultsPage() {
       ? chosenView
       : fallback;
 
-  const allColumns = useMemo(() => runColumns(view), [view]);
+  const allColumns = useMemo(() => runColumns(view, statistic), [view, statistic]);
   const chosenIds = picked[view] !== undefined ? picked[view] : savedColumns(view);
   const visible = allColumns.filter((c) =>
     c.id === 'machine' ? true : chosenIds ? chosenIds.includes(c.id) : c.initial,
@@ -234,9 +253,9 @@ export function ResultsPage() {
       />
       <main className="main">
         <p className="subbar">
-          One row per machine per finished race, with the medians of its counted rounds. Filter to
-          compare GPUs, models and settings across races; the best value of each measurement among
-          the rows shown is marked. The date opens the race.
+          One row per machine per finished race, with the median or average of its counted rounds.
+          Filter to compare GPUs, models and settings across races; the best value of each
+          measurement among the rows shown is marked. The date opens the race.
         </p>
         {loadError ? (
           <div className="banner banner-error" role="alert">
@@ -284,6 +303,34 @@ export function ResultsPage() {
                           ? [...counts.values()].reduce((a, b) => a + b, 0)
                           : (counts.get(option) ?? 0)}
                       </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span className="field-label" id="results-statistic-label">
+                  Rounds summed up by
+                </span>
+                <div
+                  className="toggle-chips"
+                  role="radiogroup"
+                  aria-labelledby="results-statistic-label"
+                >
+                  {(
+                    [
+                      ['median', 'Median'],
+                      ['mean', 'Average'],
+                    ] as const
+                  ).map(([option, label]) => (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={statistic === option}
+                      className={`toggle-chip${statistic === option ? ' toggle-chip-on' : ''}`}
+                      onClick={() => setStatistic(option)}
+                    >
+                      {label}
                     </button>
                   ))}
                 </div>

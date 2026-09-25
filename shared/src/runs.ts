@@ -13,11 +13,11 @@ import {
   type StoredSession,
   type Workload,
 } from './session';
-import { runsOf, sessionStats } from './stats';
+import { runsOf, sessionStats, statisticWord, type Statistic } from './stats';
 
 /**
  * One row per machine per race, for the Results tab: what the machine was, what it ran and how,
- * and its medians over the counted rounds. The numbers are the report's own, from `sessionStats`.
+ * and its medians and averages over the counted rounds, the report's own numbers from `sessionStats`.
  */
 export type DeviceRunState = 'done' | 'partial' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -78,6 +78,8 @@ export interface DeviceRun {
 
   /** Medians over the counted rounds that finished, by metric key; `finish` is text. */
   metrics: Record<string, number | string | null>;
+  /** Averages over the same rounds; `finish` is text, as in `metrics`. */
+  means: Record<string, number | string | null>;
   /** Metrics this machine won in its race, past the noise gate. */
   wins: string[];
 }
@@ -203,12 +205,16 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
     }
 
     const metrics: Record<string, number | string | null> = {};
+    const means: Record<string, number | string | null> = {};
     const wins: string[] = [];
     for (const row of stats) {
-      metrics[row.key] =
-        row.unit === 'text'
-          ? counted(done.map((run) => run.client?.finishReason ?? run.state))
-          : (row.summaries[i]?.median ?? null);
+      if (row.unit === 'text') {
+        metrics[row.key] = counted(done.map((run) => run.client?.finishReason ?? run.state));
+        means[row.key] = metrics[row.key] ?? null;
+      } else {
+        metrics[row.key] = row.summaries[i]?.median ?? null;
+        means[row.key] = row.summaries[i]?.mean ?? null;
+      }
       if (row.verdict.kind === 'win' && row.verdict.leader === i) wins.push(row.key);
     }
 
@@ -291,6 +297,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       settings,
 
       metrics,
+      means,
       wins,
     };
   });
@@ -363,8 +370,21 @@ const STATE_TEXT: Record<DeviceRunState, string> = {
   interrupted: 'interrupted',
 };
 
-/** The columns for one kind of race, or for every kind at once. */
-export function runColumns(view: RunsView): RunColumn[] {
+/** A row's median or average of a metric. */
+export function runMetric(
+  run: DeviceRun,
+  key: string,
+  statistic: Statistic,
+): number | string | null {
+  return (statistic === 'mean' ? run.means : run.metrics)[key] ?? null;
+}
+
+/**
+ * The columns for one kind of race, or for every kind at once, with each metric's median or
+ * average.
+ */
+export function runColumns(view: RunsView, statistic: Statistic = 'median'): RunColumn[] {
+  const summed = `${statisticWord(statistic).replace(/^./, (c) => c.toUpperCase())} over the counted rounds`;
   const chat = view === 'text' || view === 'throughput' || view === 'all';
   const columns: RunColumn[] = [
     {
@@ -727,12 +747,12 @@ export function runColumns(view: RunsView): RunColumn[] {
       label: 'Headline',
       group: 'Result',
       value: (r) => {
-        const v = r.metrics[HEADLINE[r.kind]];
+        const v = runMetric(r, HEADLINE[r.kind], statistic);
         return typeof v === 'number' ? v : null;
       },
       text: (r) => {
         const spec = metricsFor(r.kind).find((m) => m.key === HEADLINE[r.kind]);
-        const v = r.metrics[HEADLINE[r.kind]];
+        const v = runMetric(r, HEADLINE[r.kind], statistic);
         return spec && typeof v === 'number'
           ? `${formatValue(v, spec.unit)} ${spec.label.toLowerCase()}`
           : EMPTY;
@@ -749,9 +769,9 @@ export function runColumns(view: RunsView): RunColumn[] {
         id: `metric:${spec.key}`,
         label: spec.label,
         group: 'Result',
-        value: (r) => r.metrics[spec.key] ?? null,
+        value: (r) => runMetric(r, spec.key, statistic),
         text: (r) => {
-          const v = r.metrics[spec.key];
+          const v = runMetric(r, spec.key, statistic);
           return typeof v === 'number' ? formatValue(v, spec.unit) : show(v);
         },
         numeric: spec.unit !== 'text',
@@ -759,10 +779,10 @@ export function runColumns(view: RunsView): RunColumn[] {
         initial: initial.includes(spec.key),
         hint:
           spec.better === 'lower'
-            ? 'Median over the counted rounds; lower is better'
+            ? `${summed}; lower is better`
             : spec.better === 'higher'
-              ? 'Median over the counted rounds; higher is better'
-              : 'Median over the counted rounds',
+              ? `${summed}; higher is better`
+              : summed,
         unit: spec.unit,
         better: spec.better,
       });

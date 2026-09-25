@@ -88,6 +88,10 @@
             "sequencing": {
               "type": "string",
               "enum": ["concurrent", "sequential"]
+            },
+            "statistic": {
+              "type": "string",
+              "enum": ["median", "mean"]
             }
           },
           "required": ["rounds", "warmup", "settleMs", "sequencing"],
