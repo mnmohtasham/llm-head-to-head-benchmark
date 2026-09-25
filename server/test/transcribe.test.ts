@@ -171,7 +171,8 @@ describe('a transcription race', () => {
     expect(fast?.uploadMs).toBeGreaterThan(0);
     expect(fast?.processingMs).toBeGreaterThanOrEqual(140 - 5);
     expect(fast?.processingMs).toBeLessThan(140 + 150);
-    expect(fast?.serverProcessingMs).toBeGreaterThanOrEqual(135);
+    // Unsloth's raw route keeps no monitor row, so there is no server-side time to compare.
+    expect(fast?.serverProcessingMs).toBeNull();
     expect(fast?.rtf).toBeCloseTo(LIBRISPEECH_CLIP.seconds / ((fast?.processingMs ?? 1) / 1000), 1);
     expect(slow?.processingMs).toBeGreaterThanOrEqual(351 - 5);
     // The mocks change every 48th word on Linux GGUF and every 36th on Mac transformers.
@@ -190,7 +191,9 @@ describe('a transcription race', () => {
     expect(provenance?.request).toMatchObject({
       model: 'large-v3-turbo',
       language: 'en',
-      response_format: 'verbose_json',
+      engine: 'gguf',
+      device: 'auto',
+      route: '/api/inference/audio/transcribe/raw',
       file: `${LIBRISPEECH_CLIP.file}, ${LIBRISPEECH_CLIP.bytes} bytes`,
     });
     expect(provenance?.sttAfter).toMatchObject({
@@ -211,6 +214,16 @@ describe('a transcription race', () => {
     expect(summary).toMatchObject({ workload: 'transcribe' });
     expect(summary?.prompt).toBe('Transcribe LibriSpeech clip, 70 s with large-v3-turbo on gguf');
     expect(summary?.machines.find((m) => m.id === linuxId)?.wer).toBeCloseTo(3 / 190);
+  });
+
+  it('falls back to the multipart route on an Unsloth without the raw one, which ignores the engine', async () => {
+    await control(linux, { routes: { '/api/inference/audio/transcribe/raw': { missing: true } } });
+    const session = await race([linuxId]);
+    const t = session.rounds[0]?.runs[0]?.transcription;
+    // The route serves Whisper with Transformers, as Unsloth's does, and leaves a monitor row.
+    expect(t?.engine).toBe('transformers');
+    expect(t?.serverProcessingMs).toBeGreaterThanOrEqual(135);
+    expect(session.provenance[0]?.request).toMatchObject({ route: '/v1/audio/transcriptions' });
   });
 
   it('reloads a model the sidecar let go between rounds, and warms up on a short piece', async () => {

@@ -190,6 +190,15 @@ Behaviours that matter:
   downloaded_models, download}`. `mtmd` offers `qwen3-asr-0.6b` and `qwen3-asr-1.7b`. Loading a model that
   is not in `downloaded_models` starts a download, so pre-flight refuses it.
 - `DELETE /api/inference/monitor` clears the caller's own monitor rows.
+- **The OpenAI-shaped route ignores the loaded engine.** `/v1/audio/transcriptions` serves a Whisper id
+  with the default engine, Transformers, whatever `stt/load` loaded; only Qwen3-ASR ids go to mtmd. A
+  GGUF race through it failed on the RTX machine with "STT model 'large-v3-turbo' is not downloaded",
+  because only the GGUF copy was on disk. Unsloth's own `POST /api/inference/audio/transcribe/raw` takes
+  the audio as the raw body and `model`, `language`, `engine` and `device` in the query, and answers
+  `{text, language, duration, model}`. Model Duel uses it, and falls back to the multipart route only
+  when it answers 404 or 405. Only the multipart route leaves a monitor row, so Unsloth's own
+  processing time is missing on the raw route. Loads and transcriptions of a model that is not on disk
+  answer 409.
 
 ### 2.5 Image generation
 
@@ -205,6 +214,11 @@ are under `/api/inference/images/` only.
   bytes_total, fraction, error}`) until `ready` or `error`. A model that is not on disk is **downloaded**,
   so pre-flight must check the files first. Loading the same model again rebuilds it; there is no
   already-loaded shortcut. 409 for a load in flight, active training, or `gpu_busy` from another account.
+- Load-progress reports no phase only when no load is in flight and no model is loaded. Model Duel waits
+  30 s before treating that as a failed load, and trusts `images/status` in the meantime. A load of the
+  full FLUX.2-klein-9B pipeline on the RTX machine ran past 30 minutes; Model Duel now stops a load it
+  started after 20 minutes, or when the race is cancelled, with `POST .../unload`, so it cannot finish
+  later and hold the GPU, and does not try a model that failed to load again in later rounds.
 - **GPU hand-off:** a GPU image load evicts the chat model (llama-server) as the load starts, even if the
   load then fails. Nothing reloads it; an explicit `POST /api/inference/load` brings it back and evicts the
   image model in turn. STT is not part of this hand-off.

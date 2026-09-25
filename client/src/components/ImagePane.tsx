@@ -105,6 +105,20 @@ export function ImagePane({ machine, modelName, sessionId, run, size, telemetry 
         </div>
       </div>
 
+      {running && run.live?.load ? (
+        <div className="step-progress" data-testid="load-progress">
+          {run.live.load.fraction !== null && run.live.load.phase === 'downloading' ? (
+            <progress value={run.live.load.fraction} max={1} aria-label={`${machine.name} load`} />
+          ) : null}
+          <span className="field-hint">
+            {run.live.load.phase === 'downloading'
+              ? `Loading the model: fetching files${run.live.load.fraction !== null ? `, ${Math.round(run.live.load.fraction * 100)}%` : ''}`
+              : run.live.load.phase === 'finalizing'
+                ? 'Loading the model into memory…'
+                : 'Loading the model…'}
+          </span>
+        </div>
+      ) : null}
       {running && steps && steps.total > 0 ? (
         <div className="step-progress" data-testid="step-progress">
           <progress value={steps.done} max={steps.total} aria-label={`${machine.name} steps`} />

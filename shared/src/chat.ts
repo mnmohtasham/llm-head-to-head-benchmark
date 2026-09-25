@@ -474,6 +474,8 @@ export interface LiveMetrics {
   requests?: { done: number; total: number } | null;
   /** Command runs: frames encoded so far, out of the clip's, when known. */
   frames?: { done: number; total: number | null } | null;
+  /** Image runs, while the model loads: Unsloth's load phase and the share downloaded. */
+  load?: { phase: string | null; fraction: number | null } | null;
 }
 
 /** One of the requests a machine served at once in throughput mode. */

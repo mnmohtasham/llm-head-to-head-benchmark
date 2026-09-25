@@ -113,58 +113,50 @@ export interface TranscribeOutcome {
   body: unknown;
   error: string | null;
   cancelled: boolean;
+  /**
+   * `raw` is Unsloth's own route, which honours the engine and device; `openai` is the multipart
+   * route, used only when the other is missing, which serves Whisper models with Unsloth's default
+   * engine whatever was loaded, and is the only one that leaves a monitor row.
+   */
+  route: 'raw' | 'openai';
+}
+
+export interface TranscribeRequest {
+  model: string;
+  language: string;
+  engine: string;
+  device: string;
 }
 
 /**
- * Posts the audio as multipart form data, streaming the body so the moment its last byte leaves
- * can be stamped. Upload time runs to that moment; processing time from it to the answer.
+ * Streams a body made of a head, the audio and a tail, stamping the moment its last byte is handed
+ * to the network. Upload time runs to that moment; processing time from it to the answer.
  */
-export async function transcribe(
-  machine: StoredMachine,
-  audio: Audio,
-  fields: Record<string, string>,
+async function postStreamed(
+  url: string,
+  headers: Record<string, string>,
+  head: Uint8Array[],
+  audio: Uint8Array,
+  tail: Uint8Array | null,
   options: { signal: AbortSignal; timeoutMs: number },
-): Promise<TranscribeOutcome> {
-  const boundary = `----modelduel${Math.random().toString(16).slice(2)}`;
-  const parts: Uint8Array[] = [];
-  const encoder = new TextEncoder();
-  for (const [name, value] of Object.entries(fields)) {
-    parts.push(
-      encoder.encode(
-        `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
-      ),
-    );
-  }
-  parts.push(
-    encoder.encode(
-      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${audio.name.replace(/"/g, '')}"\r\nContent-Type: ${audio.contentType}\r\n\r\n`,
-    ),
-  );
-  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
-  const length = parts.reduce((sum, p) => sum + p.length, 0) + audio.bytes.length + tail.length;
+): Promise<Omit<TranscribeOutcome, 'route'>> {
+  const length = head.reduce((sum, p) => sum + p.length, 0) + audio.length + (tail?.length ?? 0);
   let bodySentAt: number | null = null;
   const chunkSize = 64 * 1024;
   async function* body() {
-    for (const part of parts) yield part;
-    for (let at = 0; at < audio.bytes.length; at += chunkSize) {
-      yield audio.bytes.subarray(at, at + chunkSize);
-    }
-    yield tail;
+    for (const part of head) yield part;
+    for (let at = 0; at < audio.length; at += chunkSize) yield audio.subarray(at, at + chunkSize);
+    if (tail) yield tail;
     bodySentAt = performance.now();
   }
   const agent = new Agent({ connect: { timeout: 10_000 } });
   const total = AbortSignal.timeout(options.timeoutMs);
   const signal = AbortSignal.any([options.signal, total]);
-  const headers: Record<string, string> = {
-    'content-type': `multipart/form-data; boundary=${boundary}`,
-    'content-length': String(length),
-  };
-  if (machine.apiKey) headers.authorization = `Bearer ${machine.apiKey}`;
   const requestAt = performance.now();
   try {
-    const response = await request(`${machine.baseUrl}/v1/audio/transcriptions`, {
+    const response = await request(url, {
       method: 'POST',
-      headers,
+      headers: { ...headers, 'content-length': String(length) },
       body: Readable.from(body()),
       dispatcher: agent,
       signal,
@@ -207,4 +199,57 @@ export async function transcribe(
   } finally {
     await agent.destroy().catch(() => undefined);
   }
+}
+
+/**
+ * Sends the audio to Unsloth's raw transcription route, which takes the engine and device. Unsloth
+ * versions without it get the OpenAI-shaped multipart route instead, which ignores the engine.
+ */
+export async function transcribe(
+  machine: StoredMachine,
+  audio: Audio,
+  fields: TranscribeRequest,
+  options: { signal: AbortSignal; timeoutMs: number },
+): Promise<TranscribeOutcome> {
+  const auth: Record<string, string> = machine.apiKey
+    ? { authorization: `Bearer ${machine.apiKey}` }
+    : {};
+  const query = new URLSearchParams({
+    model: fields.model,
+    language: fields.language,
+    engine: fields.engine,
+    device: fields.device,
+  });
+  const raw = await postStreamed(
+    `${machine.baseUrl}/api/inference/audio/transcribe/raw?${query.toString()}`,
+    { ...auth, 'content-type': 'application/octet-stream' },
+    [],
+    audio.bytes,
+    null,
+    options,
+  );
+  if (raw.status !== 404 && raw.status !== 405) return { ...raw, route: 'raw' };
+
+  const boundary = `----modelduel${Math.random().toString(16).slice(2)}`;
+  const encoder = new TextEncoder();
+  const form = { model: fields.model, language: fields.language, response_format: 'verbose_json' };
+  const head = Object.entries(form).map(([name, value]) =>
+    encoder.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+    ),
+  );
+  head.push(
+    encoder.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${audio.name.replace(/"/g, '')}"\r\nContent-Type: ${audio.contentType}\r\n\r\n`,
+    ),
+  );
+  const openai = await postStreamed(
+    `${machine.baseUrl}/v1/audio/transcriptions`,
+    { ...auth, 'content-type': `multipart/form-data; boundary=${boundary}` },
+    head,
+    audio.bytes,
+    encoder.encode(`\r\n--${boundary}--\r\n`),
+    options,
+  );
+  return { ...openai, route: 'openai' };
 }

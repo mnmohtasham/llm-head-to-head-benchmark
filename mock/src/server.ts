@@ -176,7 +176,7 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
 
   const app = Fastify({ logger: false, forceCloseConnections: true, bodyLimit: 1024 * 1024 });
   app.addContentTypeParser(
-    /^multipart\/form-data/,
+    /^(multipart\/form-data|application\/octet-stream|audio\/)/,
     { parseAs: 'buffer', bodyLimit: 512 * 1024 * 1024 },
     (_request, body, done) => done(null, body),
   );
@@ -500,9 +500,10 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     const engine = servedEngine(profile(), wanted);
     if (!engine) return { status: 400, detail: `The ${wanted} engine is not available here.` };
     if (!STT_DOWNLOADED[engine].includes(model)) {
+      // Unsloth's own words; a real load would not download either.
       return {
-        status: 400,
-        detail: `${model} is not downloaded for ${engine}, and the mock does not download.`,
+        status: 409,
+        detail: `STT model '${model}'${engine === 'gguf' ? ' (GGUF)' : ''} is not downloaded. Download it in Settings, then Voice, before loading it.`,
       };
     }
     if (stt.loading) return { status: 409, detail: 'A speech model is already loading.' };
@@ -533,33 +534,36 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     return { status: 'unloaded' };
   });
 
-  route('POST', '/v1/audio/transcriptions', true, async (request, reply) => {
-    const body = request.body;
-    const parts = Buffer.isBuffer(body)
-      ? parseMultipart(body, String(request.headers['content-type'] ?? ''))
-      : null;
-    const file = parts?.find((part) => part.name === 'file');
-    if (!parts || !file)
-      return openAiError(reply, 400, 'Send the audio as the multipart field "file".');
-    const field = (name: string) => parts.find((part) => part.name === name)?.data.toString('utf8');
+  /**
+   * Transcribes with the model on the engine asked for, loading it first when needed, as Unsloth's
+   * sidecar does. Only the OpenAI-shaped route leaves a monitor row.
+   */
+  const serveTranscription = async (
+    audio: Buffer,
+    filename: string,
+    model: string,
+    engine: SttEngine,
+    device: string,
+    monitored: boolean,
+  ): Promise<{ status: number; detail: string } | { text: string; seconds: number }> => {
     expireIdle(stt, config.stt);
-    const model = field('model') ?? stt.loaded?.model ?? 'small';
-    if (!stt.loaded || stt.loaded.model !== model) {
-      const failed = await loadSpeechModel(model, stt.loaded?.engine ?? 'transformers', 'auto');
-      if (failed) return openAiError(reply, failed.status, failed.detail);
+    const served = servedEngine(profile(), engine);
+    if (!stt.loaded || stt.loaded.model !== model || stt.loaded.engine !== served) {
+      const failed = await loadSpeechModel(model, engine, device);
+      if (failed) return failed;
     }
     const loaded = stt.loaded;
-    if (!loaded) return openAiError(reply, 409, 'The speech model is not loaded.');
-    const heard = transcriptFor(profile(), loaded.engine, file.data);
+    if (!loaded) return { status: 409, detail: 'The speech model is not loaded.' };
+    const heard = transcriptFor(profile(), loaded.engine, audio);
     const ms = processingMs(profile(), loaded.engine, heard.seconds, config.stt);
     const started = Date.now();
-    const entry: MonitorEntry = {
+    const entry = {
       id: randomBytes(8).toString('hex'),
       endpoint: '/v1/audio/transcriptions',
       method: 'POST',
       model: loaded.model,
       via_api_key: true,
-      prompt_preview: file.filename ?? 'audio',
+      prompt_preview: filename,
       reply_preview: '',
       status: 'streaming',
       started_at: started / 1000,
@@ -575,8 +579,10 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       decode_ms: null,
       stop_reason: null,
     } as MonitorEntry;
-    monitor.unshift(entry);
-    if (monitor.length > 100) monitor.pop();
+    if (monitored) {
+      monitor.unshift(entry);
+      if (monitor.length > 100) monitor.pop();
+    }
     state.activeStreams += 1;
     try {
       await sleep(ms);
@@ -592,6 +598,33 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       duration_ms: finished - started,
     });
     stt.lastUsedAt = finished;
+    return heard;
+  };
+
+  /**
+   * The OpenAI-shaped route. Like Unsloth, it serves a Whisper id with the default engine,
+   * Transformers, whatever engine was loaded; only Qwen3-ASR ids go to mtmd.
+   */
+  route('POST', '/v1/audio/transcriptions', true, async (request, reply) => {
+    const body = request.body;
+    const parts = Buffer.isBuffer(body)
+      ? parseMultipart(body, String(request.headers['content-type'] ?? ''))
+      : null;
+    const file = parts?.find((part) => part.name === 'file');
+    if (!parts || !file)
+      return openAiError(reply, 400, 'Send the audio as the multipart field "file".');
+    const field = (name: string) => parts.find((part) => part.name === name)?.data.toString('utf8');
+    const model = field('model') ?? 'small';
+    const engine: SttEngine = /^qwen3-asr/i.test(model) ? 'mtmd' : 'transformers';
+    const heard = await serveTranscription(
+      file.data,
+      file.filename ?? 'audio',
+      model,
+      engine,
+      'auto',
+      true,
+    );
+    if ('detail' in heard) return openAiError(reply, heard.status, heard.detail);
     const language = field('language') ?? 'en';
     const format = field('response_format') ?? 'json';
     if (format === 'text') return reply.type('text/plain').send(heard.text);
@@ -605,6 +638,34 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       };
     }
     return { text: heard.text };
+  });
+
+  /** Unsloth's own route: the raw audio as the body, and the engine and device honoured. */
+  route('POST', '/api/inference/audio/transcribe/raw', true, async (request, reply) => {
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return reply.code(400).send({ detail: 'No audio provided.' });
+    }
+    const query = request.query as Record<string, string | undefined>;
+    const model = query.model ?? 'small';
+    const engine = (STT_ENGINES as readonly string[]).includes(query.engine ?? '')
+      ? (query.engine as SttEngine)
+      : 'transformers';
+    const heard = await serveTranscription(
+      body,
+      'audio',
+      model,
+      engine,
+      query.device ?? 'auto',
+      false,
+    );
+    if ('detail' in heard) return reply.code(heard.status).send({ detail: heard.detail });
+    return {
+      text: heard.text,
+      language: query.language ?? 'en',
+      duration: Number(heard.seconds.toFixed(3)),
+      model,
+    };
   });
 
   const detail = (reply: FastifyReply, status: number, message: string) =>
