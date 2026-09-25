@@ -4,12 +4,14 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 6 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 7 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
-check that stops races that would not be fair. Live telemetry arrives in phase 7, and the
-transcription and image benchmarks later. [PLAN.md](PLAN.md) is the full specification.
+check that stops races that would not be fair. Every machine's GPU, power, CPU, RAM and
+temperature show live, and every run gets its energy. The report with charts arrives in phase 8,
+and the transcription and image benchmarks after that. [PLAN.md](PLAN.md) is the full
+specification.
 
 ## Requirements
 
@@ -103,6 +105,23 @@ them side by side. Pick one machine for a single run.
   more than 64 cached prompt tokens.
 - **Sampling** holds temperature, top-p, top-k, min-p, repetition penalty and seed. Every field
   goes to every machine, so server defaults can never differ.
+
+### Live hardware and energy
+
+While a machine card or a race pane is on screen, Model Duel reads that machine's hardware twice a
+second through Unsloth's own routes and shows it as chips: GPU load, GPU power, GPU temperature,
+VRAM on GPUs with their own memory, CPU load and RAM. A reading the machine does not report shows
+**n/a**; Apple's first power reading is always empty. A machine that stops answering is retried
+after 1, 2, 4 and up to 30 seconds.
+
+A race records 5 seconds of readings before its first run and after its last, and gives every
+run its energy by adding up power over time, its mean power while decoding, tokens per joule and
+peak GPU load, power, temperature and memory. The numbers are approximate: board power on NVIDIA,
+the GPU rail on Apple, read twice a second. Energy and tokens per joule join the comparison.
+
+**Telemetry** on the Machines screen and in the race form turns all of it off. Polling costs
+Unsloth about a tenth of a CPU core on an RTX 3060, because each reading runs `nvidia-smi`, so
+turn it off for the cleanest timings.
 
 ### Pre-flight
 

@@ -3,6 +3,28 @@ import { formatMsValue, formatRate } from '../format';
 
 type Row = [label: string, measured: string, reported: string];
 
+/** Energy and peaks from telemetry, all approximate; nothing when telemetry was off. */
+function energyRows(run: RunView): Row[] {
+  const e = run.telemetry?.energy;
+  if (!e) return [];
+  const value = (v: number | null, unit: string, digits = 1) =>
+    v === null ? 'n/a' : `${v.toFixed(digits)} ${unit}`;
+  return [
+    ['Energy, approx.', value(e.energyJ, 'J'), 'n/a'],
+    ['Mean power while decoding, approx.', value(e.meanDecodePowerW, 'W'), 'n/a'],
+    ['Tokens per joule, approx.', value(e.tokensPerJoule, 'tok/J', 2), 'n/a'],
+    ['Peak GPU', value(e.peakGpuPct, '%', 0), 'n/a'],
+    ['Peak power', value(e.peakPowerW, 'W'), 'n/a'],
+    ['Peak temperature', value(e.peakTempC, '°C', 0), 'n/a'],
+    ['Peak GPU memory or RAM', value(e.peakVramGb ?? e.peakRamGb, 'GB'), 'n/a'],
+    [
+      'Telemetry samples',
+      `${e.samples} in the run, ${Math.round(e.coverage * 100)}% covered`,
+      'n/a',
+    ],
+  ];
+}
+
 export function RunMetrics({ run }: { run: RunView }) {
   const c = run.client;
   if (!c) return null;
@@ -61,6 +83,7 @@ export function RunMetrics({ run }: { run: RunView }) {
     ['Finish reason', c.finishReason ?? 'n/a', m?.stopReason ?? 'n/a'],
     ['Keep-alives received', String(c.keepalives), 'n/a'],
     ['Headers arrived (diagnostic)', formatMsValue(c.ttfbMs), 'n/a'],
+    ...energyRows(run),
   ];
 
   const network =

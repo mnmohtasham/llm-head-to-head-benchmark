@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.5, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.6, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -8,7 +8,8 @@ v2.2 adds what phase 3 measured on two real machines: the streaming details in s
 client and server agreement in section 4.1, and the per-run connection in section 8.
 v2.3 records the session file, the stream messages and the measured send skew from phase 4, in
 sections 3, 5.9 and 6. v2.4 records the RTT method and the gate as built in phase 5, in section 5. v2.5
-records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5.
+records prefill, fixed length, pre-flight and the cache measurements of phase 6, in section 5. v2.6
+records the telemetry measurements of phase 7, in sections 2.6 and 4.4.
 
 ## 0. Decisions so far
 
@@ -208,6 +209,13 @@ Behaviours that matter:
 - `GET /api/system` gives `cpu.usage_percent`, `memory.percent_used`, `memory.available_gb`.
 - Poll both at 2 Hz during a run, stamp on arrival, store samples with the run. Polling adds a little load
   on the machine under test, so it can be switched off for a clean run.
+- Verified in phase 7 on the RTX 3060: the hardware route answers in about 77 ms, and its readings matched
+  `nvidia-smi` exactly (GPU %, power to 0.01 W, temperature, VRAM). Polling at 2 Hz costs Unsloth about 0.1
+  CPU core with its child processes (1.22 s of CPU per 10 s polled against 0.26 s idle); decode speed and
+  time to first token showed no difference beyond run-to-run noise. As built, each sample is stamped at the
+  middle of its request, on fresh connections (reused ones stall 40 ms), and the next poll starts only when
+  the last one is done. The `backend` of the hardware route tells unified memory (`mps`, `mlx`) apart, where
+  there is no VRAM to report.
 
 ## 3. Architecture
 
@@ -324,7 +332,9 @@ seed, so this is a sanity check, not a diff.
 Poll per section 2.6 during every run and for five seconds before and after as baseline. Derived: peak
 GPU %, peak VRAM, mean power during decode, energy per run (trapezoid integral of power), tokens per joule,
 joules per image, joules per audio minute. Energy is labelled approximate: board power on NVIDIA, GPU rail
-on Apple.
+on Apple. As built, the integral skips pairs of samples more than 2 s apart or with a null reading, and a
+run whose power readings cover under half of it gets no energy. On the RTX 3060 the integral came within 2
+to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
 
 ## 5. Fairness and methodology
 

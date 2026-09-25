@@ -126,6 +126,8 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     studioRootId: randomBytes(32).toString('hex'),
     port: 0,
     telemetryReads: 0,
+    activeStreams: 0,
+    activity: 0,
     loaded: initialLoaded(PROFILES[initial.profile]),
     pending: null,
   };
@@ -186,12 +188,13 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
     state.loaded = initialLoaded(profile());
     state.pending = null;
     state.telemetryReads = 0;
+    state.activity = 0;
   };
 
   route('GET', '/api/health', false, (_request, _reply, auth) =>
     healthBody(profile(), state, auth === 'valid' || auth === 'keyless'),
   );
-  route('GET', '/api/system', true, () => systemBody(profile()));
+  route('GET', '/api/system', true, () => systemBody(profile(), state));
   route('GET', '/api/system/hardware', true, (request) => {
     const query = request.query as Record<string, string | undefined>;
     return hardwareBody(profile(), query.include_details === 'true');
@@ -413,7 +416,12 @@ export async function startMockServer(options: MockOptions = {}): Promise<Runnin
       };
     }
     reply.hijack();
-    await streamChat(request.raw, reply.raw, body, deps);
+    state.activeStreams += 1;
+    try {
+      await streamChat(request.raw, reply.raw, body, deps);
+    } finally {
+      state.activeStreams -= 1;
+    }
     return reply;
   });
 

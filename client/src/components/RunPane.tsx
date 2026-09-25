@@ -1,6 +1,7 @@
-import type { RunView } from '@duel/shared';
+import type { RunView, TelemetrySample, TelemetryStatus } from '@duel/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatRate, formatSeconds } from '../format';
+import { TelemetryChips } from './TelemetryChips';
 
 const STATE_LABEL: Record<string, string> = {
   idle: 'Ready',
@@ -18,6 +19,11 @@ interface Props {
   machine: { name: string; color: string };
   modelName: string | null;
   run: RunView | null;
+  telemetry?: {
+    enabled: boolean | null;
+    status: TelemetryStatus | undefined;
+    sample: TelemetrySample | undefined;
+  };
 }
 
 /**
@@ -61,7 +67,7 @@ function emptyAnswer(run: RunView | null, running: boolean): string {
   return 'The model finished without an answer.';
 }
 
-export function RunPane({ machine, modelName, run }: Props) {
+export function RunPane({ machine, modelName, run, telemetry }: Props) {
   const live = run?.live ?? null;
   const client = run?.client ?? null;
   const running = run !== null && run.finishedAt === null;
@@ -106,6 +112,14 @@ export function RunPane({ machine, modelName, run }: Props) {
           {STATE_LABEL[phase] ?? phase}
         </span>
       </header>
+
+      {telemetry ? (
+        <TelemetryChips
+          enabled={telemetry.enabled}
+          status={telemetry.status}
+          sample={telemetry.sample}
+        />
+      ) : null}
 
       <div className="big-stats">
         <div className="big-stat">

@@ -96,7 +96,7 @@ describe('stored sessions', () => {
     delete (v1.config as Record<string, unknown>).preset;
     delete (v1.config as Record<string, unknown>).prefill;
     const migrated = migrateSession(v1 as unknown as StoredSession);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.config).toMatchObject({
       preset: 'custom',
       prefill: 'warm',

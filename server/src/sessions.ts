@@ -15,6 +15,7 @@ import {
   publicRun,
   publicSession,
   roundFlags,
+  runEnergy,
   SESSION_SCHEMA_VERSION,
   summarizeSession,
   withNonce,
@@ -44,18 +45,22 @@ import { cancelOnMachine, readMonitorRow } from './monitor';
 import { measureRtt } from './rtt';
 import type { SessionStore } from './session-store';
 import type { MachineStore, StoredMachine } from './store';
+import type { TelemetryHub } from './telemetry';
 
 export interface RunTimings {
   idleTimeoutMs: number;
   totalTimeoutMs: number;
   /** How often text and live numbers go to the browser. */
   flushEveryMs: number;
+  /** Telemetry recorded before the first and after the last run, as a baseline. */
+  telemetryBaselineMs: number;
 }
 
 export const DEFAULT_RUN_TIMINGS: RunTimings = {
   idleTimeoutMs: 120_000,
   totalTimeoutMs: 30 * 60_000,
   flushEveryMs: 50,
+  telemetryBaselineMs: 5000,
 };
 
 /** Finished sessions kept in memory, so the page does not wait for the disk right after a race. */
@@ -114,6 +119,8 @@ interface ActiveSession {
   done: Promise<void>;
   /** Why the session stopped before its last round, if it did. */
   stopReason: string | null;
+  /** When each run's request went out, epoch ms, for lining up telemetry afterwards. */
+  starts: Map<string, number>;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -180,6 +187,7 @@ function newRun(machine: StoredMachine, config: TextConfig): StoredRun {
     loopLagMs: null,
     sendOffsetMs: null,
     rtt: null,
+    telemetry: null,
     raw: null,
   };
 }
@@ -205,6 +213,7 @@ export class SessionManager {
       log: FastifyBaseLogger;
       /** True while a model load runs on the machine, which would skew a race. */
       isLoading: (machineId: string) => boolean;
+      telemetry: TelemetryHub;
     },
   ) {}
 
@@ -273,6 +282,7 @@ export class SessionManager {
       warmup: null,
       rounds: [],
       progress: { phase: 'preparing', round: null },
+      telemetry: { enabled: this.deps.telemetry.enabled },
       provenance: machines.map((m) => this.provenanceOf(m)),
       loopLagMs: null,
     };
@@ -287,6 +297,7 @@ export class SessionManager {
       lag: monitorEventLoopDelay({ resolution: 10 }),
       done: Promise.resolve(),
       stopReason: null,
+      starts: new Map(),
     };
     this.active.set(id, entry);
     entry.done = this.execute(entry).catch(async (error: unknown) => {
@@ -482,9 +493,16 @@ export class SessionManager {
     await this.deps.sessions.save(session);
     entry.lag.enable();
     const timer = setInterval(() => this.flush(entry), this.deps.timings.flushEveryMs);
+    let releaseTelemetry: (() => void) | null = null;
+    const baselineMs = this.deps.timings.telemetryBaselineMs;
     try {
       await Promise.all(entry.machines.map((_machine, i) => this.prepare(entry, i)));
       const anyReady = entry.models.some((model) => model !== null);
+      if (session.telemetry.enabled && anyReady && !signal.aborted) {
+        releaseTelemetry = this.deps.telemetry.acquire(entry.machines.map((m) => m.id));
+        this.setProgress(entry, 'baseline', null);
+        await pause(baselineMs, signal);
+      }
       if (plan.warmup && anyReady && !signal.aborted) {
         this.setProgress(entry, 'warmup', null);
         await this.runRound(entry, -1, true);
@@ -502,7 +520,15 @@ export class SessionManager {
         }
         await this.runRound(entry, index, false);
       }
+      if (releaseTelemetry) {
+        if (!signal.aborted) {
+          this.setProgress(entry, 'baseline', null);
+          await pause(baselineMs, signal);
+        }
+        this.attachTelemetry(entry);
+      }
     } finally {
+      releaseTelemetry?.();
       clearInterval(timer);
       entry.lag.disable();
     }
@@ -521,6 +547,35 @@ export class SessionManager {
         ? null
         : (entry.stopReason ?? 'Every machine failed in every round. Each pane says why.'),
     );
+  }
+
+  /** Lines each run up with the samples taken around it, and adds up its energy. */
+  private attachTelemetry(entry: ActiveSession) {
+    const baseline = this.deps.timings.telemetryBaselineMs;
+    const rounds = [
+      ...(entry.session.warmup ? [entry.session.warmup] : []),
+      ...entry.session.rounds,
+    ];
+    for (const round of rounds) {
+      for (const run of round.runs) {
+        const start = entry.starts.get(run.id);
+        const c = run.client;
+        if (start === undefined || !c) continue;
+        const firstToken = c.ttftMs === null ? null : start + c.ttftMs;
+        const lastToken =
+          firstToken === null || c.decodeMs === null ? null : firstToken + c.decodeMs;
+        const end = start + c.totalMs;
+        const samples = this.deps.telemetry.samplesBetween(
+          run.machineId,
+          start - baseline,
+          end + baseline,
+        );
+        run.telemetry = {
+          samples,
+          energy: runEnergy(samples, { start, firstToken, lastToken, end }, c.outputTokens),
+        };
+      }
+    }
   }
 
   private async runRound(entry: ActiveSession, index: number, warmup: boolean): Promise<void> {
@@ -652,6 +707,7 @@ export class SessionManager {
     if (!round.warmup) run.provenance.request ??= body;
     run.view.state = 'streaming';
     run.requestAt = performance.now();
+    entry.starts.set(run.view.id, performance.timeOrigin + run.requestAt);
     return streamChatCompletion(run.machine.baseUrl, run.machine.apiKey, body, {
       signal: AbortSignal.any([entry.controller.signal, round.controller.signal]),
       idleTimeoutMs: this.deps.timings.idleTimeoutMs,

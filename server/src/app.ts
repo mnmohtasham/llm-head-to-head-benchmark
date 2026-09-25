@@ -11,9 +11,12 @@ import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
 import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
 import { DEFAULT_RUN_TIMINGS, SessionManager, type RunTimings } from './sessions';
+import { SettingsStore } from './settings';
 import { MachineStore } from './store';
+import { DEFAULT_TELEMETRY, TelemetryHub, type TelemetryOptions } from './telemetry';
 
 export interface AppOptions {
   dataDir: string;
@@ -23,6 +26,7 @@ export interface AppOptions {
   probeTimeouts?: Partial<ProbeTimeouts>;
   loadTimings?: Partial<LoadTimings>;
   runTimings?: Partial<RunTimings>;
+  telemetry?: Partial<TelemetryOptions>;
   version?: string;
   /** 'dev' when running behind the Vite dev server, which slows measurements. */
   mode?: 'dev' | 'production';
@@ -97,6 +101,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     onMachineChanged: (id) => catalog.invalidate(id),
   });
   registerModelRoutes(app, { store, catalog, loads, timings });
+  const settings = new SettingsStore(options.dataDir);
+  await settings.init();
+  const telemetry = new TelemetryHub(store, settings, {
+    ...DEFAULT_TELEMETRY,
+    ...options.telemetry,
+  });
+  registerTelemetryRoutes(app, { store, telemetry });
   const sessionStore = new SessionStore(options.dataDir, app.log);
   await sessionStore.init();
   const sessions = new SessionManager({
@@ -105,11 +116,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     timings: { ...DEFAULT_RUN_TIMINGS, ...options.runTimings },
     log: app.log,
     isLoading: (machineId) => loads.isActive(machineId),
+    telemetry,
   });
   registerSessionRoutes(app, { store, sessions, isLoading: (id) => loads.isActive(id) });
   app.addHook('onClose', async () => {
     await loads.close();
     await sessions.close();
+    telemetry.close();
   });
 
   if (hasClient) {

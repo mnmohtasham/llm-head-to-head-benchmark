@@ -1,7 +1,8 @@
 import type { RunView } from './chat';
 
 export type Better = 'lower' | 'higher' | null;
-export type MetricUnit = 'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text';
+export type MetricUnit =
+  'ms' | 'tok/s' | 'chars/s' | 'tokens' | 'text' | 'J' | 'tok/J' | 'W' | '%' | 'GB';
 
 export interface MetricSpec {
   key: string;
@@ -90,6 +91,41 @@ export const METRICS: readonly MetricSpec[] = [
     unit: 'tokens',
     better: null,
     pick: (r) => r.client?.outputTokens ?? r.client?.chunks,
+  },
+  {
+    key: 'energy',
+    label: 'Energy per run, approx.',
+    unit: 'J',
+    better: 'lower',
+    pick: (r) => r.telemetry?.energy.energyJ,
+  },
+  {
+    key: 'tokensPerJoule',
+    label: 'Tokens per joule, approx.',
+    unit: 'tok/J',
+    better: 'higher',
+    pick: (r) => r.telemetry?.energy.tokensPerJoule,
+  },
+  {
+    key: 'decodePower',
+    label: 'Mean power while decoding, approx.',
+    unit: 'W',
+    better: null,
+    pick: (r) => r.telemetry?.energy.meanDecodePowerW,
+  },
+  {
+    key: 'peakGpu',
+    label: 'Peak GPU',
+    unit: '%',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakGpuPct,
+  },
+  {
+    key: 'peakMemory',
+    label: 'Peak GPU memory or RAM',
+    unit: 'GB',
+    better: null,
+    pick: (r) => r.telemetry?.energy.peakVramGb ?? r.telemetry?.energy.peakRamGb,
   },
   {
     key: 'finish',

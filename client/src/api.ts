@@ -101,6 +101,11 @@ export const api = {
     call<MachineModelsView>('GET', `${machineUrl(id)}/models${refresh ? '?refresh=1' : ''}`),
   machineStatus: (id: string) => call<MachineStatusView>('GET', `${machineUrl(id)}/status`),
   machineHosts: () => call<{ hosts: Record<string, string> }>('GET', '/api/machines/hosts'),
+  settings: () => call<{ telemetry: boolean }>('GET', '/api/settings'),
+  setTelemetry: (on: boolean) =>
+    call<{ telemetry: boolean }>('PUT', '/api/settings', { telemetry: on }),
+  telemetryStreamUrl: (ids: readonly string[]) =>
+    `/api/telemetry/stream?machines=${ids.map(encodeURIComponent).join(',')}`,
   listLoads: () => call<{ jobs: LoadJob[]; serverTime: string }>('GET', '/api/loads'),
   startLoad: (request: LoadRequest) =>
     call<{ results: LoadStartResult[] }>('POST', '/api/models/load', request),

@@ -8,6 +8,7 @@ import { buildApp } from '../src/app';
 import type { LoadTimings } from '../src/loads';
 import type { ProbeTimeouts } from '../src/probe';
 import type { RunTimings } from '../src/sessions';
+import type { TelemetryOptions } from '../src/telemetry';
 
 export function tempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'model-duel-test-'));
@@ -31,6 +32,7 @@ export async function testApp(
     probeTimeouts?: Partial<ProbeTimeouts>;
     loadTimings?: Partial<LoadTimings>;
     runTimings?: Partial<RunTimings>;
+    telemetry?: Partial<TelemetryOptions>;
   } = {},
 ) {
   const dataDir = options.dataDir ?? (await tempDir());
@@ -52,7 +54,13 @@ export async function testApp(
       unloadTimeoutMs: 5000,
       ...options.loadTimings,
     },
-    runTimings: { idleTimeoutMs: 5000, totalTimeoutMs: 20_000, ...options.runTimings },
+    runTimings: {
+      idleTimeoutMs: 5000,
+      totalTimeoutMs: 20_000,
+      telemetryBaselineMs: 0,
+      ...options.runTimings,
+    },
+    telemetry: { intervalMs: 50, minBackoffMs: 50, maxBackoffMs: 200, ...options.telemetry },
   });
   return { app, dataDir, logs };
 }

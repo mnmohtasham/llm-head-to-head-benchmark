@@ -51,6 +51,8 @@ export interface Profile {
     idlePowerW: number;
     idleUtilPct: number;
     idleTempC: number;
+    /** Board power while decoding, for telemetry that follows activity. */
+    busyPowerW: number;
     /** Apple Silicon power is a delta between two reads, so the first read is null. */
     nullFirstPower: boolean;
   };
@@ -93,6 +95,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
       idlePowerW: 0.4,
       idleUtilPct: 2,
       idleTempC: 35,
+      busyPowerW: 62,
       nullFirstPower: true,
     },
     torch: '2.9.0',
@@ -199,6 +202,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
       idlePowerW: 31.5,
       idleUtilPct: 3,
       idleTempC: 38,
+      busyPowerW: 430,
       nullFirstPower: false,
     },
     torch: '2.9.0+cu130',
@@ -329,6 +333,10 @@ export interface ProfileState {
   studioRootId: string;
   port: number;
   telemetryReads: number;
+  /** Chat streams running now. */
+  activeStreams: number;
+  /** 0 when idle, 1 when busy; follows the streams gradually, as real sensors lag. */
+  activity: number;
   loaded: LoadedModel | null;
   pending: PendingLoad | null;
 }
@@ -406,7 +414,7 @@ function gpuDevice(p: Profile) {
   };
 }
 
-export function systemBody(p: Profile): Record<string, unknown> {
+export function systemBody(p: Profile, s?: ProfileState): Record<string, unknown> {
   const gpu = {
     available: true,
     backend: p.backend,
@@ -425,7 +433,7 @@ export function systemBody(p: Profile): Record<string, unknown> {
     cpu: {
       logical_count: p.cpuLogical,
       physical_count: p.cpuPhysical,
-      usage_percent: round(jitter(6, 2)),
+      usage_percent: round(jitter(6 + 22 * (s?.activity ?? 0), 2)),
       frequency_mhz: p.cpuMhz,
     },
     memory: {
@@ -723,18 +731,24 @@ export function imageStatusBody(): Record<string, unknown> {
 export function telemetryBody(p: Profile, s: ProfileState): Record<string, unknown> {
   s.telemetryReads += 1;
   const firstRead = s.telemetryReads === 1;
+  // Readings move towards busy while a stream runs and back to idle after, over a few reads.
+  s.activity += ((s.activeStreams > 0 ? 1 : 0) - s.activity) * 0.6;
+  const a = s.activity;
   const used = round(jitter(p.gpu.vramUsedGb, 0.2), 2);
+  const powerMean = p.gpu.idlePowerW + (p.gpu.busyPowerW - p.gpu.idlePowerW) * a;
+  // Apple's first power reading is null: it needs two energy counters to make a rate.
   const power =
-    p.gpu.nullFirstPower && firstRead
-      ? null
-      : round(jitter(p.gpu.idlePowerW, p.gpu.idlePowerW * 0.1));
+    p.gpu.nullFirstPower && firstRead ? null : round(jitter(powerMean, powerMean * 0.05));
   const device = {
     available: true,
     backend: p.backend,
     index: 0,
     visible_ordinal: 0,
-    gpu_utilization_pct: Math.max(0, Math.round(jitter(p.gpu.idleUtilPct, 1))),
-    temperature_c: Math.round(jitter(p.gpu.idleTempC, 1)),
+    gpu_utilization_pct: Math.min(
+      100,
+      Math.max(0, Math.round(jitter(p.gpu.idleUtilPct + (96 - p.gpu.idleUtilPct) * a, 1))),
+    ),
+    temperature_c: Math.round(jitter(p.gpu.idleTempC + 28 * a, 1)),
     vram_used_gb: used,
     vram_total_gb: p.gpu.vramTotalGb,
     vram_utilization_pct: round((used / p.gpu.vramTotalGb) * 100),

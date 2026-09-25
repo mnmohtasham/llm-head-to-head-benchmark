@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
+import type { RunEnergy, TelemetrySample } from './telemetry';
 import { detailOf } from './probe';
 import type { SseMessage } from './sse';
 
@@ -478,6 +479,14 @@ export interface RunView {
   sendOffsetMs: number | null;
   /** Measured just before the round; null when not measured. */
   rtt: RttResult | null;
+  /** Hardware samples around the run and what they add up to; null with telemetry off. */
+  telemetry: RunTelemetry | null;
+}
+
+export interface RunTelemetry {
+  /** From five seconds before the request to five seconds after the end. */
+  samples: TelemetrySample[];
+  energy: RunEnergy;
 }
 
 /**
