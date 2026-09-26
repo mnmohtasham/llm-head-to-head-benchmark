@@ -29,7 +29,10 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
-    proxy: { '/api': 'http://127.0.0.1:3001' },
+    // Pass the page's own Host header through. Vite's shorthand ('/api': 'http://…') sets
+    // changeOrigin, which rewrites Host to 127.0.0.1:3001; the API then sees a page on
+    // localhost:3000 asking a different host and refuses every change as cross-site.
+    proxy: { '/api': { target: 'http://127.0.0.1:3001', changeOrigin: false } },
   },
   build: {
     outDir: 'dist',
