@@ -52,3 +52,15 @@ through the real Vite dev proxy with the project's own settings: the page's requ
 and another site's are refused. With the old setting the test fails. Afterwards, pre-flight on
 Mani's two machines ran and gave only the expected warning that CUDA and ROCm may render the same
 seed differently.
+
+## v1.7.2, 2026-09-26: a speech model loaded with another engine
+
+Mani loaded large-v3-turbo by hand on the RTX 3060 and the 780M, and pre-flight said it "is not
+downloaded for gguf on lenovo (780M)". Both statements were true but the message hid why: on the
+Lenovo the model was loaded with Transformers (on ROCm), and only its Transformers copy is on disk;
+the RTX had loaded the GGUF copy with whisper.cpp and has both. Each engine keeps its own copy, so a
+GGUF race would have started a download on the Lenovo.
+
+Pre-flight now says when a machine has the model loaded with another engine, and the Transcribe tab
+offers **Race with Transformers** (or whichever engine is loaded) next to it. On Mani's machines,
+switching to Transformers gave an all clear.
