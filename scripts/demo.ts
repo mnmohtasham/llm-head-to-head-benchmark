@@ -18,6 +18,8 @@ import {
   DEMO_CLOUD_PORTS,
   DEMO_CLOUDS,
   DEMO_MACHINES,
+  DEMO_LMSTUDIO,
+  DEMO_LMSTUDIO_PORT,
   DEMO_MOCK_PORTS,
   DEMO_SHARE_PORT,
 } from './demo-config';
@@ -31,6 +33,7 @@ const { values } = parseArgs({
     'agent-ports': { type: 'string', default: DEMO_AGENT_PORTS.join(',') },
     'cloud-ports': { type: 'string', default: DEMO_CLOUD_PORTS.join(',') },
     'share-port': { type: 'string', default: String(DEMO_SHARE_PORT) },
+    'lmstudio-port': { type: 'string', default: String(DEMO_LMSTUDIO_PORT) },
     'data-dir': { type: 'string', default: '.demo-data' },
     'no-seed': { type: 'boolean', default: false },
     'keep-data': { type: 'boolean', default: false },
@@ -42,6 +45,7 @@ const mockPorts = values['mock-ports'].split(',').map(Number);
 const agentPorts = values['agent-ports'].split(',').map(Number);
 const cloudPorts = values['cloud-ports'].split(',').map(Number);
 const sharePort = Number(values['share-port']);
+const lmstudioPort = Number(values['lmstudio-port']);
 const dataDir = path.resolve(root, values['data-dir']);
 const children: ChildProcess[] = [];
 let stopping = false;
@@ -177,6 +181,7 @@ DEMO_CLOUDS.forEach((cloud, index) => {
   ]);
 });
 start('mock results service', 'mock/dist/index.js', ['--share', '--port', String(sharePort)]);
+start('mock LM Studio', 'mock/dist/index.js', ['--lmstudio', '--port', String(lmstudioPort)]);
 start('app', 'server/dist/index.js', ['--port', String(appPort), '--data-dir', dataDir]);
 
 await Promise.all(
@@ -207,6 +212,7 @@ await Promise.all(
   }),
 );
 await waitForPost(`http://127.0.0.1:${sharePort}/__mock/reset`, 'mock results service');
+await waitFor(`http://127.0.0.1:${lmstudioPort}/lmstudio-greeting`, 'mock LM Studio');
 const app = `http://127.0.0.1:${appPort}`;
 await waitFor(`${app}/api/health`, 'app');
 
@@ -222,6 +228,16 @@ if (!values['no-seed']) {
       agentToken: machine.agentToken,
       notes: machine.notes,
       color: machine.color,
+    })) as { id: string };
+    await post(`${app}/api/machines/${created.id}/probe`);
+  }
+  if (!existing.some((m) => m.name === DEMO_LMSTUDIO.name)) {
+    const created = (await post(`${app}/api/machines`, {
+      name: DEMO_LMSTUDIO.name,
+      baseUrl: `127.0.0.1:${lmstudioPort}`,
+      server: 'lmstudio',
+      notes: DEMO_LMSTUDIO.notes,
+      color: DEMO_LMSTUDIO.color,
     })) as { id: string };
     await post(`${app}/api/machines/${created.id}/probe`);
   }
@@ -261,6 +277,7 @@ process.stdout.write(
       (c, i) =>
         `  ${c.name} (fake ${c.provider} API, ${c.model}) at http://127.0.0.1:${cloudPorts[i]}`,
     ),
+    `  ${DEMO_LMSTUDIO.name} (fake LM Studio 0.4) at http://127.0.0.1:${lmstudioPort}`,
     `  Fake results service at http://127.0.0.1:${sharePort}/api/runs; what it took: GET /__mock/received`,
     'Break a mock to see the error messages, for example a revoked key:',
     `  curl -X POST http://127.0.0.1:${mockPorts[1]}/__mock/config -H 'content-type: application/json' -d '{"rejectKey":true}'`,

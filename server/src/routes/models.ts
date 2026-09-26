@@ -29,6 +29,15 @@ export function registerModelRoutes(
 ): void {
   const { store, catalog, loads, timings } = deps;
 
+  /** Unsloth's catalog and loads do not apply to LM Studio, which loads models itself. */
+  const lmstudioRefusal = (reply: FastifyReply, machine: StoredMachine) =>
+    fail(
+      reply,
+      400,
+      'lmstudio',
+      `${machine.name} runs LM Studio: load and unload its models with the LM Studio buttons on the Models tab, or in LM Studio.`,
+    );
+
   const statusView = async (machine: StoredMachine): Promise<MachineStatusView> => {
     if (machine.cloud) {
       // A cloud model has no Unsloth status; its model is the one chosen for it.
@@ -57,6 +66,7 @@ export function registerModelRoutes(
   app.post<IdParams>('/api/machines/:id/reload-slots', async (request, reply) => {
     const machine = store.get(request.params.id);
     if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
     const parsed = z.object({ slots: z.number().int().min(1).max(64) }).safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'Ask for 1 to 64 slots.');
     const { status, error } = await readModelStatus(machine);
@@ -75,6 +85,7 @@ export function registerModelRoutes(
     async (request, reply) => {
       const machine = store.get(request.params.id);
       if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+      if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
       return catalog.list(machine, { refresh: request.query.refresh === '1' });
     },
   );
@@ -110,6 +121,9 @@ export function registerModelRoutes(
         });
         const machine = store.get(machineId);
         if (!machine) return skip('There is no machine with that id.');
+        if (machine.server === 'lmstudio') {
+          return skip('This machine runs LM Studio; load its models with the LM Studio buttons.');
+        }
         if (loads.isActive(machineId)) return skip('A load is already running on this machine.');
         const view = await catalog.list(machine);
         if (view.error !== null) return skip(view.error);
@@ -139,6 +153,7 @@ export function registerModelRoutes(
   app.post<IdParams>('/api/machines/:id/unload', async (request, reply) => {
     const machine = store.get(request.params.id);
     if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
     if (loads.isActive(machine.id)) {
       return fail(
         reply,

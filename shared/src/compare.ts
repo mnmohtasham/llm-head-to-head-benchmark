@@ -43,10 +43,11 @@ export const METRICS: readonly MetricSpec[] = [
   },
   {
     key: 'ttftServer',
-    label: 'Time to first token, Unsloth',
+    // What the machine's server measured: Unsloth's monitor, or LM Studio's own stats.
+    label: 'Time to first token, server',
     unit: 'ms',
     better: 'lower',
-    pick: (r) => r.server?.monitor?.ttftMs,
+    pick: (r) => r.server?.monitor?.ttftMs ?? r.server?.lmstudio?.ttftMs,
   },
   {
     key: 'thinking',
@@ -64,10 +65,13 @@ export const METRICS: readonly MetricSpec[] = [
   },
   {
     key: 'decodeServer',
-    label: 'Decode speed, Unsloth',
+    label: 'Decode speed, server',
     unit: 'tok/s',
     better: 'higher',
-    pick: (r) => r.server?.timings?.predictedPerSecond ?? r.server?.monitor?.tokPerSec,
+    pick: (r) =>
+      r.server?.timings?.predictedPerSecond ??
+      r.server?.monitor?.tokPerSec ??
+      r.server?.lmstudio?.tokPerSec,
   },
   {
     key: 'endToEnd',

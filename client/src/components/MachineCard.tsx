@@ -70,6 +70,11 @@ export function MachineCard({
           <h2 id={nameId} className="machine-name">
             {machine.name}
           </h2>
+          {machine.server === 'lmstudio' ? (
+            <p className="machine-notes" data-testid="server-label">
+              LM Studio
+            </p>
+          ) : null}
           {machine.notes ? <p className="machine-notes">{machine.notes}</p> : null}
         </div>
         <span className={`state state-${state}`} data-testid="overall" role="status">

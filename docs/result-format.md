@@ -39,7 +39,8 @@ sharing results, for example on a public results website. The app's own session 
 | Field | Meaning |
 | --- | --- |
 | `index`, `label`, `color` | The machine's position, the name the user gave it, and its colour in the app. |
-| `kind`, `cloud` | `local` for a machine running Unsloth, `cloud` for a provider's model raced as a reference. For a cloud model, `cloud` has `provider` (`openai`, `anthropic` or `gemini`) and `model` (the provider's model id), and `hardware`, `software` and `state` are empty. Files from before cloud models have neither field. |
+| `server` | For a local machine, `unsloth` or `lmstudio`; `null` for a cloud model. Files before LM Studio support have no field and ran Unsloth. |
+| `kind`, `cloud` | `local` for a machine running Unsloth or LM Studio, `cloud` for a provider's model raced as a reference. For a cloud model, `cloud` has `provider` (`openai`, `anthropic` or `gemini`) and `model` (the provider's model id), and `hardware`, `software` and `state` are empty. Files from before cloud models have neither field. |
 | `hardware` | `os`, `backend` (for example `cuda`), `memoryTotalGb`, and `gpus` with `name` and `memoryGb`, from the machine's last probe. |
 | `software` | Unsloth, Unsloth Studio and llama.cpp versions. |
 | `state` | What the machine's own routes said: `textBefore`/`textAfter` (the chat model's status), `sttBefore`/`sttAfter`, `imageBefore`/`imageAfter`, `restore` (the chat model loaded again after an image race) and `agent` (the command agent's health). Each is `null` when it does not apply. |
@@ -71,8 +72,8 @@ their requests left), `nonce` (the fresh line that opened a cold-prefill prompt)
 ## Metrics by kind
 
 Times are in milliseconds, measured by Model Duel from the moment a request left it, so they
-include the network. Keys ending in `Server`, and "Prompt processing", are what Unsloth measured on
-the machine. Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, sampled
+include the network. Keys ending in `Server` are what the machine's server measured itself: Unsloth,
+or LM Studio from its own stats. "Prompt processing" is Unsloth's only. Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, sampled
 twice a second.
 
 | Kind | Keys |

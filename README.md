@@ -1,10 +1,10 @@
 # Model Duel
 
 Model Duel benchmarks local AI models on two or more machines that run
-[Unsloth Studio](https://unsloth.ai/docs/new/studio). A browser app talks to Unsloth on every
+[Unsloth Studio](https://unsloth.ai/docs/new/studio) or [LM Studio](https://lmstudio.ai). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 17 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 18 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -261,6 +261,42 @@ interrupted.
 - A run stops when Unsloth sends nothing for 2 minutes, or after 30 minutes in total.
 - One race runs at a time.
 
+## LM Studio machines
+
+A machine can run [LM Studio](https://lmstudio.ai) 0.4 or newer instead of Unsloth Studio. It races
+on the Text tab, in latency and throughput mode, next to Unsloth machines and cloud models.
+
+1. In LM Studio, open **Developer**, start the server, and turn on **Serve on Local Network** in the
+   server settings (headless: `lms server start --bind 0.0.0.0`). LM Studio listens on port 1234.
+2. In Model Duel, press **Add machine**, pick **LM Studio**, and enter the machine's address. Port
+   1234 is added when you leave it out. Add an API token only if **Require Authentication** is on.
+3. The probe checks it is LM Studio, lists its models, and says which is loaded. LM Studio reports no
+   hardware, so when Unsloth runs on the same computer and was probed, the card takes its GPU,
+   memory and system from there, and says so.
+4. On **Models**, the LM Studio pane lists what is downloaded and loaded. **Load** takes a context
+   length, how many requests it serves at once, and flash attention, and unloads the loaded model
+   first unless you untick that. **Unload** frees the memory. You can also load in LM Studio itself.
+
+Races use LM Studio's own chat API, so the report shows **Reported by LM Studio** next to Model
+Duel's own numbers: LM Studio's time to first token, its decode speed and its token counts.
+
+- **One model at a time.** Pre-flight stops a race when LM Studio has more than one chat model
+  loaded, since they would share the GPU, or none.
+- **No loading mid-race.** LM Studio loads a model on its own when asked for one that is not loaded.
+  Model Duel asks only for the loaded one, and a run where LM Studio starts loading anyway fails
+  instead of timing the load.
+- **Thinking** maps onto LM Studio's reasoning setting: off, on, or an effort the model offers (such
+  as low, medium or xhigh).
+- **What LM Studio does not report:** KV cache type, GPU layers, speculative decoding and GPU
+  memory mode show as "not reported" and are not compared. It cannot count tokens before a race, so
+  pre-flight cannot check the prompt fits; it says so. It sends no stop reason, so a run whose
+  output reached Max tokens is taken to have stopped there. It takes no seed; cold prefill still
+  starts each round's prompt with a fresh line.
+- **Unsloth against LM Studio** on the same computer and the same GGUF compares the two servers.
+  Pre-flight warns that the race compares servers as well as hardware, and suggests taking turns.
+- Transcription, images, telemetry and commands need Unsloth, so LM Studio machines are left out of
+  those tabs.
+
 ## Cloud models as references
 
 ChatGPT, Claude and Gemini models can race on the **Text** tab next to your machines, to show how
@@ -498,6 +534,7 @@ check it, and what a public service must do to stay safe.
 | `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
 | `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
 | `npm run mock -- --share --port 18888`                    | Starts a fake results service, taking records at `/api/runs`       |
+| `npm run mock -- --lmstudio --port 18889`                 | Starts a fake LM Studio 0.4; `--api-key` makes it require a token  |
 | `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
@@ -505,7 +542,7 @@ check it, and what a public service must do to stay safe.
 | `npm run result-schema`                                    | Rewrites the JSON Schemas in `docs/` from the formats' definitions |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
 | `npm test`                                                | Unit and integration tests                                         |
-| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18914, runs browser tests |
+| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18915, runs browser tests |
 
 ## The fake Unsloth
 
@@ -592,6 +629,11 @@ out.
   Settings → Network → Firewall → Options.
 - **"The API key was rejected."**: the key was deleted or mistyped. Create a new one and paste
   it with **Edit**.
+- **"Model Duel refuses changes asked for by another web site."**: the browser said the request
+  came from a page on another host. Either a page you visited really tried to use Model Duel, or
+  something between your browser and Model Duel changed the Host header: a reverse proxy must pass
+  it through unchanged (nginx: `proxy_set_header Host $host;`). Opening Model Duel directly at its
+  own address always works.
 - **A model is missing from the Models tab**: it is partly downloaded, or it is an image or video
   model. Finish the download in Unsloth, then press **Refresh** on the pane.
 - **"Load of … failed."**: the message after it is Unsloth's own. A load that loses its connection

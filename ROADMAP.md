@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Seventeen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Eighteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 17 are `v1.1` to `v1.7`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 18 are `v1.1` to `v1.8`.
 
 ## Running a phase
 
@@ -63,6 +63,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 15 | Results tab | Filter, sort and download every machine's run from every race in one table | 8 | S | v1.5 |
 | 16 | Long races and averages | Run up to 100 rounds and sum them up by median or average | 5 | S | v1.6 |
 | 17 | Sending runs | Send a run from the Results tab to a public results service, safely | 15 | M | v1.7 |
+| 18 | LM Studio machines | Race LM Studio next to Unsloth on the Text tab, and load its models | 4 | M | v1.8 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -100,6 +101,7 @@ flowchart LR
   P8 --> P15[15 Results tab]
   P5 --> P16[16 Averages]
   P15 --> P17[17 Sending runs]
+  P4 --> P18[18 LM Studio]
 ```
 
 ## Phase 1: Foundation and machines
@@ -736,6 +738,39 @@ Real-machine script: send a real run from Mani's data to the fake service and re
 Exit checklist
 - [ ] Phase gate passes.
 
+## Phase 18: LM Studio machines
+
+**You can** add a machine that runs LM Studio, load its models from the Models tab, and race it on
+the Text tab next to Unsloth machines, with LM Studio's own timings in the report.
+Needs: 4. Size: M. Cites PLAN.md 2.8.
+
+Scope
+- A machine's server: Unsloth Studio or LM Studio, port 1234 by default, optional token.
+- LM Studio's probe, its model list read into the same status as Unsloth's, and hardware borrowed
+  from an Unsloth machine on the same computer.
+- Text races in latency and throughput mode over LM Studio's native chat API, with its stats as the
+  server column; pre-flight for one loaded model and for what LM Studio cannot report.
+- An LM Studio pane on the Models tab: load with context length, parallel requests and flash
+  attention, and unload.
+
+Not in this phase: transcription, images, telemetry and commands on LM Studio machines.
+
+Mock additions: a fake LM Studio 0.4 with greeting, model list, load, unload and the chat stream,
+including just-in-time loading and an optional token.
+
+Automated tests
+- Unit: the real 0.4.25 model list; status mapping; reasoning mapping; request body; stream reader
+  including a just-in-time load and errors; probe classification.
+- Integration: probe, token, status, a mixed race with Unsloth, thinking and effort, throughput, a
+  refusal, cancel, pre-flight rules, and loading and unloading.
+- End-to-end: add an LM Studio machine, load a model on the Models tab, race it next to Unsloth.
+
+Real-machine script: probe the Lenovo's LM Studio; with Mani's go-ahead, load a model and race it
+against the same model under Unsloth on the RTX machine.
+
+Exit checklist
+- [ ] Phase gate passes.
+
 ## Testing across phases
 
 - **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
@@ -764,6 +799,7 @@ Exit checklist
 | 15 | nothing new |
 | 16 | nothing new |
 | 17 | nothing new; the results service itself comes later |
+| 18 | LM Studio 0.4 or newer on the LM Studio machine, serving on the network |
 
 ## Open questions and when they block
 

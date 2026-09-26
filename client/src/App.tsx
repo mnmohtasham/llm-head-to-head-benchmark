@@ -87,8 +87,16 @@ export function App() {
     };
   }, []);
 
-  // Cloud models race only on the Text tab; the other tabs need a machine running Unsloth.
-  const local = useMemo(() => machines?.filter((m) => !m.cloud) ?? null, [machines]);
+  // Cloud models race only on the Text tab, and LM Studio has text and its own Models pane; the
+  // other tabs need a machine running Unsloth.
+  const unsloth = useMemo(
+    () => machines?.filter((m) => !m.cloud && m.server !== 'lmstudio') ?? null,
+    [machines],
+  );
+  const lmstudio = useMemo(
+    () => machines?.filter((m) => !m.cloud && m.server === 'lmstudio') ?? [],
+    [machines],
+  );
 
   return (
     <div className="app">
@@ -102,15 +110,21 @@ export function App() {
       {page === 'text' ? (
         <TextPage machines={machines} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'transcribe' ? (
-        <TranscribePage machines={local} loadError={loadError} log={log} addLog={addLog} />
+        <TranscribePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'image' ? (
-        <ImagePage machines={local} loadError={loadError} log={log} addLog={addLog} />
+        <ImagePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'command' ? (
-        <CommandPage machines={local} loadError={loadError} log={log} addLog={addLog} />
+        <CommandPage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'results' ? (
         <ResultsPage />
       ) : page === 'models' ? (
-        <ModelsPage machines={local} loadError={loadError} log={log} addLog={addLog} />
+        <ModelsPage
+          machines={unsloth}
+          lmstudio={lmstudio}
+          loadError={loadError}
+          log={log}
+          addLog={addLog}
+        />
       ) : (
         <MachinesPage
           machines={machines}

@@ -26,6 +26,14 @@ export const DEMO_MACHINES = [
   },
 ] as const;
 
+/** A fake LM Studio, raced on the Text tab like the fake Unsloth machines. */
+export const DEMO_LMSTUDIO_PORT = 18889;
+export const DEMO_LMSTUDIO = {
+  name: 'Mock LM Studio',
+  notes: 'Fake LM Studio 0.4 with Qwen3.8 27B loaded',
+  color: '#e3d160',
+} as const;
+
 /** A fake results service, where the Results tab's Send button goes in the demo. */
 export const DEMO_SHARE_PORT = 18888;
 

@@ -167,6 +167,8 @@ export interface MachineProvenance {
   agent: AgentHealth | null;
   /** A cloud reference model: the provider and the model, with what it accepts. */
   cloud?: CloudConfig | null;
+  /** Set when the machine runs LM Studio instead of Unsloth Studio. */
+  server?: 'lmstudio';
 }
 
 export interface RestoreOutcome {

@@ -11,6 +11,7 @@ import {
   type SttEngineName,
   type SttStatus,
   type TranscribeConfig,
+  type PreflightIssue,
 } from '@duel/shared';
 import {
   useCallback,
@@ -265,6 +266,18 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
   const telemetry = useTelemetry(panes.map((pane) => pane.key));
   const columns = Math.min(Math.max(panes.length, 1), 4);
   const audio = preflight.current?.result?.audio ?? null;
+  /** Pre-flight's shortcut when a machine has the model loaded with another engine. */
+  const engineShortcut = (issue: PreflightIssue) => {
+    if (issue.code !== 'stt-download' || !issue.machineId || running) return null;
+    const status = stt[issue.machineId]?.status;
+    const loaded = status?.loadedEngine ?? null;
+    if (!loaded || loaded === engine || status?.loadedModel !== effectiveModel) return null;
+    return (
+      <button type="button" className="btn btn-quiet btn-inline" onClick={() => pickEngine(loaded)}>
+        Race with {ENGINE_LABEL[loaded]}
+      </button>
+    );
+  };
   const onDisk = chosen
     .filter((m) => stt[m.id]?.status?.engines[engine].downloaded.includes(effectiveModel))
     .map((m) => m.name);
@@ -501,6 +514,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
               warnings={preflight.warnings}
+              action={engineShortcut}
               clear="All clear: every machine has the model on disk and runs the same engine."
               details={
                 audio

@@ -5,6 +5,7 @@ import {
   E2E_AGENT_PORTS,
   E2E_APP_PORT,
   E2E_CLOUD_PORTS,
+  E2E_LMSTUDIO_PORT,
   E2E_MOCK_PORTS,
   E2E_SHARE_PORT,
 } from './ports';
@@ -43,7 +44,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npx tsx scripts/demo.ts --port ${E2E_APP_PORT} --mock-ports ${E2E_MOCK_PORTS.join(',')} --agent-ports ${E2E_AGENT_PORTS.join(',')} --cloud-ports ${E2E_CLOUD_PORTS.join(',')} --share-port ${E2E_SHARE_PORT} --data-dir e2e/.data --no-seed`,
+    command: `npx tsx scripts/demo.ts --port ${E2E_APP_PORT} --mock-ports ${E2E_MOCK_PORTS.join(',')} --agent-ports ${E2E_AGENT_PORTS.join(',')} --cloud-ports ${E2E_CLOUD_PORTS.join(',')} --share-port ${E2E_SHARE_PORT} --lmstudio-port ${E2E_LMSTUDIO_PORT} --data-dir e2e/.data --no-seed`,
     cwd: root,
     url: `http://127.0.0.1:${E2E_APP_PORT}/api/health`,
     reuseExistingServer: false,

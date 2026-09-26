@@ -37,7 +37,8 @@ export function registerTelemetryRoutes(
       const known = new Set(
         store
           .list()
-          .filter((m) => !m.cloud)
+          // Cloud models and LM Studio have no hardware routes to read.
+          .filter((m) => !m.cloud && m.server !== 'lmstudio')
           .map((m) => m.id),
       );
       const wanted = request.query.machines?.split(',').filter((id) => known.has(id)) ?? [...known];

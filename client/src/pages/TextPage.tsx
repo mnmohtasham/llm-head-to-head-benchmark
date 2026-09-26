@@ -258,6 +258,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   };
   const slotShortcut = (issue: PreflightIssue) => {
     if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
+    // LM Studio loads with its own settings; reloading with more slots is Unsloth's shortcut.
+    if (machines?.find((m) => m.id === issue.machineId)?.server === 'lmstudio') return null;
     const id = issue.machineId;
     const state = reloading[id];
     return state ? (
@@ -323,7 +325,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           ? (m.cloud.model?.id ?? null)
           : (statuses[m.id]?.status?.activeModel ?? null),
       }));
-  const cloudIds = new Set((machines ?? []).filter((m) => m.cloud).map((m) => m.id));
+  // Cloud models and LM Studio report no hardware readings.
+  const cloudIds = new Set(
+    (machines ?? []).filter((m) => m.cloud || m.server === 'lmstudio').map((m) => m.id),
+  );
   const telemetry = useTelemetry(panes.map((pane) => pane.key).filter((id) => !cloudIds.has(id)));
   const columns = Math.min(Math.max(panes.length, 1), 4);
 
@@ -415,7 +420,11 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 return s
                   ? s.error
                     ? 'unreachable'
-                    : [s.status?.activeModel ?? 'no model loaded', s.status?.quant]
+                    : [
+                        m.server === 'lmstudio' ? 'LM Studio' : null,
+                        s.status?.activeModel ?? 'no model loaded',
+                        s.status?.quant,
+                      ]
                         .filter(Boolean)
                         .join(' · ')
                   : 'checking…';

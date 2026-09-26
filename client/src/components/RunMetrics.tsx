@@ -33,8 +33,11 @@ export function RunMetrics({ run }: { run: RunView }) {
   // A cloud provider reports tokens, not timings.
   const cloud = run.server?.cloud ?? null;
   const usage = cloud ? cloudUsage(cloud.provider, cloud.usage) : null;
-  const reporter = cloud ? CLOUD_INFO[cloud.provider].label : 'Unsloth';
-  const serverDecode = t?.predictedPerSecond ?? m?.tokPerSec ?? null;
+  // LM Studio's own stats, from the end of its stream.
+  const lm = run.server?.lmstudio ?? null;
+  const reporter = cloud ? CLOUD_INFO[cloud.provider].label : lm ? 'LM Studio' : 'Unsloth';
+  const serverDecode = t?.predictedPerSecond ?? m?.tokPerSec ?? lm?.tokPerSec ?? null;
+  const serverTtft = m?.ttftMs ?? lm?.ttftMs ?? null;
   const tokens = (value: number | null | undefined) =>
     value === null || value === undefined ? 'n/a' : value.toLocaleString('en-US');
   const gaps = c.interChunk
@@ -42,11 +45,13 @@ export function RunMetrics({ run }: { run: RunView }) {
     : 'n/a';
 
   // llama-server counts only the prompt tokens it had to process; the cached ones are separate.
-  const serverPrompt = usage
-    ? usage.prompt
-    : t?.promptN !== null && t?.promptN !== undefined
-      ? t.promptN + (t.cacheN ?? 0)
-      : (m?.promptTokens ?? null);
+  const serverPrompt = lm
+    ? lm.inputTokens
+    : usage
+      ? usage.prompt
+      : t?.promptN !== null && t?.promptN !== undefined
+        ? t.promptN + (t.cacheN ?? 0)
+        : (m?.promptTokens ?? null);
   const draftN = t?.draftN ?? null;
   const draftAccepted = t?.draftAccepted ?? 0;
   const drafts =
@@ -58,7 +63,7 @@ export function RunMetrics({ run }: { run: RunView }) {
   const cached = c.cachedTokens ?? t?.cacheN ?? 0;
 
   const rows: Row[] = [
-    ['Time to first token', formatMsValue(c.ttftMs), formatMsValue(m?.ttftMs)],
+    ['Time to first token', formatMsValue(c.ttftMs), formatMsValue(serverTtft)],
     ['First thinking token', formatMsValue(c.firstReasoningMs), 'n/a'],
     ['First answer token', formatMsValue(c.firstAnswerMs), 'n/a'],
     ['Thinking time', formatMsValue(c.thinkingMs), 'n/a'],
@@ -79,7 +84,7 @@ export function RunMetrics({ run }: { run: RunView }) {
     [
       'Output tokens',
       `${tokens(c.outputTokens ?? c.chunks)}${c.outputTokens === null ? ' chunks' : ''}`,
-      tokens(usage ? usage.output : (t?.predictedN ?? m?.completionTokens)),
+      tokens(lm ? lm.outputTokens : usage ? usage.output : (t?.predictedN ?? m?.completionTokens)),
     ],
     ['Cached prompt tokens', tokens(c.cachedTokens), tokens(usage ? usage.cached : t?.cacheN)],
     ['Speculative drafts accepted', 'n/a', drafts],
@@ -91,8 +96,7 @@ export function RunMetrics({ run }: { run: RunView }) {
     ...energyRows(run),
   ];
 
-  const network =
-    c.ttftMs !== null && m?.ttftMs !== null && m?.ttftMs !== undefined ? c.ttftMs - m.ttftMs : null;
+  const network = c.ttftMs !== null && serverTtft !== null ? c.ttftMs - serverTtft : null;
   const decodeGap =
     c.decodeTokPerSec !== null && serverDecode
       ? ((c.decodeTokPerSec - serverDecode) / serverDecode) * 100
@@ -140,9 +144,16 @@ export function RunMetrics({ run }: { run: RunView }) {
         ) : (
           <li>
             Model Duel measures from the moment the request leaves this computer, so its times
-            include the network. Unsloth measures on the machine itself.
+            include the network. {reporter} measures on the machine itself.
           </li>
         )}
+        {lm ? (
+          <li data-testid="lmstudio-note">
+            LM Studio sends no stop reason, so a run whose output reached Max tokens is taken to
+            have stopped there.
+            {lm.reasoningTokens ? ` It counted ${tokens(lm.reasoningTokens)} thinking tokens.` : ''}
+          </li>
+        ) : null}
         {cloud && usage?.reasoning ? (
           <li data-testid="cloud-reasoning">
             {run.reasoning
@@ -156,8 +167,9 @@ export function RunMetrics({ run }: { run: RunView }) {
           </li>
         ) : (
           <li>
-            Unsloth&apos;s monitor row for this run was not found, so its time to first token is
-            missing.
+            {lm
+              ? 'LM Studio did not report its time to first token for this run.'
+              : 'Unsloth’s monitor row for this run was not found, so its time to first token is missing.'}
           </li>
         )}
         {decodeGap !== null ? (

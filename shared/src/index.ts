@@ -5,6 +5,7 @@ export * from './commands';
 export * from './compare';
 export * from './format';
 export * from './images';
+export * from './lmstudio';
 export * from './imagesteps';
 export * from './machines';
 export * from './models';
