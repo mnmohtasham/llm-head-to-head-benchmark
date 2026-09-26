@@ -9,8 +9,10 @@ import {
   parseWav,
   repeatsFor,
   transcribeConfigSchema,
+  transcribePreflightIssues,
   wavFile,
   wordErrorRate,
+  type SttPreflightMachine,
 } from '../src';
 
 const tone = (samples: number, rate = 16_000) =>
@@ -155,5 +157,62 @@ describe('transcription settings', () => {
     });
     expect(status.engines.gguf.downloaded).toEqual(['large-v3-turbo']);
     expect(status.engines.mtmd).toEqual({ available: false, models: [], downloaded: [] });
+  });
+});
+
+describe('a model loaded with another engine', () => {
+  const engines = (gguf: string[], transformers: string[]) => ({
+    gguf: { available: true, models: ['large-v3-turbo'], downloaded: gguf },
+    transformers: { available: true, models: ['large-v3-turbo'], downloaded: transformers },
+    mtmd: { available: true, models: ['qwen3-asr-0.6b'], downloaded: [] },
+  });
+  // As read from Mani's machines: the RTX has both copies and runs GGUF; the Lenovo has only the
+  // Transformers copy, and that is what is loaded.
+  const machines: SttPreflightMachine[] = [
+    {
+      id: 'rtx',
+      name: 'test',
+      error: null,
+      loading: false,
+      stt: {
+        available: true,
+        loadedModel: 'large-v3-turbo',
+        loadedEngine: 'gguf',
+        device: 'whisper.cpp',
+        loading: false,
+        keepAliveSeconds: 300,
+        engines: engines(['large-v3-turbo'], ['large-v3-turbo']),
+      },
+    },
+    {
+      id: 'amd',
+      name: 'lenovo (780M)',
+      error: null,
+      loading: false,
+      stt: {
+        available: true,
+        loadedModel: 'large-v3-turbo',
+        loadedEngine: 'transformers',
+        device: 'rocm',
+        loading: false,
+        keepAliveSeconds: 300,
+        engines: engines([], ['large-v3-turbo']),
+      },
+    },
+  ];
+
+  it('says which engine it is loaded with, and that racing with that engine works', () => {
+    const gguf = transcribePreflightIssues(machines, { model: 'large-v3-turbo', engine: 'gguf' });
+    expect(gguf).toEqual([
+      {
+        level: 'error',
+        code: 'stt-download',
+        machineId: 'amd',
+        text: 'lenovo (780M) has large-v3-turbo loaded with transformers, not gguf, and no gguf copy on disk. Race with transformers to use what is loaded, or download the gguf copy in Unsloth Studio first, so the race does not start a download.',
+      },
+    ]);
+    expect(
+      transcribePreflightIssues(machines, { model: 'large-v3-turbo', engine: 'transformers' }),
+    ).toEqual([]);
   });
 });

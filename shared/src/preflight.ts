@@ -324,6 +324,19 @@ export function transcribePreflightIssues(
       continue;
     }
     const inMemory = stt.loadedModel === config.model && stt.loadedEngine === engine;
+    // Loaded, but with another engine: each engine has its own copy of the model on disk.
+    const otherEngine =
+      stt.loadedModel === config.model && stt.loadedEngine !== null && stt.loadedEngine !== engine
+        ? stt.loadedEngine
+        : null;
+    if (!inMemory && !offered.downloaded.includes(config.model) && otherEngine) {
+      error(
+        'stt-download',
+        m.id,
+        `${m.name} has ${config.model} loaded with ${otherEngine}, not ${engine}, and no ${engine} copy on disk. Race with ${otherEngine} to use what is loaded, or download the ${engine} copy in Unsloth Studio first, so the race does not start a download.`,
+      );
+      continue;
+    }
     if (!inMemory && !offered.downloaded.includes(config.model)) {
       error(
         'stt-download',
