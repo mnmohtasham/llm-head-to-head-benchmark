@@ -78,22 +78,39 @@ test('adds an LM Studio machine and probes it as LM Studio', async ({ page }) =>
 test('loads another model through LM Studio on the Models tab', async ({ page }) => {
   await page.goto('/#/models');
   const lm = page.getByTestId('lm-model-pane').and(page.locator(`[data-machine-name="${NAME}"]`));
-  await expect(lm.getByTestId('lm-loaded')).toContainText('Qwen3.8 27B');
-  await lm
-    .getByTestId('lm-downloaded')
-    .and(page.locator('[data-key="google/gemma-4-12b"]'))
-    .getByRole('button', { name: 'Load' })
-    .click();
-  const form = lm.getByRole('form', { name: 'Load Gemma 4 12B' });
-  await form.getByLabel('Context length').fill('16384');
-  await expect(form.getByLabel(/Unload Qwen3\.8 27B first/)).toBeChecked();
-  await form.getByRole('button', { name: 'Load' }).click();
-  await expect(lm.getByTestId('lm-loaded')).toHaveCount(1);
-  await expect(lm.getByTestId('lm-loaded')).toContainText('Gemma 4 12B');
-  await expect(lm.getByTestId('lm-loaded')).toContainText('context 16,384');
+  await expect(lm.getByTestId('model-state')).toHaveText('Ready');
+  await expect(lm.locator('dd[data-field="quant"]')).toHaveText('Q4_K_M');
+  await expect(lm.locator('dd[data-field="slots"]')).toHaveText('4');
+
+  // The models sit in a collapsed list, as for Unsloth machines.
+  const list = lm.locator('details.model-list');
+  await expect(list).not.toHaveAttribute('open');
+  await list.locator('summary').click();
+  await expect(list.getByTestId('model-row')).toHaveCount(3);
+  await list.getByLabel(`Filter models on ${NAME}`).fill('gemma');
+  await expect(list.getByTestId('model-row')).toHaveCount(1);
+  await list.getByRole('button', { name: 'Load Gemma 4 12B' }).click();
+
+  const dialog = page.getByTestId('lm-load-dialog');
+  await expect(dialog.getByLabel('Model')).toHaveValue('google/gemma-4-12b');
+  await dialog.getByLabel('Context length').fill('16384');
+  await expect(dialog.getByLabel(/Unload Qwen3\.8 27B first/)).toBeChecked();
+  await dialog.getByRole('button', { name: 'Load', exact: true }).click();
+  await expect(lm.getByTestId('last-load')).toContainText('Loaded Gemma 4 12B Q4_K_M');
+  await expect(lm.locator('dd[data-field="context"]')).toContainText('16,384 tokens');
   await expect(page.getByRole('region', { name: 'Activity' })).toContainText(
     'Loaded Gemma 4 12B in LM Studio',
   );
+
+  // Unload and Refresh sit with Load model, as on the other panes.
+  await lm.getByRole('button', { name: 'Unload' }).click();
+  await page
+    .getByRole('dialog', { name: 'Unload model' })
+    .getByRole('button', { name: 'Unload' })
+    .click();
+  await expect(lm.getByTestId('model-state')).toHaveText('No model');
+  await lm.getByRole('button', { name: 'Refresh' }).click();
+  await expect(lm.getByTestId('model-state')).toHaveText('No model');
 });
 
 test('races LM Studio next to Unsloth, with LM Studio’s own timings', async ({ page, request }) => {
