@@ -151,6 +151,17 @@
               }
             ]
           },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["unsloth", "lmstudio"]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hardware": {
             "type": "object",
             "properties": {

@@ -1,4 +1,5 @@
 import type { CloudProvider } from './cloud';
+import type { LmStats } from './lmstudio';
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
 import type { RunEnergy, TelemetrySample } from './telemetry';
@@ -359,6 +360,8 @@ export interface ServerMetrics {
   timings: Timings | null;
   monitor: MonitorRow | null;
   /** A cloud provider's own account of the run: its usage, request id and processing time. */
+  /** LM Studio's own timings and token counts, from the end of its stream. */
+  lmstudio?: LmStats | null;
   cloud?: {
     provider: CloudProvider;
     requestId: string | null;

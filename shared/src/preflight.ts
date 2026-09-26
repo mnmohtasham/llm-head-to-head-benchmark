@@ -56,6 +56,8 @@ export interface PreflightIssue {
     | 'handoff'
     | 'cloud'
     | 'cloud-model'
+    | 'lmstudio'
+    | 'server'
     | 'no-agent'
     | 'agent'
     | 'template'
@@ -143,6 +145,23 @@ export function preflightIssues(
       error('no-model', m.id, `No model is loaded on ${m.name}. Load one on the Models tab.`);
       continue;
     }
+    if (s.server === 'lmstudio') {
+      const others = s.lmstudio?.otherLoaded ?? [];
+      if (others.length > 0) {
+        error(
+          'lmstudio',
+          m.id,
+          `LM Studio on ${m.name} has more than one model loaded: ${[s.activeModel, ...others].join(', ')}. Unload all but the one to race, on the Models tab or in LM Studio, so they do not share the GPU.`,
+        );
+      }
+      if (s.contextLength !== null) {
+        note(
+          'lmstudio',
+          m.id,
+          `LM Studio cannot count tokens before a race, so pre-flight cannot check that the prompt and Max tokens fit ${m.name}'s context of ${n(s.contextLength)}.`,
+        );
+      }
+    }
     if (s.memoryWarning) {
       error(
         'memory',
@@ -192,7 +211,7 @@ export function preflightIssues(
         error(
           'slots',
           m.id,
-          `${m.name} serves ${slots} ${slots === 1 ? 'request' : 'requests'} at once, so ${count - slots} of the ${count} would wait in the queue, which measures the queue rather than the machine. Reload its model with ${count} slots.`,
+          `${m.name} serves ${slots} ${slots === 1 ? 'request' : 'requests'} at once, so ${count - slots} of the ${count} would wait in the queue, which measures the queue rather than the machine. ${s.server === 'lmstudio' ? `Load it again in LM Studio with ${count} parallel requests.` : `Reload its model with ${count} slots.`}`,
         );
       } else if (slots > 1 && context !== null && m.promptTokens !== null) {
         const share = Math.floor(context / slots);
@@ -241,9 +260,36 @@ export function preflightIssues(
   compare('context', 'context lengths', (s) =>
     s.contextLength === null ? 'unknown' : `${n(s.contextLength)} tokens`,
   );
-  compare('speculative', 'speculative decoding', speculativeLabel);
-  compare('kv-cache', 'KV cache types', (s) => s.cacheTypeKv ?? 'the default');
-  compare('gpu-memory', 'GPU memory modes', (s) => s.gpuMemoryMode ?? 'the default');
+  const lmstudio = loaded.filter((m) => m.status.server === 'lmstudio');
+  if (lmstudio.length > 0 && lmstudio.length < loaded.length) {
+    const each = loaded
+      .map(
+        (m) => `${m.name} runs ${m.status.server === 'lmstudio' ? 'LM Studio' : 'Unsloth Studio'}`,
+      )
+      .join(', ');
+    warning(
+      'server',
+      null,
+      `The machines run different servers: ${each}. Each builds and sets up llama.cpp its own way, so the race compares the servers as well as the hardware.`,
+    );
+  }
+  // LM Studio does not report these, so they are compared between Unsloth machines only.
+  const unsloth = loaded.filter((m) => m.status.server !== 'lmstudio');
+  const compareUnsloth = (
+    code: PreflightIssue['code'],
+    what: string,
+    pick: (s: ModelStatus) => string,
+  ) => {
+    if (unsloth.length < 2) return;
+    const values = unsloth.map((m) => pick(m.status));
+    if (new Set(values).size > 1) {
+      const each = unsloth.map((m, i) => `${m.name} has ${values[i]}`).join(', ');
+      warning(code, null, `The machines run different ${what}: ${each}.`);
+    }
+  };
+  compareUnsloth('speculative', 'speculative decoding', speculativeLabel);
+  compareUnsloth('kv-cache', 'KV cache types', (s) => s.cacheTypeKv ?? 'the default');
+  compareUnsloth('gpu-memory', 'GPU memory modes', (s) => s.gpuMemoryMode ?? 'the default');
   const speculative = loaded.filter((m) => speculativeOn(m.status));
   if (speculative.length > 0 && speculative.length === loaded.length) {
     warning(

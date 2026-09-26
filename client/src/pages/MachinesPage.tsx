@@ -40,7 +40,8 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const now = useNow();
   const local = (machines ?? []).filter((m) => !m.cloud);
-  const telemetry = useTelemetry(local.map((m) => m.id));
+  // LM Studio reports no hardware readings, so only Unsloth machines are polled.
+  const telemetry = useTelemetry(local.filter((m) => m.server !== 'lmstudio').map((m) => m.id));
 
   const probe = useCallback(
     async (machine: MachineView) => {
@@ -164,9 +165,9 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
 
       <main className="main">
         <p className="subbar">
-          Each machine runs Unsloth Studio. A probe checks that Model Duel can reach it, that the
-          API key works, and what the machine can run. Cloud models from OpenAI, Anthropic and
-          Google race on the Text tab as a reference.
+          Each machine runs Unsloth Studio or LM Studio. A probe checks that Model Duel can reach
+          it, that the API key works, and what the machine can run. Cloud models from OpenAI,
+          Anthropic and Google race on the Text tab as a reference.
         </p>
 
         {loadError ? (
@@ -201,11 +202,15 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
                   onProbe={() => void probe(machine)}
                   onEdit={() => setDialog({ mode: 'edit', machine })}
                   onDelete={() => setDeleting(machine)}
-                  telemetry={{
-                    enabled: telemetry.enabled,
-                    status: telemetry.statuses[machine.id],
-                    sample: telemetry.latest[machine.id],
-                  }}
+                  telemetry={
+                    machine.server === 'lmstudio'
+                      ? undefined
+                      : {
+                          enabled: telemetry.enabled,
+                          status: telemetry.statuses[machine.id],
+                          sample: telemetry.latest[machine.id],
+                        }
+                  }
                 />
               ),
             )}

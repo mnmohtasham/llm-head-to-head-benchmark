@@ -76,6 +76,8 @@ export const shareRecordSchema = z
       .object({
         kind: z.enum(['local', 'cloud']),
         provider: z.enum(CLOUD_PROVIDERS).nullable(),
+        /** The local server: Unsloth Studio or LM Studio; null for a cloud model. */
+        server: z.enum(['unsloth', 'lmstudio']).nullable().optional(),
         gpus: z.array(z.object({ name: text(120), memoryGb: num }).strict()).max(16),
         gpuMemoryGb: num,
         platform: maybe(20),
@@ -341,6 +343,7 @@ export function buildShareRecord(
     machine: {
       kind: row.cloud ? 'cloud' : 'local',
       provider: row.cloud,
+      server: row.server === 'cloud' ? null : row.server,
       gpus: (p?.gpus ?? []).slice(0, 16).map((gpu) => ({
         name: clean(gpu.name, 120) ?? 'unknown',
         memoryGb: gpu.memoryGb,

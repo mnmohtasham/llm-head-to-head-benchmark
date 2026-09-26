@@ -69,6 +69,7 @@ async function pickMachine(): Promise<StoredMachine> {
       agentUrl: null,
       agentToken: null,
       cloud: null,
+      server: 'unsloth',
       createdAt: now,
       updatedAt: now,
     };

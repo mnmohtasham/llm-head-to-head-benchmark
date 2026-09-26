@@ -109,6 +109,18 @@ export async function runPreflight(
           tokenError: null,
         };
       }
+      // LM Studio cannot count tokens ahead; its slots are the loaded model's parallel setting.
+      if (machine.server === 'lmstudio') {
+        return {
+          ...base,
+          status: status.status,
+          error: null,
+          loading: false,
+          promptTokens: null,
+          tokenError: null,
+          slots: status.status.parallelSlots,
+        };
+      }
       const [counted, slots] = await Promise.all([
         countTokens(machine, content),
         config.mode === 'throughput'

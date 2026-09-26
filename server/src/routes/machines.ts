@@ -2,6 +2,7 @@ import {
   classifyProbe,
   CLOUD_INFO,
   CLOUD_PROVIDERS,
+  LMSTUDIO_PORT,
   DEFAULT_AGENT_PORT,
   machineCreateSchema,
   machineUpdateSchema,
@@ -12,11 +13,14 @@ import {
   type ApiErrorBody,
   type MachineView,
   type ProbeExport,
+  type MachineServer,
   type ProbeSummary,
+  type ProbeReport,
 } from '@duel/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
+import { DEFAULT_PROBE_TIMEOUTS, runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
+import { classifyLmProbe, runLmProbe } from '../lmstudio';
 import type { MachineStore, StoredMachine, StoredProbe } from '../store';
 import { agentHealth } from '../agent';
 import { listCloudModels } from '../cloud';
@@ -46,11 +50,15 @@ function validationError(
   return send(reply, 400, { error: 'validation', message: 'Some fields need attention.', fields });
 }
 
-/** A machine's address; a cloud provider's API is HTTPS unless the address says otherwise. */
-function machineAddress(input: string, cloud: boolean) {
+/**
+ * A machine's address: a cloud provider's API is HTTPS unless the address says otherwise, and a
+ * port left out is the server's own, 8888 for Unsloth and 1234 for LM Studio.
+ */
+function machineAddress(input: string, cloud: boolean, server: MachineServer = 'unsloth') {
   const typed = input.trim();
   return normalizeBaseUrl(
     cloud && !/^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? `https://${typed}` : typed,
+    server === 'lmstudio' && !cloud ? LMSTUDIO_PORT : undefined,
   );
 }
 
@@ -87,6 +95,7 @@ export function toView(machine: StoredMachine, probe: StoredProbe | undefined): 
     apiKeyMasked: maskApiKey(machine.apiKey),
     agentUrl: machine.agentUrl,
     cloud: machine.cloud,
+    server: machine.server,
     hasAgentToken: machine.agentToken !== null,
     agentTokenMasked: maskApiKey(machine.agentToken),
     createdAt: machine.createdAt,
@@ -115,6 +124,39 @@ export function registerMachineRoutes(
   const view = (machine: StoredMachine) => toView(machine, store.lastProbe(machine.id));
 
   app.get('/api/machines', async () => store.list().map(view));
+
+  /**
+   * LM Studio reports no hardware. When Unsloth runs on the same computer and was probed, its
+   * GPU, memory and system are this machine's too, so the report borrows them and says so.
+   */
+  async function withSiblingHardware(report: ProbeReport, machine: StoredMachine) {
+    const locals = store.list().filter((m) => !m.cloud);
+    const keys = await hostKeys(locals);
+    const sibling = locals.find(
+      (m) =>
+        m.id !== machine.id &&
+        m.server === 'unsloth' &&
+        keys[m.id] !== undefined &&
+        keys[m.id] === keys[machine.id] &&
+        store.lastProbe(m.id)?.report.gpus.length,
+    );
+    const probe = sibling ? store.lastProbe(sibling.id) : undefined;
+    if (!sibling || !probe) return report;
+    return {
+      ...report,
+      gpus: probe.report.gpus,
+      platform: probe.report.platform,
+      issues: [
+        ...report.issues,
+        {
+          capability: 'reachable' as const,
+          severity: 'info' as const,
+          title: `Hardware from ${sibling.name}.`,
+          hint: `LM Studio reports no hardware, so the GPU, memory and system come from the last probe of ${sibling.name}, which runs Unsloth on the same computer.`,
+        },
+      ],
+    };
+  }
 
   /** Which machines are the same computer, so a race can suggest that they take turns. */
   app.get('/api/machines/hosts', async () => ({
@@ -163,12 +205,17 @@ export function registerMachineRoutes(
   app.post('/api/machines', async (request, reply) => {
     const parsed = machineCreateSchema.safeParse(request.body);
     if (!parsed.success) return validationError(reply, parsed.error.issues);
-    const url = machineAddress(parsed.data.baseUrl, parsed.data.cloud !== undefined);
+    const url = machineAddress(
+      parsed.data.baseUrl,
+      parsed.data.cloud !== undefined,
+      parsed.data.server,
+    );
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
     const agent = agentAddress(parsed.data.agentUrl);
     if (agent !== null && typeof agent === 'object') return validationError(reply, [agent]);
     const machine = await store.create({
       cloud: parsed.data.cloud ?? null,
+      server: parsed.data.cloud ? 'unsloth' : (parsed.data.server ?? 'unsloth'),
       name: parsed.data.name,
       baseUrl: url.url,
       notes: parsed.data.notes ?? '',
@@ -196,7 +243,11 @@ export function registerMachineRoutes(
         },
       ]);
     }
-    const url = machineAddress(parsed.data.baseUrl, Boolean(current?.cloud ?? parsed.data.cloud));
+    const url = machineAddress(
+      parsed.data.baseUrl,
+      Boolean(current?.cloud ?? parsed.data.cloud),
+      current?.server,
+    );
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
     const { apiKey, agentToken } = parsed.data;
     const agent =
@@ -237,11 +288,17 @@ export function registerMachineRoutes(
         message: 'A cloud model has nothing to probe. Fetch its models to check the key.',
       });
     }
+    const lmstudio = machine.server === 'lmstudio';
+    const timeouts = { ...DEFAULT_PROBE_TIMEOUTS, ...options.probeTimeouts };
     const raw = sanitizeProbe(
-      await runProbe(machine.baseUrl, machine.apiKey, options.probeTimeouts),
+      lmstudio
+        ? await runLmProbe(machine.baseUrl, machine.apiKey, timeouts)
+        : await runProbe(machine.baseUrl, machine.apiKey, options.probeTimeouts),
       machine.apiKey,
     );
-    const report = classifyProbe(raw);
+    const report = lmstudio
+      ? await withSiblingHardware(classifyLmProbe(raw), machine)
+      : classifyProbe(raw);
     const agent = machine.agentUrl ? await agentHealth(machine) : null;
     const probe: StoredProbe = {
       schemaVersion: PROBE_SCHEMA_VERSION,

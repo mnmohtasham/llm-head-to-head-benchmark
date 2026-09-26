@@ -5,6 +5,7 @@ import type {
   LoadStartResult,
   CloudModel,
   DeviceRun,
+  LmModel,
   CloudProvider,
   MachineCreateInput,
   MachineModelsView,
@@ -44,6 +45,15 @@ export interface PresetView {
   description: string;
   words: number;
   preview: string;
+}
+
+/** LM Studio's models on one machine, and a load in flight. */
+export interface LmModelsView {
+  machineId: string;
+  models: LmModel[];
+  loading: string | null;
+  error: string | null;
+  fetchedAt: string;
 }
 
 /** A record the results service took, as the server remembers it. */
@@ -133,6 +143,18 @@ const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
   runs: () => call<{ runs: DeviceRun[] }>('GET', '/api/runs'),
+  lmModels: (id: string) => call<LmModelsView>('GET', `${machineUrl(id)}/lmstudio/models`),
+  lmLoad: (
+    id: string,
+    input: { model: string; contextLength?: number; parallel?: number; flashAttention?: boolean },
+  ) =>
+    call<{ loaded: string; seconds: number | null }>(
+      'POST',
+      `${machineUrl(id)}/lmstudio/load`,
+      input,
+    ),
+  lmUnload: (id: string, instanceId: string) =>
+    call<{ unloaded: string }>('POST', `${machineUrl(id)}/lmstudio/unload`, { instanceId }),
   shareSettings: () => call<ShareSettingsView>('GET', '/api/share/settings'),
   updateShareSettings: (input: { endpoint: string | null; token?: string | null }) =>
     call<ShareSettingsView>('PUT', '/api/share/settings', input),

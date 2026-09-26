@@ -13,6 +13,9 @@ export const PROBE_ROUTES = {
   stt: '/api/inference/audio/stt/status',
   image: '/api/inference/images/status',
   telemetry: '/api/train/hardware',
+  /** LM Studio: `{"lmstudio": true}` without a token, and its models with one. */
+  lmGreeting: '/lmstudio-greeting',
+  lmModels: '/api/v1/models',
 } as const;
 export type RouteKey = keyof typeof PROBE_ROUTES;
 

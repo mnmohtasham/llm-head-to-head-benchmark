@@ -1,7 +1,10 @@
 import {
+  LMSTUDIO_PORT,
   MACHINE_COLOR_NAMES,
   MACHINE_COLORS,
   normalizeBaseUrl,
+  SERVER_LABEL,
+  type MachineServer,
   type MachineView,
 } from '@duel/shared';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
@@ -18,6 +21,8 @@ export interface MachineFormValues {
   agentUrl: string;
   /** As for the key: "" keeps the saved token and null removes it. */
   agentToken: string | null;
+  /** The server the machine runs; fixed once the machine is added. */
+  server: MachineServer;
 }
 
 interface Props {
@@ -31,6 +36,8 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
   const ref = useRef<HTMLDialogElement>(null);
   const id = useId();
   const savedKey = machine?.hasApiKey ? machine.apiKeyMasked : null;
+  const [server, setServer] = useState<MachineServer>(machine?.server ?? 'unsloth');
+  const lm = server === 'lmstudio';
   const [name, setName] = useState(machine?.name ?? '');
   const [address, setAddress] = useState(machine?.baseUrl ?? '');
   const [apiKey, setApiKey] = useState('');
@@ -53,7 +60,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
-  const preview = address.trim() ? normalizeBaseUrl(address) : null;
+  const preview = address.trim() ? normalizeBaseUrl(address, lm ? LMSTUDIO_PORT : undefined) : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -72,8 +79,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         notes,
         color,
         apiKey: machine && removeKey ? null : apiKey,
-        agentUrl,
-        agentToken: machine && removeToken ? null : agentToken,
+        agentUrl: lm ? '' : agentUrl,
+        agentToken: machine && removeToken ? null : lm ? '' : agentToken,
+        server,
       });
     } catch (error) {
       if (error instanceof ApiError && Object.keys(error.fields).length > 0)
@@ -87,7 +95,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
     <>
       Will connect to <code>{preview.url}</code>
     </>
-  ) : preview ? null : (
+  ) : preview ? null : lm ? (
+    'The IP address or name of the machine. Port 1234, LM Studio’s, is added when you leave it out.'
+  ) : (
     'The IP address or name of the machine. Port 8888 is added when you leave it out.'
   );
   const addressError = errors.baseUrl ?? (preview && !preview.ok ? preview.error : null);
@@ -106,6 +116,38 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         <h2 id={`${id}-title`} className="dialog-title">
           {machine ? 'Edit machine' : 'Add machine'}
         </h2>
+
+        <div className="field">
+          <span className="field-label" id={`${id}-server-label`}>
+            Server
+          </span>
+          {machine ? (
+            <p className="field-hint">
+              {SERVER_LABEL[server]}. Add another machine to use the other.
+            </p>
+          ) : (
+            <div className="toggle-chips" role="radiogroup" aria-labelledby={`${id}-server-label`}>
+              {(['unsloth', 'lmstudio'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={server === option}
+                  className={`toggle-chip${server === option ? ' toggle-chip-on' : ''}`}
+                  onClick={() => setServer(option)}
+                >
+                  {SERVER_LABEL[option]}
+                </button>
+              ))}
+            </div>
+          )}
+          {lm && !machine ? (
+            <p className="field-hint">
+              LM Studio races text only. In LM Studio, turn on Serve on Local Network (Developer →
+              Server Settings) so this computer can reach it.
+            </p>
+          ) : null}
+        </div>
 
         <div className="field">
           <label htmlFor={`${id}-name`}>Name</label>
@@ -146,7 +188,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         </div>
 
         <div className="field">
-          <label htmlFor={`${id}-key`}>API key</label>
+          <label htmlFor={`${id}-key`}>{lm ? 'API token (optional)' : 'API key'}</label>
           <div className="key-input">
             <input
               id={`${id}-key`}
@@ -154,7 +196,13 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
               disabled={removeKey}
-              placeholder={savedKey ? `Leave empty to keep ${savedKey}` : 'sk-unsloth-…'}
+              placeholder={
+                savedKey
+                  ? `Leave empty to keep ${savedKey}`
+                  : lm
+                    ? 'Only if LM Studio requires one'
+                    : 'sk-unsloth-…'
+              }
               autoComplete="off"
               spellCheck={false}
               aria-invalid={Boolean(errors.apiKey)}
@@ -171,7 +219,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
           </div>
           <p id={`${id}-key-note`} className={errors.apiKey ? 'field-error' : 'field-hint'}>
             {errors.apiKey ??
-              'Create one in Unsloth on that machine under Settings → API. It is stored on this computer only and never shown again.'}
+              (lm
+                ? 'Needed only when Require Authentication is on in LM Studio; create one under Developer → Server Settings → Manage Tokens. It is stored on this computer only and never shown again.'
+                : 'Create one in Unsloth on that machine under Settings → API. It is stored on this computer only and never shown again.')}
           </p>
           {savedKey ? (
             <label className="check">
@@ -185,48 +235,50 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
           ) : null}
         </div>
 
-        <details className="field" open={Boolean(machine?.agentUrl)}>
-          <summary className="field-label">Agent, for the Command tab (optional)</summary>
-          <label htmlFor={`${id}-agent`}>Agent address</label>
-          <input
-            id={`${id}-agent`}
-            value={agentUrl}
-            onChange={(event) => setAgentUrl(event.target.value)}
-            placeholder="192.168.1.10:8765"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={Boolean(errors.agentUrl)}
-          />
-          <label htmlFor={`${id}-agent-token`}>Agent token</label>
-          <input
-            id={`${id}-agent-token`}
-            type="password"
-            value={agentToken}
-            onChange={(event) => setAgentToken(event.target.value)}
-            disabled={removeToken}
-            placeholder={
-              savedToken ? `Leave empty to keep ${savedToken}` : 'The token the agent printed'
-            }
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={Boolean(errors.agentToken)}
-          />
-          <p className={errors.agentUrl || errors.agentToken ? 'field-error' : 'field-hint'}>
-            {errors.agentUrl ??
-              errors.agentToken ??
-              'Start the agent on that machine with npm run agent -- --host 0.0.0.0. It prints its token. Without an agent the Command tab skips this machine.'}
-          </p>
-          {savedToken ? (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={removeToken}
-                onChange={(event) => setRemoveToken(event.target.checked)}
-              />
-              Remove the saved token
-            </label>
-          ) : null}
-        </details>
+        {lm ? null : (
+          <details className="field" open={Boolean(machine?.agentUrl)}>
+            <summary className="field-label">Agent, for the Command tab (optional)</summary>
+            <label htmlFor={`${id}-agent`}>Agent address</label>
+            <input
+              id={`${id}-agent`}
+              value={agentUrl}
+              onChange={(event) => setAgentUrl(event.target.value)}
+              placeholder="192.168.1.10:8765"
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={Boolean(errors.agentUrl)}
+            />
+            <label htmlFor={`${id}-agent-token`}>Agent token</label>
+            <input
+              id={`${id}-agent-token`}
+              type="password"
+              value={agentToken}
+              onChange={(event) => setAgentToken(event.target.value)}
+              disabled={removeToken}
+              placeholder={
+                savedToken ? `Leave empty to keep ${savedToken}` : 'The token the agent printed'
+              }
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={Boolean(errors.agentToken)}
+            />
+            <p className={errors.agentUrl || errors.agentToken ? 'field-error' : 'field-hint'}>
+              {errors.agentUrl ??
+                errors.agentToken ??
+                'Start the agent on that machine with npm run agent -- --host 0.0.0.0. It prints its token. Without an agent the Command tab skips this machine.'}
+            </p>
+            {savedToken ? (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={removeToken}
+                  onChange={(event) => setRemoveToken(event.target.checked)}
+                />
+                Remove the saved token
+              </label>
+            ) : null}
+          </details>
+        )}
 
         <div className="field">
           <label htmlFor={`${id}-notes`}>Notes</label>

@@ -5,6 +5,7 @@ import {
   MACHINE_COLORS,
   type AgentProbe,
   type CloudConfig,
+  type MachineServer,
   type LoadJob,
   type ProbeRaw,
   type ProbeReport,
@@ -25,6 +26,8 @@ export interface StoredMachine {
   agentToken: string | null;
   /** A cloud reference model: the provider and model. Its key is `apiKey`, its API `baseUrl`. */
   cloud: CloudConfig | null;
+  /** The local server it runs; machines saved before LM Studio support run Unsloth. */
+  server: MachineServer;
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +51,7 @@ export interface NewMachine {
   agentUrl?: string | null;
   agentToken?: string | null;
   cloud?: CloudConfig | null;
+  server?: MachineServer;
 }
 
 export interface MachinePatch {
@@ -170,6 +174,7 @@ export class MachineStore {
       agentUrl: m.agentUrl ?? null,
       agentToken: m.agentToken ?? null,
       cloud: m.cloud ?? null,
+      server: m.server === 'lmstudio' ? 'lmstudio' : 'unsloth',
     }));
   }
 
@@ -239,6 +244,7 @@ export class MachineStore {
       agentUrl: input.agentUrl ?? null,
       agentToken: input.agentToken ?? null,
       cloud: input.cloud ?? null,
+      server: input.server ?? 'unsloth',
       createdAt: now,
       updatedAt: now,
     };

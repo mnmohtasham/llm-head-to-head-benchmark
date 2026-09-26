@@ -1,6 +1,7 @@
 import type { PreflightIssue } from './preflight';
 import { z } from 'zod';
 import { CLOUD_PROVIDERS, type CloudConfig } from './cloud';
+import { MACHINE_SERVERS, type MachineServer } from './lmstudio';
 import type { AgentHealth } from './commands';
 import type { ProbeReport } from './probe';
 
@@ -81,6 +82,8 @@ export const machineCreateSchema = z.object({
   agentToken: agentToken.optional(),
   /** Makes this a cloud reference model instead of a machine running Unsloth. */
   cloud: cloudSchema.optional(),
+  /** The local server the machine runs: Unsloth Studio (the default) or LM Studio. */
+  server: z.enum(MACHINE_SERVERS).optional(),
 });
 export type MachineCreateInput = z.infer<typeof machineCreateSchema>;
 
@@ -124,8 +127,10 @@ export interface MachineView {
   hasApiKey: boolean;
   apiKeyMasked: string | null;
   agentUrl: string | null;
-  /** Set for a cloud reference model; null for a machine running Unsloth. */
+  /** Set for a cloud reference model; null for a machine running Unsloth or LM Studio. */
   cloud: CloudConfig | null;
+  /** The local server: Unsloth Studio or LM Studio. Cloud models say unsloth and mean nothing by it. */
+  server: MachineServer;
   hasAgentToken: boolean;
   agentTokenMasked: string | null;
   createdAt: string;

@@ -37,6 +37,8 @@ export interface DeviceRun {
   machine: string;
   color: string;
   cloud: CloudProvider | null;
+  /** The server the machine ran: Unsloth Studio, LM Studio, or a cloud provider's API. */
+  server: 'unsloth' | 'lmstudio' | 'cloud';
   /** The other machines in the race. */
   others: string[];
 
@@ -147,6 +149,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
     const runs = runsOf(view, machine.id);
     const done = runs.filter((run) => run.state === 'done');
     const chatModel = text !== null && cloud === null;
+    const lmstudio = p?.server === 'lmstudio';
 
     let model: string | null = null;
     let quant: string | null = null;
@@ -160,7 +163,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       engine = cloud
         ? `${CLOUD_INFO[cloud.provider].label} API`
         : status?.backend
-          ? backendLabel(status.backend)
+          ? `${lmstudio ? 'LM Studio ' : ''}${backendLabel(status.backend)}`
           : null;
     } else if (view.workload === 'transcribe') {
       const stt = p?.sttAfter ?? null;
@@ -198,6 +201,9 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
             : takes === 'always' || text.thinking
               ? `on${effort(text.reasoningEffort)}`
               : 'off';
+      } else if (lmstudio && p?.request) {
+        const r = typeof p.request.reasoning === 'string' ? p.request.reasoning : null;
+        thinking = r === null ? 'model default' : r === 'off' || r === 'on' ? r : `on, ${r}`;
       } else if (p?.request) {
         thinking =
           p.request.enable_thinking === false ? 'off' : `on${effort(p.request.reasoning_effort)}`;
@@ -245,6 +251,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       machine: machine.name,
       color: machine.color,
       cloud: cloud?.provider ?? null,
+      server: cloud ? 'cloud' : lmstudio ? 'lmstudio' : 'unsloth',
       others: view.machines.filter((m) => m.id !== machine.id).map((m) => m.name),
 
       gpu: cloud ? `${CLOUD_INFO[cloud.provider].label}, cloud` : gpuName(p?.gpus ?? []),
@@ -266,12 +273,13 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
         : chatModel
           ? (status?.contextLength ?? null)
           : null,
-      kvCache: chatModel ? kv : null,
+      // LM Studio reports neither the KV cache type nor speculative decoding.
+      kvCache: chatModel && !lmstudio ? kv : null,
       gpuLayers: chatModel ? (status?.gpuLayers ?? null) : null,
       totalLayers: chatModel ? (status?.totalLayers ?? null) : null,
       slots: chatModel ? (status?.parallelSlots ?? null) : null,
       speculative:
-        chatModel && status
+        chatModel && status && !lmstudio
           ? speculativeOn(status)
             ? [status.speculativeType, status.specDrafterKind].filter(Boolean).join(' · ')
             : 'off'
@@ -360,6 +368,12 @@ const INITIAL_METRICS: Record<MetricKind, readonly string[]> = {
   transcribe: ['rtf', 'processing', 'wer', 'load', 'joulesPerMinute'],
   image: ['imageTime', 'stepsPerSec', 'firstStep', 'load', 'energyPerImage'],
   command: ['encodeTime', 'encodeFps', 'encodeSpeed', 'outputSize', 'energyPerEncode'],
+};
+
+const SERVER_NAMES: Record<DeviceRun['server'], string> = {
+  unsloth: 'Unsloth Studio',
+  lmstudio: 'LM Studio',
+  cloud: 'Cloud API',
 };
 
 const STATE_TEXT: Record<DeviceRunState, string> = {
@@ -453,6 +467,16 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
       text: (r) => show(r.others.join(', ')),
       numeric: false,
       filter: false,
+      initial: false,
+    },
+    {
+      id: 'server',
+      label: 'Server',
+      group: 'Machine',
+      value: (r) => SERVER_NAMES[r.server],
+      text: (r) => SERVER_NAMES[r.server],
+      numeric: false,
+      filter: true,
       initial: false,
     },
     {
@@ -601,8 +625,8 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
             id: 'kvCache',
             label: 'KV cache',
             group: 'Model',
-            value: (r) => (r.chatModel ? (r.kvCache ?? 'default') : null),
-            text: (r) => (r.chatModel ? (r.kvCache ?? 'default') : EMPTY),
+            value: (r) => (r.chatModel && r.server === 'unsloth' ? (r.kvCache ?? 'default') : null),
+            text: (r) => (r.chatModel && r.server === 'unsloth' ? (r.kvCache ?? 'default') : EMPTY),
             numeric: false,
             filter: true,
             initial: true,

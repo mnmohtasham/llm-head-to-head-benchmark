@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.16, 2026-09-25. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.17, 2026-09-26. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -16,7 +16,7 @@ built in phase 8, in section 7. v2.8 records transcription as built in phase 9, 
 command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
 sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2. v2.15 allows up to 100 rounds summed up by
 median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
-(phase 17), in sections 6 and 7.3.
+(phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8.
 
 ## 0. Decisions so far
 
@@ -313,6 +313,38 @@ copy them.
 - **Everything else.** No status, probe, telemetry, energy, slots or cancel id; the run ends by closing
   the connection. Pre-flight errors when no model is chosen or Max tokens is above the model's output
   limit, and notes the thinking mismatch and that times include the internet and the provider's queue.
+
+### 2.8 LM Studio machines
+
+A machine can run LM Studio 0.4 or newer instead of Unsloth Studio (`server: lmstudio`, default port
+1234). Checked against LM Studio's docs and a real 0.4.25 on 2026-09-26; `shared/src/lmstudio.ts`
+holds the contract and `mock/src/lmstudio.ts` copies it.
+
+- **Identify and list.** `GET /lmstudio-greeting` answers `{"lmstudio": true}` without a token.
+  `GET /api/v1/models` lists every downloaded model: `key`, `display_name`, `type` (llm or embedding),
+  `format` (gguf or mlx), `quantization.name`, `params_string`, `max_context_length`,
+  `capabilities.reasoning.allowed_options` and `loaded_instances[]` with `id` and `config`
+  (`context_length`, `parallel`, `flash_attention`, `eval_batch_size`, `offload_kv_cache_to_gpu`). A 404
+  means LM Studio before 0.4. An optional bearer token.
+- **Status.** The loaded chat model is read into Unsloth's `ModelStatus` (`server: lmstudio`, plus
+  `lmstudio` details), so pre-flight, the report, provenance and the Results tab read both alike.
+  Reasoning options give thinking support and effort levels; `parallel` gives the slots. KV cache
+  type, GPU layers, speculative decoding and GPU memory mode are not reported and stay null.
+- **Races.** `POST /api/v1/chat` with `model` (the loaded instance), `input`, `stream`, `store: false`,
+  `max_output_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty` and `reasoning`
+  (off, on, or an effort the model allows). No seed and no `context_length`, which would reload.
+  Named SSE events: `reasoning.delta` and `message.delta` carry text; `model_load.start` means LM
+  Studio is loading a model just in time and fails the run; `error`; and `chat.end` with `stats`
+  (`input_tokens`, `total_output_tokens`, `reasoning_output_tokens`, `tokens_per_second`,
+  `time_to_first_token_seconds`, `model_load_time_seconds`). There is no stop reason: output at Max
+  tokens counts as `length`. Closing the connection cancels.
+- **Loading.** `POST /api/v1/models/load {model, context_length, flash_attention, parallel}` answers
+  when loaded; `POST /api/v1/models/unload {instance_id}`. `parallel` is in the changelog (0.4.7) but
+  not the docs.
+- **Hardware.** LM Studio reports none. The probe borrows GPU, memory and system from the last probe
+  of an Unsloth machine on the same host, and says so. No telemetry.
+- **Pre-flight.** Exactly one chat model loaded; no token count; a warning when Unsloth and LM
+  Studio race together; settings LM Studio does not report are compared among Unsloth machines only.
 
 ## 3. Architecture
 
@@ -733,7 +765,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: seventeen phases in five milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: eighteen phases in five milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions
@@ -753,7 +785,8 @@ testable app.
 
 ## 14. Non-goals
 
-No auth on the controller, no multi-user, no cloud models except as text references (section 2.7), no
+No auth on the controller, no multi-user, no servers besides Unsloth Studio and LM Studio (section 2.8), no
+cloud models except as text references (section 2.7), no
 model downloads, no training, no i18n.
 
 ## 15. Definition of done

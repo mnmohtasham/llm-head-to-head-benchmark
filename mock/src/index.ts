@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { startCloudMock, type CloudMockProvider } from './cloud';
 import { startShareMock } from './share';
+import { startLmStudioMock } from './lmstudio';
 import { PROFILE_NAMES, type ProfileName } from './profiles';
 import { startMockServer } from './server';
 
@@ -16,6 +17,7 @@ Usage: npm run mock -- [options]
   --name <text>     Name shown in the startup line
   --cloud <name>    Be a fake cloud provider instead: openai, anthropic or gemini
   --share           Be a fake results service instead, taking records at /api/runs
+  --lmstudio        Be a fake LM Studio 0.4 server instead; --api-key sets its token
 
 Control it at runtime:
   curl -X POST http://127.0.0.1:18881/__mock/config -H 'content-type: application/json' \\
@@ -33,6 +35,7 @@ const { values } = parseArgs({
     name: { type: 'string' },
     cloud: { type: 'string' },
     share: { type: 'boolean', default: false },
+    lmstudio: { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
 });
@@ -43,7 +46,21 @@ if (values.help) {
 }
 
 const CLOUDS: readonly string[] = ['openai', 'anthropic', 'gemini'];
-if (values.share) {
+if (values.lmstudio) {
+  const lm = await startLmStudioMock({
+    port: Number(values.port),
+    host: values.host,
+    token: values['api-key'] ?? null,
+  });
+  process.stdout.write(
+    `Mock LM Studio on ${lm.url}${values['api-key'] ? ', token required' : ''}\n`,
+  );
+  const stopLm = () => {
+    void lm.close().then(() => process.exit(0));
+  };
+  process.on('SIGINT', stopLm);
+  process.on('SIGTERM', stopLm);
+} else if (values.share) {
   const service = await startShareMock({ port: Number(values.port), host: values.host });
   process.stdout.write(`Mock results service taking records at ${service.endpoint}\n`);
   const stopShare = () => {

@@ -277,6 +277,10 @@ interface SetupSpec {
   pick: (p: MachineProvenance, session: SessionView, index: number) => string;
 }
 
+/** LM Studio does not report these settings, so they are not compared or guessed. */
+const lm = (p: MachineProvenance) => p.server === 'lmstudio';
+const NOT_REPORTED = 'not reported';
+
 const SETUP: readonly SetupSpec[] = [
   {
     key: 'model',
@@ -298,7 +302,7 @@ const SETUP: readonly SetupSpec[] = [
       p.cloud
         ? `${CLOUD_INFO[p.cloud.provider].label} API, cloud`
         : p.statusBefore
-          ? backendLabel(p.statusBefore.backend)
+          ? `${lm(p) ? 'LM Studio ' : ''}${backendLabel(p.statusBefore.backend)}`
           : 'n/a',
   },
   {
@@ -323,6 +327,7 @@ const SETUP: readonly SetupSpec[] = [
     pick: (p) => {
       const s = p.statusBefore;
       if (!s) return 'n/a';
+      if (lm(p)) return NOT_REPORTED;
       if (!speculativeOn(s)) return s.specFallbackReason ? `off (${s.specFallbackReason})` : 'off';
       return [s.speculativeType, s.specDrafterKind].filter(Boolean).join(' · ');
     },
@@ -331,13 +336,23 @@ const SETUP: readonly SetupSpec[] = [
     key: 'kv',
     label: 'KV cache',
     matters: true,
-    pick: (p) => (p.statusBefore ? (p.statusBefore.cacheTypeKv ?? 'Unsloth default') : 'n/a'),
+    pick: (p) =>
+      p.statusBefore
+        ? lm(p)
+          ? NOT_REPORTED
+          : (p.statusBefore.cacheTypeKv ?? 'Unsloth default')
+        : 'n/a',
   },
   {
     key: 'gpu-memory',
     label: 'GPU memory mode',
     matters: true,
-    pick: (p) => (p.statusBefore ? (p.statusBefore.gpuMemoryMode ?? 'Unsloth default') : 'n/a'),
+    pick: (p) =>
+      p.statusBefore
+        ? lm(p)
+          ? NOT_REPORTED
+          : (p.statusBefore.gpuMemoryMode ?? 'Unsloth default')
+        : 'n/a',
   },
   {
     key: 'thinking',
@@ -346,6 +361,11 @@ const SETUP: readonly SetupSpec[] = [
     pick: (p) => {
       const body = p.request;
       if (!body) return 'n/a';
+      if (lm(p)) {
+        // LM Studio takes one reasoning setting: off, on, or an effort level.
+        const r = typeof body.reasoning === 'string' ? body.reasoning : null;
+        return r === null ? 'model default' : r === 'off' ? 'off' : r === 'on' ? 'on' : `on, ${r}`;
+      }
       const effort = typeof body.reasoning_effort === 'string' ? `, ${body.reasoning_effort}` : '';
       return body.enable_thinking === false ? 'off' : `on${effort}`;
     },
@@ -354,7 +374,20 @@ const SETUP: readonly SetupSpec[] = [
     key: 'unsloth',
     label: 'Unsloth Studio',
     matters: false,
-    pick: (p) => text(p.versions.studio ?? p.versions.unsloth),
+    pick: (p) => {
+      if (!lm(p)) return text(p.versions.studio ?? p.versions.unsloth);
+      // LM Studio in place of Unsloth: what it says about how the model was loaded.
+      const d = p.statusBefore?.lmstudio;
+      const flash =
+        d?.flashAttention === null || d?.flashAttention === undefined
+          ? null
+          : `flash attention ${d.flashAttention ? 'on' : 'off'}`;
+      const kv =
+        d?.offloadKvToGpu === null || d?.offloadKvToGpu === undefined
+          ? null
+          : `KV cache on ${d.offloadKvToGpu ? 'GPU' : 'CPU'}`;
+      return ['LM Studio instead', flash, kv].filter(Boolean).join(' · ');
+    },
   },
   { key: 'llama', label: 'llama.cpp', matters: false, pick: (p) => text(p.versions.llamaCpp) },
   {
