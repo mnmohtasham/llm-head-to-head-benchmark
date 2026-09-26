@@ -35,3 +35,20 @@ limit stopping the load; and a cancel stopping the load.
 ## Still to do
 
 1. With Mani's go-ahead, repeat the GGUF transcription race on the RTX machine.
+
+## v1.7.1, 2026-09-26: changes refused under `npm run dev`
+
+Mani tried an image race on the RTX 3060 and the 780M, both with FLUX.2-klein-4B Q4_K_M, and
+pre-flight said "Model Duel refuses changes asked for by another web site." He was running
+`npm run dev`, where Vite serves the page on port 3000 and forwards `/api` to the app on 3001.
+Vite's shorthand for that forward turns on `changeOrigin`, which rewrites the Host header to
+`127.0.0.1:3001`; the cross-site check added in v1.7 compares the page's Origin with the Host
+header, saw two hosts, and refused every change: pre-flight, starting a race, loading a model. The
+tests missed it because none ran through the dev server; the production server was never
+affected.
+
+The forward now keeps the Host header (`changeOrigin: false`), and a new test sends requests
+through the real Vite dev proxy with the project's own settings: the page's requests reach the app
+and another site's are refused. With the old setting the test fails. Afterwards, pre-flight on
+Mani's two machines ran and gave only the expected warning that CUDA and ROCm may render the same
+seed differently.

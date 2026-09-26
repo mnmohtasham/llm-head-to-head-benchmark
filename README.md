@@ -592,6 +592,11 @@ out.
   Settings → Network → Firewall → Options.
 - **"The API key was rejected."**: the key was deleted or mistyped. Create a new one and paste
   it with **Edit**.
+- **"Model Duel refuses changes asked for by another web site."**: the browser said the request
+  came from a page on another host. Either a page you visited really tried to use Model Duel, or
+  something between your browser and Model Duel changed the Host header: a reverse proxy must pass
+  it through unchanged (nginx: `proxy_set_header Host $host;`). Opening Model Duel directly at its
+  own address always works.
 - **A model is missing from the Models tab**: it is partly downloaded, or it is an image or video
   model. Finish the download in Unsloth, then press **Refresh** on the pane.
 - **"Load of … failed."**: the message after it is Unsloth's own. A load that loses its connection
