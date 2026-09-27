@@ -22,9 +22,9 @@
 - [x] Demo on mocks: unchanged; the browser tests run it.
 - [x] Typecheck, lint, unit, integration and end-to-end tests pass: 377 unit and integration
       tests, 57 browser tests.
-- [ ] Real machines: the RTX machine was busy with another model during the comparison, so its
-      races were stopped (below). The Lenovo was off the network. Round trips to the router stand in for a
-      machine on the network.
+- [x] Real machines: Mani raced the RTX machine through `npm start` and through the container
+      (below). The Lenovo was off the network, so round trips to the router stand in for a machine
+      on the network.
 - [x] No dead UI: nothing on screen changed but the hint for a refused loopback address.
 - [x] Earlier data still opens: the data format is unchanged, and a native `data` folder can be
       mounted into the container.
@@ -107,13 +107,35 @@ The bridge adds 25 µs to a round trip on the network, and host networking 14 µ
 one request per run, so the bridge adds about 0.03 ms to a first token of hundreds of milliseconds
 and nothing to decode speed, which is measured between tokens.
 
-**The RTX machine itself** was to run the same 10-round race through all three controllers, with a
-check before each pass that Mani's app was not racing and the GPU had been quiet for 20 seconds.
-During the comparison, Qwen3.8 27B was loaded in Unsloth Studio on the machine and kept its GPU at
-98 % between passes, so the passes were stopped. The one pass that finished overlapped that use
-(decode fell from 24 to 12 tok/s in the middle) and was discarded. The fake machines and the router already cover every part of the path
-that Docker changes; a race on a real machine only adds the machine's own time, which is the same
-whichever controller asks.
+**The RTX machine itself, raced by Mani.** My own passes on it were stopped: Qwen3.8 27B was loaded
+in Unsloth Studio and kept the GPU at 98 % between passes, and the one pass that finished overlapped
+that use (decode fell from 24 to 12 tok/s) and was discarded. Mani then raced the machine himself,
+through `npm start` and through the container, taking turns. Every race used Qwen3.8 27B UD-IQ2_XXS
+(one slot, speculative decoding off, 32,000 context), the prompt "Explain in about 150 words why
+memory bandwidth limits how fast a local language model writes text" or the Fixed length preset,
+thinking on at low effort, Max tokens 8,000, cold prefill and three rounds. Medians per race:
+
+| Race | App | Output tokens per round | Decode, Model Duel | Decode, Unsloth | First token, Unsloth | Model Duel minus Unsloth, first token | First answer word | Total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 21:27 | npm | 490, 516, 1,024 | 22.78 tok/s | 22.76 tok/s | 670 ms | 29.0 ms | 13.0 s | 23.3 s |
+| 21:30 | Docker | 783, 2,126, 1,454 | 22.75 tok/s | 22.73 tok/s | 673 ms | 23.1 ms | 64.6 s | 64.6 s |
+| 21:38 | npm | 467, 444, 404 | 22.65 tok/s | 22.60 tok/s | 661 ms | 25.0 ms | 10.7 s | 20.3 s |
+| 21:41 | npm | 489, 148, 547 | 22.61 tok/s | 22.49 tok/s | 673 ms | 22.9 ms | 11.6 s | 22.3 s |
+| 21:45, Fixed length | npm | 3,970, 2,647, 2,715 | 22.73 tok/s | 22.72 tok/s | 780 ms | 20.5 ms | 9.6 s | 120.2 s |
+| 21:57, Fixed length | Docker | 4,541, 3,966, 3,363 | 22.51 tok/s | 22.51 tok/s | 828 ms | 28.0 ms | 9.6 s | 177.0 s |
+
+The part of the numbers that Docker could change is the time between Unsloth's first token and Model
+Duel's, the request's trip and the controller's work: 20.5 to 29.0 ms through npm and 23.1 to 28.0 ms
+through Docker. In every race Model Duel's decode speed agrees with Unsloth's own count within
+0.12 tok/s, in both apps.
+
+What differs between races is on the machine's side. The 21:30 race looked much slower in first answer
+word (64.6 s against 13.0 s) only because the model thought far longer: 783 to 2,126 tokens against
+490 to 1,024, at the same 22.8 tok/s. The two apps sent byte-for-byte the same request apart from the
+cold-prefill line. Across Mani's races with the same prompt and settings, output ranged from 148 to
+2,126 tokens, and at default effort earlier that evening npm's races were the longer ones. In the
+Fixed length pair, the container's race wrote longer essays and Unsloth's own decode count was lower
+by the same amount as Model Duel's, as a longer context decodes a little slower.
 
 **Not measured:** Docker Desktop on macOS and Windows, which runs containers in a virtual machine
 with its own network layer. Expect a little more per round trip than on Linux; the README says to
@@ -135,5 +157,13 @@ race once each way to check.
 - **Inside a container, `localhost` is the container.** An Unsloth or LM Studio on the Docker host
   is `host.docker.internal`, which Docker Desktop provides and the compose file adds on Linux. It
   counts as this computer when the app decides which machines share one.
+- **Output length decides most of what differs between two races of a thinking model.** Cold
+  prefill starts every round's prompt with a fresh line, so the fixed seed cannot repeat an answer,
+  and at temperature 0.6 Qwen3.8 27B wrote 148 to 2,126 tokens for the same question. First answer
+  word, thinking time and total time follow the length; decode speed, time to first token and prompt
+  processing do not. The README now says to compare machines on those, or with Fixed length.
+- **Fixed length needs Max tokens below the essay's length.** Qwen3.8 27B finished the essay in 2,647
+  to 4,541 tokens, so with Max tokens at 8,000 every round stopped early and was flagged. The README
+  and PLAN.md 5.7 now say to keep Max tokens at about 2,000 or less.
 - **`.gitattributes`** keeps LF line endings on Windows checkouts, so Prettier, the tests and the
   image see the same files everywhere. Every tracked file was already LF.

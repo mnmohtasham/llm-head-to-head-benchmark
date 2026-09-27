@@ -18,7 +18,7 @@ sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 
 median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
 (phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8. v2.18 removes the video encode workload and
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
-sections 3 and 8.
+sections 3 and 8, and records how far output length moves between rounds, in section 5.
 
 ## 0. Decisions so far
 
@@ -542,6 +542,10 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
    always overruns it; `stop_reason` must be `length` on both sides or the round is flagged. As built it is
    a preset: a request for an essay of at least 3,000 words. Endless-counting prompts do not work: the model
    counted to ten and stopped, and asked to write out 5,000 numbers it declined after 56 tokens.
+   Qwen3.8 27B finished the essay in 2,647 to 4,541 tokens (phase 20), so the preset binds only with
+   `max_tokens` at about 2,000 or less; above that the rounds are flagged. Without it, a thinking
+   model's output moves a lot between rounds, because the nonce changes the prompt and sampling runs
+   hot: 148 to 2,126 tokens for one question at low effort on the RTX machine.
 8. RTT: three round trips before each round, shown per machine. As built in phase 5 they are TCP handshakes
    to the Unsloth port, not `GET /api/health` on a keep-alive socket: Unsloth's HTTP answers on a reused
    connection stall for about 40 ms (Nagle's algorithm meeting delayed ACKs), measured with curl and undici

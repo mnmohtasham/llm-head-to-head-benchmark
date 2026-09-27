@@ -76,7 +76,8 @@ The container measures the same way as `npm start`: the same Node version and co
 taken inside the controller. Docker only adds its own network hop between the container and your
 network. Measured on Linux: 30 rounds on each of two fake machines gave the same first-token times
 and decode speeds within 0.1 %, and a round trip to another computer on the network took 25 µs
-longer, where normal variation is 1.2 to 3 ms. On macOS and Windows, Docker Desktop runs containers
+longer, where normal variation is 1.2 to 3 ms. On an RTX 3060 running Qwen3.8 27B, the time between
+Unsloth's first token and Model Duel's was 20 to 29 ms both ways. On macOS and Windows, Docker Desktop runs containers
 in a small virtual machine, which adds a little more to each round trip; that is not measured yet. To
 check your own setup, race the same machines once with `npm start` and once in Docker. The
 [phase 20 record](docs/phases/phase-20.md) has the numbers.
@@ -147,13 +148,20 @@ them side by side. Pick one machine for a single run.
 - **Prompt** offers presets. **Short** is a one-line question. **8K** and **32K** are the opening
   of Mill's *On Liberty*, about 7,600 and 30,400 tokens, followed by a request for a five-point
   summary. **Puzzle** and **Code** are a reasoning puzzle and a small coding task. **Fixed
-  length** asks for a long essay no model finishes, so every machine writes exactly **Max
-  tokens** and output length drops out of the comparison. **Custom** is your own prompt.
+  length** asks for an essay of at least 3,000 words, so every machine writes exactly **Max
+  tokens** and output length drops out of the comparison, as long as Max tokens is shorter than
+  the essay: keep it at about 2,000 or less. A machine that finishes first is flagged. With thinking
+  off it compares hardware most cleanly. **Custom** is your own prompt.
 - **Prefill** is **Cold** by default: a fresh line starts each round's prompt and a fixed seed is
   sent, so no machine can reuse a cached prompt. llama.cpp turns its cache off for seeded
   requests, and the nonce defeats MLX's cache. **Warm** sends the same prompt every round and no
   seed, so rounds after the first can reuse the cache; a round is flagged when a machine reused
   more than 64 cached prompt tokens.
+- **Output length moves a lot between rounds** of a thinking model: cold prefill changes the prompt
+  every round, so the seed cannot repeat an answer, and the same question can take 150 tokens in one
+  round and 2,000 in the next. First answer word, thinking time and total time follow the length.
+  To compare machines, go by decode speed, time to first token and prompt processing, use **Fixed
+  length**, or run more rounds.
 - **Sampling** holds temperature, top-p, top-k, min-p, repetition penalty and seed. Every field
   goes to every machine, so server defaults can never differ.
 
