@@ -49,7 +49,7 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
     // A short telemetry baseline keeps every race in the suite quick.
-    env: { MODEL_DUEL_TELEMETRY_BASELINE_MS: '300' },
+    env: { DUEL_TELEMETRY_BASELINE_MS: '300' },
     stdout: 'pipe',
     stderr: 'pipe',
   },

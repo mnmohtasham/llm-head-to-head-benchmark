@@ -242,6 +242,14 @@ describe('the probe', () => {
       }),
     );
     expect(off.issues[0]?.hint).toMatch(/Serve on Local Network/);
+    expect(off.issues[0]?.hint).not.toMatch(/Docker/);
+    const local = classifyLmProbe({
+      ...raw({
+        lmGreeting: route(null, null, { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' }),
+      }),
+      baseUrl: 'http://127.0.0.1:1234',
+    });
+    expect(local.issues[0]?.hint).toMatch(/localhost is the container itself/);
 
     const old = classifyLmProbe(
       raw({

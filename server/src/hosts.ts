@@ -32,6 +32,8 @@ export async function hostKeys(
     } catch {
       return baseUrl;
     }
+    // In a container, host.docker.internal is the computer the container runs on.
+    if (host === 'host.docker.internal') return LOCAL;
     const addresses =
       net.isIP(host) !== 0
         ? [host]

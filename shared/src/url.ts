@@ -69,6 +69,23 @@ export function normalizeBaseUrl(
 }
 
 /** `host:port` plus any path prefix, for messages. */
+/**
+ * Said when nothing answers at a loopback address. Inside a container, localhost is the container
+ * itself, so a server on the same computer is reached another way.
+ */
+export function loopbackHint(baseUrl: string): string {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    return '';
+  }
+  const loopback = host === 'localhost' || host === '::1' || /^127\./.test(host);
+  return loopback
+    ? ' If Model Duel runs in Docker, localhost is the container itself: use host.docker.internal for this computer, with the server open to the network.'
+    : '';
+}
+
 export function describeAddress(baseUrl: string): string {
   try {
     const url = new URL(baseUrl);

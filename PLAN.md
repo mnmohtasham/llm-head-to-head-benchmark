@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.18, 2026-09-27. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.19, 2026-09-27. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -17,7 +17,8 @@ command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (p
 sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2. v2.15 allows up to 100 rounds summed up by
 median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
 (phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8. v2.18 removes the video encode workload and
-its agent (phase 19), at Mani's request.
+its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
+sections 3 and 8.
 
 ## 0. Decisions so far
 
@@ -351,6 +352,11 @@ holds the contract and `mock/src/lmstudio.ts` copies it.
 
 - Controller: Node 22.19 or newer (undici 8 needs it), TypeScript 6.0, Fastify. Serves the SPA, drives every Unsloth instance, owns
   all timestamps, persists sessions under `./data/`. The browser never talks to the machines.
+- Packaging: `npm start` on Node, or the same build in Docker (phase 20): a multi-stage image on the
+  same Node version, and `docker-compose.yml` with every setting as an environment variable. Each
+  server option has one, and the command line wins. In a container the controller binds 0.0.0.0
+  and the published port decides who reaches it; `host.docker.internal` is the computer Docker
+  runs on.
 - Client: React, Vite, TypeScript, plain CSS. Dark theme, one accent colour per machine.
 - Packages: `server/`, `client/`, `shared/` (types, metric math, SSE parser, workload interfaces),
   `mock/` (mock Unsloth backend), `fixtures/` (recorded streams), `data/`.
@@ -703,7 +709,8 @@ mark events from the same read as coalesced. Each run gets its own connection, b
 streams with `Connection: close`; its headers and body timeouts are the run's idle timeout. An event-loop
 delay histogram runs during every run, and the result warns above 50 ms. TTFB is recorded but labelled
 diagnostic, since servers flush headers at different moments. Measure with the production build, not the
-dev server; the dev server shows a banner.
+dev server; the dev server shows a banner. The production build in Docker measures the same as on
+the host within noise (phase 20 record).
 
 ## 9. Mock Unsloth backend
 
@@ -742,7 +749,7 @@ telemetry samples with phase 7.
 
 ## 12. Phases
 
-The build order lives in ROADMAP.md: eighteen phases in five milestones, each phase ending in a complete,
+The build order lives in ROADMAP.md: twenty phases in six milestones, each phase ending in a complete,
 testable app.
 
 ## 13. Open questions
