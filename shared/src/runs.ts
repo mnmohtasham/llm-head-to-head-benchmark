@@ -1,5 +1,4 @@
 import { CLOUD_INFO, type CloudProvider } from './cloud';
-import { TEMPLATE_INFO } from './commands';
 import { metricKind, metricsFor, type Better, type MetricKind, type MetricUnit } from './compare';
 import { formatValue } from './format';
 import { IMAGE_PRESETS } from './images';
@@ -75,7 +74,7 @@ export interface DeviceRun {
   thinking: string | null;
   maxTokens: number | null;
   concurrency: number | null;
-  /** The workload's settings in a few words, for transcription, image and command races. */
+  /** The workload's settings in a few words, for transcription and image races. */
   settings: string | null;
 
   /** Medians over the counted rounds that finished, by metric key; `finish` is text. */
@@ -151,7 +150,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
     const chatModel = text !== null && cloud === null;
     const lmstudio = p?.server === 'lmstudio';
 
-    let model: string | null = null;
+    let model: string | null;
     let quant: string | null = null;
     let engine: string | null;
     let settings: string | null = null;
@@ -171,7 +170,8 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       const device = stt?.device ?? null;
       engine = `${stt?.loadedEngine ?? view.config.engine}${device ? ` on ${device}` : ''}`;
       settings = `${audioSource(view.config)}, ${view.config.language}`;
-    } else if (view.workload === 'image') {
+    } else {
+      // An image race.
       const image = p?.imageAfter ?? null;
       model = image?.repoId ?? view.config.model;
       quant =
@@ -182,12 +182,6 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       const c = view.config;
       const preset = IMAGE_PRESETS.find((option) => option.id === c.preset)?.label ?? 'Custom';
       settings = `${preset}, ${c.width}×${c.height}, ${c.steps} steps, guidance ${c.guidance}, seed ${c.seed}`;
-    } else {
-      const c = view.config;
-      engine = runs.find((run) => run.command?.encoder)?.command?.encoder ?? null;
-      const quality =
-        c.template === 'x265' ? `CRF ${c.crf}, ${c.x265Preset}` : `${c.bitrateMbps} Mb/s`;
-      settings = `${TEMPLATE_INFO[c.template].label}, ${quality}, ${c.clip}`;
     }
 
     let thinking: string | null = null;
@@ -349,7 +343,6 @@ export const KIND_LABELS: Record<MetricKind, string> = {
   throughput: 'Throughput',
   transcribe: 'Transcribe',
   image: 'Image',
-  command: 'Command',
 };
 
 /** The one number that sums up a run of each kind, for the table of every kind. */
@@ -358,7 +351,6 @@ const HEADLINE: Record<MetricKind, string> = {
   throughput: 'aggregate',
   transcribe: 'rtf',
   image: 'stepsPerSec',
-  command: 'encodeFps',
 };
 
 /** Metrics shown until the user picks columns. */
@@ -367,7 +359,6 @@ const INITIAL_METRICS: Record<MetricKind, readonly string[]> = {
   throughput: ['aggregate', 'perRequest', 'ttftMedian', 'ttftP95', 'batchTime', 'tokensPerJoule'],
   transcribe: ['rtf', 'processing', 'wer', 'load', 'joulesPerMinute'],
   image: ['imageTime', 'stepsPerSec', 'firstStep', 'load', 'energyPerImage'],
-  command: ['encodeTime', 'encodeFps', 'encodeSpeed', 'outputSize', 'energyPerEncode'],
 };
 
 const SERVER_NAMES: Record<DeviceRun['server'], string> = {
@@ -553,21 +544,17 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
       filter: true,
       initial: false,
     },
-    ...(view === 'command'
-      ? []
-      : [
-          {
-            id: 'model',
-            label: 'Model',
-            group: 'Model',
-            value: (r: DeviceRun) => r.model,
-            text: (r: DeviceRun) => show(r.model),
-            numeric: false,
-            filter: true,
-            initial: true,
-          } satisfies RunColumn,
-        ]),
-    ...(view === 'command' || view === 'transcribe'
+    {
+      id: 'model',
+      label: 'Model',
+      group: 'Model',
+      value: (r) => r.model,
+      text: (r) => show(r.model),
+      numeric: false,
+      filter: true,
+      initial: true,
+    },
+    ...(view === 'transcribe'
       ? []
       : [
           {
@@ -583,7 +570,7 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
         ]),
     {
       id: 'engine',
-      label: view === 'command' ? 'Encoder' : 'Engine',
+      label: 'Engine',
       group: 'Model',
       value: (r) => r.engine,
       text: (r) => show(r.engine),
@@ -749,7 +736,7 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
           } satisfies RunColumn,
         ]
       : []),
-    ...(view === 'transcribe' || view === 'image' || view === 'command' || view === 'all'
+    ...(view === 'transcribe' || view === 'image' || view === 'all'
       ? [
           {
             id: 'settings',
@@ -784,7 +771,7 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
       numeric: true,
       filter: false,
       initial: true,
-      hint: 'Decode speed for text, aggregate speed for throughput, real-time factor for transcription, denoising speed for images, frames per second for commands',
+      hint: 'Decode speed for text, aggregate speed for throughput, real-time factor for transcription and denoising speed for images',
     });
   } else {
     const initial = INITIAL_METRICS[view];

@@ -9,7 +9,7 @@ import { sessionStats, statisticOf } from './stats';
  * versioned shape meant to be shared. It is built from the stored session, so the session format
  * can change inside the app while this one only changes with a new `formatVersion`.
  *
- * Never in a result: API keys and agent tokens (they never enter a session), machine addresses,
+ * Never in a result: API keys and tokens (they never enter a session), machine addresses,
  * machine notes, and local file paths or network addresses in messages. Prompts, answers and
  * thinking stay as they are: they are the result.
  */
@@ -44,13 +44,14 @@ const runSchema = z.object({
   loopLagMs: z.object({ max: z.number(), p99: z.number() }).nullable(),
   /** The workload's metrics for this run, by the keys in `metricDefinitions`. */
   metrics: z.record(z.string(), z.union([z.number(), z.string(), z.null()])),
-  /** The full measurements of the run, by workload: client, server, transcription, image, throughput, command. */
+  /** The full measurements of the run, by workload: client, server, transcription, image, throughput. */
   details: z.object({
     client: looseObject.nullable(),
     server: looseObject.nullable(),
     transcription: looseObject.nullable(),
     image: looseObject.nullable(),
     throughput: looseObject.nullable(),
+    /** Always null: it belonged to a video encode workload that was removed. */
     command: looseObject.nullable(),
   }),
   /** Text runs: what the model thought and answered. */
@@ -96,9 +97,9 @@ export const resultSchema = z.object({
     build: z.string().nullable(),
     sessionSchemaVersion: z.number().int(),
   }),
-  workload: z.enum(['text', 'transcribe', 'image', 'command']),
+  workload: z.enum(['text', 'transcribe', 'image']),
   /** The metric set: the workload, with text split into latency and throughput. */
-  kind: z.enum(['text', 'throughput', 'transcribe', 'image', 'command']),
+  kind: z.enum(['text', 'throughput', 'transcribe', 'image']),
   settings: z.object({
     /** The workload's settings as sent, prompt included. */
     config: looseObject,
@@ -143,6 +144,7 @@ export const resultSchema = z.object({
         imageBefore: looseObject.nullable(),
         imageAfter: looseObject.nullable(),
         restore: looseObject.nullable(),
+        /** Always null: it belonged to a video encode workload that was removed. */
         agent: looseObject.nullable(),
       }),
       /** The exact request body the machine received, without keys. */
@@ -300,7 +302,7 @@ export function buildResult(
         transcription: asObject(run.transcription),
         image: asObject(run.image),
         throughput: asObject(run.throughput),
-        command: asObject(run.command),
+        command: null,
       }),
       text: text ? { reasoning: run.reasoning, answer: run.answer } : null,
       telemetry: asObject(run.telemetry),
@@ -364,7 +366,7 @@ export function buildResult(
           imageBefore: asObject(p?.imageBefore),
           imageAfter: asObject(p?.imageAfter),
           restore: asObject(p?.restore),
-          agent: asObject(p?.agent),
+          agent: null,
         }),
         request: p?.request ? redactDeep(asObject(p.request)) : null,
         setup: setup.rows
@@ -409,7 +411,7 @@ export function buildResult(
     },
     privacy: {
       removed: [
-        'API keys and agent tokens',
+        'API keys and tokens',
         'machine addresses',
         'machine notes',
         'local file paths and network addresses in messages and settings',

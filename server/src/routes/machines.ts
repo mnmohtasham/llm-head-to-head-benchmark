@@ -3,7 +3,6 @@ import {
   CLOUD_INFO,
   CLOUD_PROVIDERS,
   LMSTUDIO_PORT,
-  DEFAULT_AGENT_PORT,
   machineCreateSchema,
   machineUpdateSchema,
   maskApiKey,
@@ -22,7 +21,6 @@ import { z } from 'zod';
 import { DEFAULT_PROBE_TIMEOUTS, runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
 import { classifyLmProbe, runLmProbe } from '../lmstudio';
 import type { MachineStore, StoredMachine, StoredProbe } from '../store';
-import { agentHealth } from '../agent';
 import { listCloudModels } from '../cloud';
 import { hostKeys } from '../hosts';
 
@@ -62,15 +60,6 @@ function machineAddress(input: string, cloud: boolean, server: MachineServer = '
   );
 }
 
-/** An agent address as typed, with the agent's port by default; "" means none. */
-function agentAddress(
-  input: string | undefined,
-): string | null | { path: string[]; message: string } {
-  if (!input?.trim()) return null;
-  const url = normalizeBaseUrl(input, DEFAULT_AGENT_PORT);
-  return url.ok ? url.url : { path: ['agentUrl'], message: url.error };
-}
-
 function slug(text: string): string {
   const cleaned = text
     .toLowerCase()
@@ -93,11 +82,8 @@ export function toView(machine: StoredMachine, probe: StoredProbe | undefined): 
     color: machine.color,
     hasApiKey: machine.apiKey !== null,
     apiKeyMasked: maskApiKey(machine.apiKey),
-    agentUrl: machine.agentUrl,
     cloud: machine.cloud,
     server: machine.server,
-    hasAgentToken: machine.agentToken !== null,
-    agentTokenMasked: maskApiKey(machine.agentToken),
     createdAt: machine.createdAt,
     updatedAt: machine.updatedAt,
     lastProbe: probe
@@ -105,7 +91,6 @@ export function toView(machine: StoredMachine, probe: StoredProbe | undefined): 
           probedAt: probe.probedAt,
           durationMs: probe.durationMs,
           report: probe.report,
-          agent: probe.agent ?? null,
         }
       : null,
   };
@@ -211,8 +196,6 @@ export function registerMachineRoutes(
       parsed.data.server,
     );
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
-    const agent = agentAddress(parsed.data.agentUrl);
-    if (agent !== null && typeof agent === 'object') return validationError(reply, [agent]);
     const machine = await store.create({
       cloud: parsed.data.cloud ?? null,
       server: parsed.data.cloud ? 'unsloth' : (parsed.data.server ?? 'unsloth'),
@@ -221,8 +204,6 @@ export function registerMachineRoutes(
       notes: parsed.data.notes ?? '',
       color: parsed.data.color?.toLowerCase(),
       apiKey: parsed.data.apiKey ? parsed.data.apiKey : null,
-      agentUrl: agent ?? null,
-      agentToken: parsed.data.agentToken ? parsed.data.agentToken : null,
     });
     request.log.info({ machineId: machine.id }, 'machine added');
     return reply.code(201).send(view(machine));
@@ -249,18 +230,13 @@ export function registerMachineRoutes(
       current?.server,
     );
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
-    const { apiKey, agentToken } = parsed.data;
-    const agent =
-      parsed.data.agentUrl === undefined ? undefined : agentAddress(parsed.data.agentUrl ?? '');
-    if (agent !== null && typeof agent === 'object') return validationError(reply, [agent]);
+    const { apiKey } = parsed.data;
     const result = await store.update(request.params.id, {
       name: parsed.data.name,
       baseUrl: url.url,
       notes: parsed.data.notes,
       color: parsed.data.color?.toLowerCase(),
       apiKey: apiKey === null ? null : apiKey ? apiKey : undefined,
-      agentUrl: agent,
-      agentToken: agentToken === null ? null : agentToken ? agentToken : undefined,
       cloud: parsed.data.cloud,
     });
     if (!result) return notFound(reply);
@@ -299,7 +275,6 @@ export function registerMachineRoutes(
     const report = lmstudio
       ? await withSiblingHardware(classifyLmProbe(raw), machine)
       : classifyProbe(raw);
-    const agent = machine.agentUrl ? await agentHealth(machine) : null;
     const probe: StoredProbe = {
       schemaVersion: PROBE_SCHEMA_VERSION,
       machineId: machine.id,
@@ -307,7 +282,6 @@ export function registerMachineRoutes(
       durationMs: raw.durationMs,
       raw,
       report,
-      agent,
     };
     // Keep the result only if the address and key it was taken with are still the saved ones.
     const current = store.get(machine.id);
@@ -322,16 +296,8 @@ export function registerMachineRoutes(
       probedAt: probe.probedAt,
       durationMs: probe.durationMs,
       report,
-      agent,
     };
     return summary;
-  });
-
-  /** The agent's health now: its ffmpeg, encoders, clips and extra telemetry. */
-  app.get<IdParams>('/api/machines/:id/agent', async (request, reply) => {
-    const machine = store.get(request.params.id);
-    if (!machine) return notFound(reply);
-    return { machineId: machine.id, ...(await agentHealth(machine)) };
   });
 
   app.get<IdParams>('/api/machines/:id/probe', async (request, reply) => {

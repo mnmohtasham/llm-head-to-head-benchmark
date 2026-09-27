@@ -50,7 +50,6 @@ export function makeRun(
     transcription: null,
     image: null,
     throughput: null,
-    command: null,
   };
 }
 

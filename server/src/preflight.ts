@@ -1,12 +1,9 @@
 import {
-  commandPreflightIssues,
   imagePreflightIssues,
   newNonce,
   preflightIssues,
   transcribePreflightIssues,
   withNonce,
-  type CommandConfig,
-  type CommandPreflightMachine,
   type ImageConfig,
   type ImagePreflightMachine,
   type PreflightMachine,
@@ -15,7 +12,6 @@ import {
   type TextConfig,
   type TranscribeConfig,
 } from '@duel/shared';
-import { agentHealth } from './agent';
 import { describeAudio, type AudioStore } from './audio';
 import { imageFilesOnDisk, readImageStatus } from './imagegen';
 import { readModelStatus } from './models';
@@ -238,26 +234,6 @@ export async function runImagePreflight(
   return {
     checkedAt: new Date().toISOString(),
     issues: imagePreflightIssues(entries, config),
-    promptTokens: {},
-    promptWords: 0,
-  };
-}
-
-/** The checks for a command race: each machine's agent, encoder and clip. */
-export async function runCommandPreflight(
-  machines: readonly StoredMachine[],
-  config: CommandConfig,
-): Promise<PreflightResult> {
-  const entries: CommandPreflightMachine[] = await Promise.all(
-    machines.map(async (machine) => {
-      const base = { id: machine.id, name: machine.name, hasAgent: machine.agentUrl !== null };
-      if (!machine.agentUrl) return { ...base, health: null, error: null };
-      return { ...base, ...(await agentHealth(machine)) };
-    }),
-  );
-  return {
-    checkedAt: new Date().toISOString(),
-    issues: commandPreflightIssues(entries, config),
     promptTokens: {},
     promptWords: 0,
   };

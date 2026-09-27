@@ -92,7 +92,6 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
     const created = await api.createMachine({
       ...values,
       apiKey: values.apiKey ?? '',
-      agentToken: values.agentToken ?? '',
     });
     setMachines((list) => [...(list ?? []), created]);
     setDialog(null);

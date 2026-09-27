@@ -17,10 +17,6 @@ export interface MachineFormValues {
   color: string;
   /** For an edit: "" keeps the saved key and null removes it. */
   apiKey: string | null;
-  /** The Model Duel agent's address; "" for none. */
-  agentUrl: string;
-  /** As for the key: "" keeps the saved token and null removes it. */
-  agentToken: string | null;
   /** The server the machine runs; fixed once the machine is added. */
   server: MachineServer;
 }
@@ -44,10 +40,6 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
   const [showKey, setShowKey] = useState(false);
   const [removeKey, setRemoveKey] = useState(false);
   const [notes, setNotes] = useState(machine?.notes ?? '');
-  const savedToken = machine?.hasAgentToken ? machine.agentTokenMasked : null;
-  const [agentUrl, setAgentUrl] = useState(machine?.agentUrl ?? '');
-  const [agentToken, setAgentToken] = useState('');
-  const [removeToken, setRemoveToken] = useState(false);
   const [color, setColor] = useState<string>(
     machine?.color ?? MACHINE_COLORS.find((c) => !usedColors.includes(c)) ?? MACHINE_COLORS[0],
   );
@@ -79,8 +71,6 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         notes,
         color,
         apiKey: machine && removeKey ? null : apiKey,
-        agentUrl: lm ? '' : agentUrl,
-        agentToken: machine && removeToken ? null : lm ? '' : agentToken,
         server,
       });
     } catch (error) {
@@ -234,51 +224,6 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
             </label>
           ) : null}
         </div>
-
-        {lm ? null : (
-          <details className="field" open={Boolean(machine?.agentUrl)}>
-            <summary className="field-label">Agent, for the Command tab (optional)</summary>
-            <label htmlFor={`${id}-agent`}>Agent address</label>
-            <input
-              id={`${id}-agent`}
-              value={agentUrl}
-              onChange={(event) => setAgentUrl(event.target.value)}
-              placeholder="192.168.1.10:8765"
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={Boolean(errors.agentUrl)}
-            />
-            <label htmlFor={`${id}-agent-token`}>Agent token</label>
-            <input
-              id={`${id}-agent-token`}
-              type="password"
-              value={agentToken}
-              onChange={(event) => setAgentToken(event.target.value)}
-              disabled={removeToken}
-              placeholder={
-                savedToken ? `Leave empty to keep ${savedToken}` : 'The token the agent printed'
-              }
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={Boolean(errors.agentToken)}
-            />
-            <p className={errors.agentUrl || errors.agentToken ? 'field-error' : 'field-hint'}>
-              {errors.agentUrl ??
-                errors.agentToken ??
-                'Start the agent on that machine with npm run agent -- --host 0.0.0.0. It prints its token. Without an agent the Command tab skips this machine.'}
-            </p>
-            {savedToken ? (
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={removeToken}
-                  onChange={(event) => setRemoveToken(event.target.checked)}
-                />
-                Remove the saved token
-              </label>
-            ) : null}
-          </details>
-        )}
 
         <div className="field">
           <label htmlFor={`${id}-notes`}>Notes</label>

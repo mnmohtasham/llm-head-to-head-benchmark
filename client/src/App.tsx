@@ -7,7 +7,6 @@ import { MachinesPage } from './pages/MachinesPage';
 import { ModelsPage } from './pages/ModelsPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { TextPage } from './pages/TextPage';
-import { CommandPage } from './pages/CommandPage';
 import { ImagePage } from './pages/ImagePage';
 import { TranscribePage } from './pages/TranscribePage';
 
@@ -21,8 +20,6 @@ function pageFromHash(): Page {
     return 'transcribe';
   if (window.location.hash === '#/image' || window.location.hash.startsWith('#/image/'))
     return 'image';
-  if (window.location.hash === '#/command' || window.location.hash.startsWith('#/command/'))
-    return 'command';
   if (window.location.hash === '#/results') return 'results';
   return 'machines';
 }
@@ -33,7 +30,6 @@ const TITLES: Record<Page, string> = {
   text: 'Text',
   transcribe: 'Transcribe',
   image: 'Image',
-  command: 'Command',
   results: 'Results',
 };
 
@@ -113,8 +109,6 @@ export function App() {
         <TranscribePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'image' ? (
         <ImagePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
-      ) : page === 'command' ? (
-        <CommandPage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'results' ? (
         <ResultsPage />
       ) : page === 'models' ? (

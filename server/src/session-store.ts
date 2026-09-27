@@ -92,6 +92,11 @@ export class SessionStore {
       this.log?.warn({ sessionId: id }, 'skipped a session file that is not a Model Duel session');
       return null;
     }
+    // Video encode races ran on a workload that was removed; Model Duel can no longer show them.
+    if ((parsed as { workload?: unknown }).workload === 'command') {
+      this.log?.warn({ sessionId: id }, 'skipped a video encode race, a workload that was removed');
+      return null;
+    }
     if (parsed.schemaVersion > SESSION_SCHEMA_VERSION) {
       this.log?.warn(
         { sessionId: id, schemaVersion: parsed.schemaVersion },

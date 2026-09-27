@@ -24,7 +24,7 @@ sharing results, for example on a public results website. The app's own session 
 | `createdAt`, `finishedAt` | ISO 8601 times on the controller. |
 | `state`, `error` | `done`, `failed`, `cancelled` or `interrupted`, and why when not done. |
 | `generator` | `app`, `version`, `build` (the page build id) and `sessionSchemaVersion`. |
-| `workload` | `text`, `transcribe`, `image` or `command`. |
+| `workload` | `text`, `transcribe` or `image`. |
 | `kind` | The metric set: the workload, with text split into `text` (latency) and `throughput`. |
 | `settings` | `config` (the workload's settings as sent, full prompt included), `plan` (rounds, warm-up, pause, order, and `statistic`: `median` or `mean`) and `telemetry.enabled`. |
 | `machines` | One entry per machine, described below. Runs refer to machines by `index`. |
@@ -43,7 +43,7 @@ sharing results, for example on a public results website. The app's own session 
 | `kind`, `cloud` | `local` for a machine running Unsloth or LM Studio, `cloud` for a provider's model raced as a reference. For a cloud model, `cloud` has `provider` (`openai`, `anthropic` or `gemini`) and `model` (the provider's model id), and `hardware`, `software` and `state` are empty. Files from before cloud models have neither field. |
 | `hardware` | `os`, `backend` (for example `cuda`), `memoryTotalGb`, and `gpus` with `name` and `memoryGb`, from the machine's last probe. |
 | `software` | Unsloth, Unsloth Studio and llama.cpp versions. |
-| `state` | What the machine's own routes said: `textBefore`/`textAfter` (the chat model's status), `sttBefore`/`sttAfter`, `imageBefore`/`imageAfter`, `restore` (the chat model loaded again after an image race) and `agent` (the command agent's health). Each is `null` when it does not apply. |
+| `state` | What the machine's own routes said: `textBefore`/`textAfter` (the chat model's status), `sttBefore`/`sttAfter`, `imageBefore`/`imageAfter`, `restore` (the chat model loaded again after an image race) and `agent`, which is always `null`. Each is `null` when it does not apply. |
 | `request` | The exact request body the machine received, without keys: for a cloud model, the body of the provider's own API. |
 | `setup` | The report's setup table for this machine: `key`, `label`, `value` and `differs` (true when a setting that matters differs between the machines). |
 
@@ -63,7 +63,7 @@ their requests left), `nonce` (the fresh line that opened a cold-prefill prompt)
 | `rtt` | Round trips just before the round: `samplesMs` and `medianMs`. |
 | `loopLagMs` | How late the controller's event loop ran: large values make the timings suspect. |
 | `metrics` | The run's value for each key in `metricDefinitions`, or `null`. |
-| `details` | Everything measured, by workload: `client` (the stream as Model Duel timed it), `server` (Unsloth's own timings and monitor row; for a cloud model, `server.cloud` with the provider's `usage`, `requestId` and `processingMs`), `transcription`, `image`, `throughput` and `command`. The ones that do not apply are `null`. |
+| `details` | Everything measured, by workload: `client` (the stream as Model Duel timed it), `server` (Unsloth's own timings and monitor row; for a cloud model, `server.cloud` with the provider's `usage`, `requestId` and `processingMs`), `transcription`, `image` and `throughput`, and `command`, which is always `null`. The ones that do not apply are `null`. |
 | `text` | Text runs: `reasoning` (the thinking) and `answer`. |
 | `telemetry` | Hardware samples around the run and the energy they add up to (`energy`), when telemetry was on. |
 | `timeline` | Text runs: `[ms since the request, tokens so far, 1 while thinking]`. |
@@ -82,7 +82,6 @@ twice a second.
 | `throughput` | `aggregate`, `perRequest`, `ttftMedian`, `ttftP95`, `batchTime`, `queued`, `outputTokens`, `energy`, `tokensPerJoule`, `peakGpu`, `peakMemory` |
 | `transcribe` | `rtf`, `processing`, `processingServer`, `wer` (percent), `upload`, `load`, `energy`, `joulesPerMinute`, `peakGpu`, `peakMemory` |
 | `image` | `imageTime`, `stepsPerSec`, `firstStep`, `decodeTail`, `load`, `energyPerImage`, `power`, `peakGpu`, `peakMemory` |
-| `command` | `encodeTime`, `encodeFps`, `encodeSpeed`, `firstFrame`, `outputSize` (MB), `energyPerEncode`, `agentCpuPower`, `agentGpuPower`, `encoderUse`, `peakGpu` |
 
 `metricDefinitions` in each file carries the label, unit and direction, so a reader need not keep
 this table.
@@ -102,7 +101,7 @@ overlap (at least two rounds each); otherwise `tie`, or `none` with fewer than t
 
 Taken out before a file is written:
 
-- API keys, cloud keys included, and agent tokens. They never enter a session in the first place,
+- API keys and tokens, cloud keys included. They never enter a session in the first place,
   and anything shaped like a key in a message is replaced with `<key>`.
 - Machine addresses and notes.
 - Local paths and network addresses inside messages, statuses and settings: home folders become
@@ -139,6 +138,9 @@ const ok = createHash('sha256').update(canonical(rest)).digest('hex') === sha256
 ```
 
 ## Versions
+
+`machines[].state.agent` and `rounds[].runs[].details.command` belonged to a video encode workload
+that was removed; they stay, always `null`, so every file keeps one shape.
 
 A reader should check `format` and `formatVersion` first. Fields may be added to version 1 without
 a new version, so readers should ignore fields they do not know. A field that is removed or changes

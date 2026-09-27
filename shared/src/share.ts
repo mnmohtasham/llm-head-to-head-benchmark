@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { CLOUD_PROVIDERS } from './cloud';
-import { TEMPLATE_INFO } from './commands';
 import { metricKind, metricsFor } from './compare';
 import { IMAGE_PRESETS } from './images';
 import { PRESETS } from './presets';
@@ -60,8 +59,8 @@ export const shareRecordSchema = z
     displayName: maybe(DISPLAY_NAME_MAX),
     race: z
       .object({
-        workload: z.enum(['text', 'transcribe', 'image', 'command']),
-        kind: z.enum(['text', 'throughput', 'transcribe', 'image', 'command']),
+        workload: z.enum(['text', 'transcribe', 'image']),
+        kind: z.enum(['text', 'throughput', 'transcribe', 'image']),
         state: z.enum(['done', 'partial']),
         rounds: z.number().int().min(1).max(100),
         roundsDone: z.number().int().min(1).max(100),
@@ -124,7 +123,7 @@ export const shareRecordSchema = z
           })
           .strict()
           .nullable(),
-        /** Transcription, image and command settings in a few words, without file names. */
+        /** Transcription and image settings in a few words, without file names. */
         summary: maybe(300),
       })
       .strict(),
@@ -232,7 +231,7 @@ function finishCounts(values: string[]): Record<string, number> | null {
   return counts;
 }
 
-/** The settings of non-text races in a few words, leaving out file and clip names. */
+/** The settings of non-text races in a few words, leaving out file names. */
 function summaryOf(view: SessionView): string | null {
   if (view.workload === 'transcribe') {
     const c = view.config;
@@ -250,12 +249,6 @@ function summaryOf(view: SessionView): string | null {
     const c = view.config;
     const preset = IMAGE_PRESETS.find((option) => option.id === c.preset)?.label ?? 'Custom prompt';
     return `${preset}, ${c.width}×${c.height}, ${c.steps} steps, guidance ${c.guidance}, seed ${c.seed}, memory ${c.memoryMode}`;
-  }
-  if (view.workload === 'command') {
-    const c = view.config;
-    const quality =
-      c.template === 'x265' ? `CRF ${c.crf}, ${c.x265Preset}` : `${c.bitrateMbps} Mb/s`;
-    return `${TEMPLATE_INFO[c.template].label}, ${quality}${c.maxSeconds ? `, first ${c.maxSeconds} s` : ''}`;
   }
   return null;
 }

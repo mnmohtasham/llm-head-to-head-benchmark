@@ -2,7 +2,6 @@ import type { PreflightIssue } from './preflight';
 import { z } from 'zod';
 import { CLOUD_PROVIDERS, type CloudConfig } from './cloud';
 import { MACHINE_SERVERS, type MachineServer } from './lmstudio';
-import type { AgentHealth } from './commands';
 import type { ProbeReport } from './probe';
 
 /** Accent colours for machines, in the order new machines receive them. */
@@ -37,8 +36,6 @@ const baseUrl = z
 const notes = z.string().trim().max(500, 'Keep the notes under 500 characters.');
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Pick one of the colours.');
 const apiKey = z.string().trim().max(500, 'That key is too long.');
-const agentUrl = z.string().trim().max(300, 'That address is too long.');
-const agentToken = z.string().trim().max(500, 'That token is too long.');
 
 /** A model as a provider's list gave it, chosen by the user; the server checks its shape. */
 export const cloudModelSchema = z.object({
@@ -77,9 +74,6 @@ export const machineCreateSchema = z.object({
   apiKey: apiKey.optional(),
   notes: notes.optional(),
   color: color.optional(),
-  /** The Model Duel agent on this machine, for command workloads; empty for none. */
-  agentUrl: agentUrl.optional(),
-  agentToken: agentToken.optional(),
   /** Makes this a cloud reference model instead of a machine running Unsloth. */
   cloud: cloudSchema.optional(),
   /** The local server the machine runs: Unsloth Studio (the default) or LM Studio. */
@@ -94,10 +88,6 @@ export const machineUpdateSchema = z.object({
   apiKey: apiKey.nullable().optional(),
   notes: notes.optional(),
   color: color.optional(),
-  /** Leave it out to keep the agent address; send "" or null to remove it. */
-  agentUrl: agentUrl.nullable().optional(),
-  /** As for the API key: leave out or "" to keep, null to remove. */
-  agentToken: agentToken.nullable().optional(),
   /** For a cloud participant: another model from its provider's list. */
   cloud: cloudSchema.optional(),
 });
@@ -107,14 +97,6 @@ export interface ProbeSummary {
   probedAt: string;
   durationMs: number;
   report: ProbeReport;
-  /** The agent's answer at the same probe, when the machine has one. */
-  agent?: AgentProbe | null;
-}
-
-/** What the agent said when the machine was probed. */
-export interface AgentProbe {
-  health: AgentHealth | null;
-  error: string | null;
 }
 
 /** A machine as the API returns it. The key itself never leaves the controller. */
@@ -126,13 +108,10 @@ export interface MachineView {
   color: string;
   hasApiKey: boolean;
   apiKeyMasked: string | null;
-  agentUrl: string | null;
   /** Set for a cloud reference model; null for a machine running Unsloth or LM Studio. */
   cloud: CloudConfig | null;
   /** The local server: Unsloth Studio or LM Studio. Cloud models say unsloth and mean nothing by it. */
   server: MachineServer;
-  hasAgentToken: boolean;
-  agentTokenMasked: string | null;
   createdAt: string;
   updatedAt: string;
   lastProbe: ProbeSummary | null;
