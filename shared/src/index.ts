@@ -1,7 +1,6 @@
 export * from './blind';
 export * from './chat';
 export * from './cloud';
-export * from './commands';
 export * from './compare';
 export * from './format';
 export * from './images';

@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio) or [LM Studio](https://lmstudio.ai). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 18 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 19 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -13,8 +13,7 @@ temperature show live, and every run gets its energy. A finished race reads as a
 charts and its full setup, exports as JSON, CSV or Markdown, and can be judged in a blind vote.
 Speech-to-text races the same way, with real-time factor and word error rate, and so does image
 generation, with a live step timeline and the images side by side. Throughput mode measures how
-many tokens a machine delivers with several requests at once, and a small agent races video encodes
-and other allowlisted commands. Every race is kept as a JSON result file in a documented format, ready
+many tokens a machine delivers with several requests at once. Every race is kept as a JSON result file in a documented format, ready
 to share. Models from OpenAI, Anthropic and Google Gemini can join text races as references, picked
 from each provider's own model list. The **Results** tab puts every machine's run from every race in
 one table to filter, sort and download, and sends a run to a public results service when you ask. [PLAN.md](PLAN.md) is the full specification.
@@ -243,7 +242,7 @@ Duel's public format for sharing results, described in
 [docs/result-format.md](docs/result-format.md) with a JSON Schema beside it. **Result file** in a
 race's report downloads it.
 
-- It never holds API keys or agent tokens, machine addresses or notes, and local paths and network
+- It never holds API keys or tokens, machine addresses or notes, and local paths and network
   addresses in messages are replaced. Prompts and answers stay, since they are the result: remove a
   private custom prompt before sharing.
 - Each file carries a SHA-256 checksum of its content. `npm run verify-result -- <file>` checks a
@@ -294,7 +293,7 @@ Duel's own numbers: LM Studio's time to first token, its decode speed and its to
   starts each round's prompt with a fresh line.
 - **Unsloth against LM Studio** on the same computer and the same GGUF compares the two servers.
   Pre-flight warns that the race compares servers as well as hardware, and suggests taking turns.
-- Transcription, images, telemetry and commands need Unsloth, so LM Studio machines are left out of
+- Transcription, images and telemetry need Unsloth, so LM Studio machines are left out of
   those tabs.
 
 ## Cloud models as references
@@ -413,39 +412,6 @@ optimisations that engaged, quantisation and offload. Apple Silicon and CUDA res
 and the same seed gives different pixels on them, so pre-flight warns and the images are a sanity
 check rather than a comparison.
 
-## Race machines on video encodes
-
-The **Command** tab runs the same ffmpeg encode on every machine through Model Duel's **agent**, a
-small service from this repository that runs only its own command templates.
-
-1. On each machine, install ffmpeg, clone this repository, run `npm ci`, then start the agent:
-
-   ```bash
-   npm run agent -- --host 0.0.0.0              # prints its token; add --token to choose one
-   npm run agent -- --make-clip                 # once: a 20-second 1080p30 reference clip
-   ```
-
-   Clips live in the agent's clips folder (`data/clips`, or `--clips <dir>`). Every machine must
-   have the same file: pre-flight compares them by SHA-256, and the clip `--make-clip` makes can
-   differ between ffmpeg versions, so make it once and copy it.
-2. On the **Machines** screen, **Edit** each machine and fill in **Agent address** (port 8765 by
-   default) and **Agent token**. **Probe** then checks the agent too, and the card lists its
-   ffmpeg, encoders and clips.
-3. On the **Command** tab pick the encode and the clip, and **Start**:
-   - **HEVC hardware** uses the video encoder: NVENC on an NVIDIA GPU, VideoToolbox on a Mac. The
-     race compares the encoder hardware, and pre-flight says which each machine uses.
-   - **ProRes hardware** uses a Mac's media engine.
-   - **x265 software** encodes on the CPU, the same encoder everywhere.
-
-Each pane shows frames per second and speed (seconds of video per second) as the encode runs,
-then the encode time as ffmpeg's run took on the machine, the output size, and a chart of frames
-against time. Where installed, the agent also reads macmon on a Mac (CPU, GPU and Neural Engine
-power) or nvidia-smi on Linux (GPU power and video encoder use). Energy comes from Unsloth's GPU
-reading, so an x265 encode's CPU energy is not in it.
-
-The agent never runs a string it is sent: a job names a template, a clip in its folder and a few
-numbers, and the agent builds the ffmpeg argument list itself. Anything else is refused.
-
 ## Compare every run in the Results tab
 
 **Results** lists every machine's run in every finished race, one row each, so runs from different
@@ -458,7 +424,7 @@ races can be compared: which GPU runs a model fastest, what a quant or a context
   its counted rounds, the same numbers as the race's report. **Rounds summed up by** shows every
   row's medians or averages, whatever each race was set to.
 - **Workload** picks the kind of race, since each has its own measurements: Text, Throughput,
-  Transcribe, Image or Command. **All** shows every kind with one headline number each.
+  Transcribe or Image. **All** shows every kind with one headline number each.
 - **Filter** by typing in **Search**, which matches the cells shown and the full prompt, or with the
   lists: machine, GPU, model, quant, engine, context, KV cache, slots, prompt and thinking, and more
   under **More filters**. Each list shows how many rows each value has with the other filters set.
@@ -508,9 +474,6 @@ check it, and what a public service must do to stay safe.
   stops web pages from reaching it through DNS rebinding. `--allow-host <name>` adds a name.
 - API keys live in `data/machines.json`, readable by your user only (mode 600). They never reach
   the browser, the logs or an export. The app shows only `sk-unsloth-…1234`.
-- The agent needs its token for everything but a bare health check, and runs only its own
-  templates on clips in its own folder. It binds to 127.0.0.1 unless you pass `--host`. Its token,
-  like the API keys, stays in `data/machines.json`.
 - Cloud API keys are kept the same way. They go only to their own provider's API address, and a
   saved key is never sent to another provider. **Fetch models** sends the key to Model Duel's
   server, which asks the provider; the browser never talks to the provider.
@@ -535,14 +498,13 @@ check it, and what a public service must do to stay safe.
 | `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
 | `npm run mock -- --share --port 18888`                    | Starts a fake results service, taking records at `/api/runs`       |
 | `npm run mock -- --lmstudio --port 18889`                 | Starts a fake LM Studio 0.4; `--api-key` makes it require a token  |
-| `npm run agent -- --host 0.0.0.0`                         | Starts the agent for the Command tab; `--help` lists its options   |
 | `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
 | `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
 | `npm run verify-result -- <file>`                          | Checks result files against the format and their checksum          |
 | `npm run result-schema`                                    | Rewrites the JSON Schemas in `docs/` from the formats' definitions |
 | `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
 | `npm test`                                                | Unit and integration tests                                         |
-| `npm run test:e2e`                                        | Builds, starts the demo on port 3100 and 18891 to 18896 and 18911 to 18915, runs browser tests |
+| `npm run test:e2e`                                        | Builds, starts the demo on port 3100, 18891, 18892 and 18911 to 18915, runs browser tests |
 
 ## The fake Unsloth
 
@@ -677,7 +639,6 @@ out.
 | `server/`     | The controller: Fastify API, Unsloth client, probe, machine store |
 | `client/`     | The React app                                                     |
 | `mock/`       | The fake Unsloth backend and the fake cloud providers             |
-| `agent/`      | The agent that runs allowlisted commands on a machine             |
 | `e2e/`        | Playwright browser tests                                          |
 | `scripts/`    | Build, demo, and the probe and stream recorders                   |
 | `fixtures/`   | Recorded probes, model lists and streams used by the tests        |

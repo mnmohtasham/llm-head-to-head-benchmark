@@ -66,8 +66,6 @@ async function pickMachine(): Promise<StoredMachine> {
       notes: '',
       color: '#e8a33d',
       apiKey: values.key ?? process.env.UNSLOTH_API_KEY ?? null,
-      agentUrl: null,
-      agentToken: null,
       cloud: null,
       server: 'unsloth',
       createdAt: now,

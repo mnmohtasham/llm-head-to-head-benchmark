@@ -44,7 +44,7 @@ Authorization: Bearer <token>        (only when the user entered a token)
 | `race` | `workload`, `kind` (the metric set), `state` (`done` or `partial`), `rounds`, `roundsDone`, `warmup`, `sequencing`, `statistic` (`median` or `mean`), `machines` (how many raced; they are not named). |
 | `machine` | `kind` (`local` or `cloud`), `provider` (for cloud), `gpus` (name and memory in GB), `gpuMemoryGb`, `platform` (CUDA, ROCm, MLX…), `memoryGb`, `os` (family and version only), `studio`, `llamaCpp`. |
 | `model` | `id`, `quant`, `engine`, `contextLength`, `kvCache` (type, not size), `gpuLayers` (−1 is automatic), `totalLayers`, `slots`, `speculative`, `gpuMemoryMode`. |
-| `settings` | `prompt` (a preset id or `custom`), `promptText` (only when the sender opted in), `promptTokens`, `prefill`, `thinking`, `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription, image and command races. |
+| `settings` | `prompt` (a preset id or `custom`), `promptText` (only when the sender opted in), `promptTokens`, `prefill`, `thinking`, `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
 | `metrics` | Per metric: `key`, `label`, `unit`, `better` (`lower`, `higher` or `null`), `n`, `median`, `mean`, `min`, `max`, `stdev`, and `values`, one per counted round (`null` where the round failed). |
 | `finish` | Text runs: how the counted rounds ended, such as `{"stop": 3}`. |
 

@@ -1,5 +1,7 @@
 # Phase 12 record
 
+> **Removed in phase 19 (v1.9), 2026-09-27,** at Mani's request, with the agent and the Command tab. This record is kept as history.
+
 - Date: 2026-09-25
 - Commit and tag: branch `phase-12`, merged into `main`, tagged `v1.2`, the last phase.
 - Machine: `test`, NVIDIA RTX 3060 12 GB, Ubuntu with ffmpeg 7.1.1 (`hevc_nvenc`, `libx265`) and

@@ -13,9 +13,7 @@ export type MetricUnit =
   | '%'
   | 'GB'
   | '×'
-  | 'steps/s'
-  | 'fps'
-  | 'MB';
+  | 'steps/s';
 
 export interface MetricSpec {
   key: string;
@@ -381,85 +379,11 @@ export const THROUGHPUT_METRICS: readonly MetricSpec[] = [
   },
 ];
 
-/** The metrics of a command race: one encode per machine per round. */
-export const COMMAND_METRICS: readonly MetricSpec[] = [
-  {
-    key: 'encodeTime',
-    label: 'Encode time',
-    unit: 'ms',
-    better: 'lower',
-    pick: (r) => r.command?.wallMs,
-  },
-  {
-    key: 'encodeFps',
-    label: 'Frames per second',
-    unit: 'fps',
-    better: 'higher',
-    pick: (r) => r.command?.fps,
-  },
-  {
-    key: 'encodeSpeed',
-    label: 'Speed',
-    unit: '×',
-    better: 'higher',
-    pick: (r) => r.command?.speed,
-  },
-  {
-    key: 'firstFrame',
-    label: 'Time to first progress with a frame',
-    unit: 'ms',
-    better: null,
-    pick: (r) => r.command?.firstFrameMs,
-  },
-  {
-    key: 'outputSize',
-    label: 'Output size',
-    unit: 'MB',
-    better: null,
-    pick: (r) => (r.command?.outputBytes ? r.command.outputBytes / 1e6 : null),
-  },
-  {
-    key: 'energyPerEncode',
-    label: 'Energy per encode, approx.',
-    unit: 'J',
-    better: 'lower',
-    pick: (r) => r.telemetry?.energy.energyJ,
-  },
-  {
-    key: 'agentCpuPower',
-    label: 'Mean CPU power, agent, approx.',
-    unit: 'W',
-    better: null,
-    pick: (r) => r.command?.agentTelemetry?.meanCpuPowerW,
-  },
-  {
-    key: 'agentGpuPower',
-    label: 'Mean GPU power, agent, approx.',
-    unit: 'W',
-    better: null,
-    pick: (r) => r.command?.agentTelemetry?.meanGpuPowerW,
-  },
-  {
-    key: 'encoderUse',
-    label: 'Peak video encoder use',
-    unit: '%',
-    better: null,
-    pick: (r) => r.command?.agentTelemetry?.peakEncoderPct,
-  },
-  {
-    key: 'peakGpu',
-    label: 'Peak GPU',
-    unit: '%',
-    better: null,
-    pick: (r) => r.telemetry?.energy.peakGpuPct,
-  },
-];
-
 /** Which set of metrics and round cells a session uses. */
-export type MetricKind = 'text' | 'throughput' | 'transcribe' | 'image' | 'command';
+export type MetricKind = 'text' | 'throughput' | 'transcribe' | 'image';
 
 export function metricKind(session: {
-  workload: 'text' | 'transcribe' | 'image' | 'command';
+  workload: 'text' | 'transcribe' | 'image';
   config: unknown;
 }): MetricKind {
   if (session.workload !== 'text') return session.workload;
@@ -473,7 +397,5 @@ export function metricsFor(kind: MetricKind): readonly MetricSpec[] {
       ? IMAGE_METRICS
       : kind === 'throughput'
         ? THROUGHPUT_METRICS
-        : kind === 'command'
-          ? COMMAND_METRICS
-          : METRICS;
+        : METRICS;
 }

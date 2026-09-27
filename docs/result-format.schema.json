@@ -55,11 +55,11 @@
     },
     "workload": {
       "type": "string",
-      "enum": ["text", "transcribe", "image", "command"]
+      "enum": ["text", "transcribe", "image"]
     },
     "kind": {
       "type": "string",
-      "enum": ["text", "throughput", "transcribe", "image", "command"]
+      "enum": ["text", "throughput", "transcribe", "image"]
     },
     "settings": {
       "type": "object",

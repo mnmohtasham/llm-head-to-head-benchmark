@@ -52,7 +52,6 @@ function race() {
     imageBefore: null,
     imageAfter: null,
     restore: null,
-    agent: null,
   });
   session.provenance = [provenance('rtx'), provenance('amd')];
   return session;

@@ -19,7 +19,6 @@ function provenance(machineId: string, over: Partial<MachineProvenance> = {}): M
     imageBefore: null,
     imageAfter: null,
     restore: null,
-    agent: null,
     ...over,
   };
 }
@@ -210,7 +209,6 @@ describe('columns and CSV', () => {
       expect.arrayContaining(['gpu', 'kvCache', 'gpuLayers', 'slots', 'metric:decode']),
     );
     expect(runColumns('image').map((c) => c.id)).not.toContain('kvCache');
-    expect(runColumns('command').map((c) => c.id)).not.toContain('model');
     const all = runColumns('all');
     expect(all.map((c) => c.id)).toContain('headline');
     expect(all.some((c) => c.id.startsWith('metric:'))).toBe(false);

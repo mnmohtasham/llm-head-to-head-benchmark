@@ -14,7 +14,7 @@ import { api, messageOf, type ShareSettingsView } from '../api';
 import { ShareDialog, ShareSettingsDialog } from '../components/ShareDialogs';
 import { TopBar } from '../components/TopBar';
 
-const KINDS: readonly MetricKind[] = ['text', 'throughput', 'transcribe', 'image', 'command'];
+const KINDS: readonly MetricKind[] = ['text', 'throughput', 'transcribe', 'image'];
 const SHOWN_STATES = new Set(['done', 'partial']);
 /** Filters shown up front; the others wait under More filters. */
 const MAIN_FILTERS = new Set([

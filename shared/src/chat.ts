@@ -3,7 +3,6 @@ import type { LmStats } from './lmstudio';
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
 import type { RunEnergy, TelemetrySample } from './telemetry';
-import type { CommandResult } from './commands';
 import type { ImageResult } from './images';
 import type { TranscriptionResult } from './transcribe';
 import { detailOf } from './probe';
@@ -484,8 +483,6 @@ export interface LiveMetrics {
   steps?: { done: number; total: number } | null;
   /** Throughput runs: requests finished out of those sent. */
   requests?: { done: number; total: number } | null;
-  /** Command runs: frames encoded so far, out of the clip's, when known. */
-  frames?: { done: number; total: number | null } | null;
   /** Image runs, while the model loads: Unsloth's load phase and the share downloaded. */
   load?: { phase: string | null; fraction: number | null } | null;
 }
@@ -568,8 +565,6 @@ export interface RunView {
   image: ImageResult | null;
   /** Throughput mode: every request of the batch, added up; null in latency mode. */
   throughput: ThroughputResult | null;
-  /** The command workload's encode; null otherwise. */
-  command: CommandResult | null;
 }
 
 export interface RunTelemetry {

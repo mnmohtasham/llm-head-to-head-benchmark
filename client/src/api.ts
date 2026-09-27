@@ -23,7 +23,6 @@ import type {
   ShareOptions,
   ShareRecord,
   Statistic,
-  AgentHealth,
   ImageModelView,
   ImageStatus,
   SttStatus,
@@ -202,11 +201,6 @@ export const api = {
       models: ImageModelView[] | null;
       modelsError: string | null;
     }>('GET', `${machineUrl(id)}/image`),
-  agentInfo: (id: string) =>
-    call<{ machineId: string; health: AgentHealth | null; error: string | null }>(
-      'GET',
-      `${machineUrl(id)}/agent`,
-    ),
   sessionImageUrl: (sessionId: string, runId: string) =>
     `${sessionUrl(sessionId)}/images/${encodeURIComponent(runId)}`,
   reloadSlots: (id: string, slots: number) =>

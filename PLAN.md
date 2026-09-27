@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.17, 2026-09-26. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.18, 2026-09-27. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -16,7 +16,8 @@ built in phase 8, in section 7. v2.8 records transcription as built in phase 9, 
 command workload of phase 12, in sections 3, 6 and 7. v2.12 adds result files (phase 13), in section 7.1. v2.13 adds cloud reference models (phase 14), in
 sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 7.2. v2.15 allows up to 100 rounds summed up by
 median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
-(phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8.
+(phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8. v2.18 removes the video encode workload and
+its agent (phase 19), at Mani's request.
 
 ## 0. Decisions so far
 
@@ -25,11 +26,11 @@ median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public 
 | Model servers | Unsloth Desktop / Studio on every machine (macOS and Linux). The app never runs models itself. |
 | Controller placement | Any machine: a third one, or one of the two. Machine addresses and API keys are entered in the app. |
 | Network | Wi-Fi. Every client-observed number is paired with a server-reported number so network noise is visible instead of hidden. |
-| Workloads | Text generation, transcription, image generation now. Video encode later, through a command plugin that needs a small agent. |
+| Workloads | Text generation, transcription and image generation. A video encode workload was built in phase 12 and removed in phase 19. |
 | Models | Thinking models are in scope. Thinking is an explicit per-session switch, never the model default. |
 | Quality | Word error rate for transcription, blind vote for text, side-by-side for images. |
 | Concurrency | Single-stream latency is the core. A "parallel requests" mode is an optional later phase. |
-| Telemetry | Live GPU, CPU, RAM, power and temperature come from Unsloth's own routes. No agent is needed for phases 1 to 3. |
+| Telemetry | Live GPU, CPU, RAM, power and temperature come from Unsloth's own routes, so nothing runs on the machines but Unsloth. |
 | Cloud models | OpenAI, Anthropic and Google Gemini models join text races as references, never as machines (phase 14). |
 
 Telemetry means the live hardware readings in the panes of the reference tool: GPU %, GPU power in watts,
@@ -369,7 +370,7 @@ holds the contract and `mock/src/lmstudio.ts` copies it.
 
 ```ts
 interface Workload<C> {
-  id: 'text' | 'transcribe' | 'image' | 'command';
+  id: 'text' | 'transcribe' | 'image';
   configSchema: ZodSchema<C>;
   presets: Preset<C>[];
   prepare(machine: Machine, config: C): Promise<PrepareResult>;   // load model, warm engine, timed
@@ -378,28 +379,6 @@ interface Workload<C> {
   headline(a: RunMetrics, b: RunMetrics): Headline[];              // scoreboard sentences
 }
 ```
-
-- Agent (built in phase 12, `agent/`): a Fastify service started with `npm run agent` on a machine,
-  port 8765, with a bearer token. `GET /health` names the agent to anyone and, with the token, lists
-  its platform, ffmpeg version, the known encoders it has, which template each would use, its clips
-  (name, size, SHA-256, frames, length, from ffprobe), macmon or nvidia-smi, and whether it is busy.
-  `POST /jobs` takes `{template, clip, bitrateMbps, crf, x265Preset, maxSeconds}` and nothing else
-  (a strict schema); the agent resolves the encoder, builds the ffmpeg argument list itself, runs it
-  with `-progress pipe:1 -stats_period 0.1` into a temporary file, and deletes the file after
-  measuring it. One job at a time (409 otherwise). `GET /jobs/:id/stream` sends every event so far and
-  then the rest: `started {encoder, argv}`, `progress {frame, fps, outTimeMs, speed, totalSize, done}`,
-  `telemetry {cpuPowerW, gpuPowerW, anePowerW, gpuPct, encoderPct}` and `finished {exitCode,
-  cancelled, wallMs, outputBytes, stderrTail}`. `POST /jobs/:id/cancel` stops it. `--fake` adds a
-  scripted encode and clip for the demo and tests.
-- Command workload: templates `hevc-hardware` (hevc_nvenc, else hevc_videotoolbox), `prores-hardware`
-  (prores_videotoolbox), `x265` (libx265) and `fake`. Pre-flight needs an agent on every machine that
-  is free, accepts the token, has the encoder and has the clip with the same SHA-256; different
-  encoders are a note. Metrics: encode time (the agent's `wallMs`), frames per second, speed, time to
-  the first progress with a frame, output size, energy per encode from Unsloth's telemetry, and the
-  agent's own power readings. Energy lines up with when the agent's events arrived, since its clock is
-  its own. Sessions are schema version 9, with `command` on each run and the agent's health in the
-  provenance. Machines keep `agentUrl` and `agentToken` beside the API key; the token never reaches
-  the browser.
 
 ### 3.1 Probe
 
@@ -612,8 +591,6 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
   contentType, seconds}`; `GET /api/audio/clip.wav` serves the bundled clip; `GET /api/machines/:id/stt`
   answers a machine's STT status. `POST /api/preflight` and `POST /api/sessions` take `workload`, which
   defaults to `text`.
-- Agents (phase 12): machines take `agentUrl` and `agentToken`; `GET /api/machines/:id/agent` answers
-  the agent's health, and the probe includes it as `agent`.
 - Cloud models (phase 14): machines take `cloud: {provider, model}`; `POST /api/cloud/models
   {provider, apiKey?, baseUrl?, machineId?}` answers `{models}` from the provider, with a saved
   participant's key when `apiKey` is empty, or 502 with the provider's refusal in words. A cloud
@@ -652,7 +629,7 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
 
 ## 7. UI
 
-Tabs: TEXT, TRANSCRIBE, IMAGE, COMMAND. Top bar: preset chips, rounds, START and CANCEL.
+Tabs: MACHINES, MODELS, TEXT, TRANSCRIBE, IMAGE, RESULTS. Top bar: preset chips, rounds, START and CANCEL.
 One pane per machine: name, model line, telemetry chips (GPU %, power W, CPU %, RAM, temperature), big live
 numbers (first token, tok/s, elapsed), streamed text with the thinking block (expanded while thinking,
 collapsed once the answer starts), or a progress bar and the image, or the transcript.
@@ -687,7 +664,7 @@ A RESULTS tab lists every machine's run in every finished race, one row each, bu
 numbers are the report's medians. A row holds the hardware from the probe taken with the race
 (GPU names and memory added up, platform, RAM, system, versions); the model, quant and engine that
 ran for the workload (the chat model for text, the STT model and engine for transcription, the
-image repo and the quant in its GGUF file name for images, the encoder for commands); the chat
+image repo and the quant in its GGUF file name for images); the chat
 model's context, KV cache type, GPU layers, slots, speculative decoding and GPU memory mode; the
 prompt, prompt tokens, prefill, thinking and Max tokens; the workload's other settings in a few
 words; every metric's median and average; the metrics it won in its race; and its state (`done`, `partial`,
@@ -787,7 +764,8 @@ testable app.
 
 No auth on the controller, no multi-user, no servers besides Unsloth Studio and LM Studio (section 2.8), no
 cloud models except as text references (section 2.7), no
-model downloads, no training, no i18n.
+video encode benchmark (built in phase 12, removed in phase 19), no model downloads, no training, no
+i18n.
 
 ## 15. Definition of done
 

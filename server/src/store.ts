@@ -3,7 +3,6 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path';
 import {
   MACHINE_COLORS,
-  type AgentProbe,
   type CloudConfig,
   type MachineServer,
   type LoadJob,
@@ -21,9 +20,6 @@ export interface StoredMachine {
   notes: string;
   color: string;
   apiKey: string | null;
-  /** The Model Duel agent on this machine, and its token; null when there is none. */
-  agentUrl: string | null;
-  agentToken: string | null;
   /** A cloud reference model: the provider and model. Its key is `apiKey`, its API `baseUrl`. */
   cloud: CloudConfig | null;
   /** The local server it runs; machines saved before LM Studio support run Unsloth. */
@@ -39,7 +35,6 @@ export interface StoredProbe {
   durationMs: number;
   raw: ProbeRaw;
   report: ProbeReport;
-  agent?: AgentProbe | null;
 }
 
 export interface NewMachine {
@@ -48,8 +43,6 @@ export interface NewMachine {
   notes: string;
   color?: string | undefined;
   apiKey: string | null;
-  agentUrl?: string | null;
-  agentToken?: string | null;
   cloud?: CloudConfig | null;
   server?: MachineServer;
 }
@@ -62,8 +55,6 @@ export interface MachinePatch {
   /** undefined keeps the saved key, null removes it, a string replaces it. */
   apiKey?: string | null | undefined;
   /** As for the key: undefined keeps, null removes, a string replaces. */
-  agentUrl?: string | null | undefined;
-  agentToken?: string | null | undefined;
   cloud?: CloudConfig | undefined;
 }
 
@@ -84,9 +75,6 @@ function isStoredMachine(value: unknown): value is StoredMachine {
     typeof m.notes === 'string' &&
     typeof m.color === 'string' &&
     (m.apiKey === null || typeof m.apiKey === 'string') &&
-    // Files from before the agent have neither field.
-    (m.agentUrl === undefined || m.agentUrl === null || typeof m.agentUrl === 'string') &&
-    (m.agentToken === undefined || m.agentToken === null || typeof m.agentToken === 'string') &&
     typeof m.createdAt === 'string' &&
     typeof m.updatedAt === 'string'
   );
@@ -169,13 +157,16 @@ export class MachineStore {
     }
     const bad = file.machines.findIndex((entry) => !isStoredMachine(entry));
     if (bad >= 0) throw new Error(`Machine ${bad + 1} in ${this.machinesFile} is malformed.`);
-    return (file.machines as StoredMachine[]).map((m) => ({
-      ...m,
-      agentUrl: m.agentUrl ?? null,
-      agentToken: m.agentToken ?? null,
-      cloud: m.cloud ?? null,
-      server: m.server === 'lmstudio' ? 'lmstudio' : 'unsloth',
-    }));
+    return (
+      file.machines as Array<StoredMachine & { agentUrl?: unknown; agentToken?: unknown }>
+    ).map(
+      // An agent address and token belonged to a video encode workload that was removed.
+      ({ agentUrl: _agentUrl, agentToken: _agentToken, ...m }) => ({
+        ...m,
+        cloud: m.cloud ?? null,
+        server: m.server === 'lmstudio' ? 'lmstudio' : 'unsloth',
+      }),
+    );
   }
 
   private async readProbe(id: string): Promise<StoredProbe | null> {
@@ -241,8 +232,6 @@ export class MachineStore {
       notes: input.notes,
       color: input.color ?? this.nextColor(),
       apiKey: input.apiKey,
-      agentUrl: input.agentUrl ?? null,
-      agentToken: input.agentToken ?? null,
       cloud: input.cloud ?? null,
       server: input.server ?? 'unsloth',
       createdAt: now,
@@ -269,8 +258,6 @@ export class MachineStore {
       notes: patch.notes ?? current.notes,
       color: patch.color ?? current.color,
       apiKey,
-      agentUrl: patch.agentUrl === undefined ? current.agentUrl : patch.agentUrl,
-      agentToken: patch.agentToken === undefined ? current.agentToken : patch.agentToken,
       cloud: patch.cloud === undefined ? current.cloud : patch.cloud,
       updatedAt: new Date().toISOString(),
     };

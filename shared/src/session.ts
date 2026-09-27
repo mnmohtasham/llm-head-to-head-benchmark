@@ -19,12 +19,6 @@ import {
 } from './transcribe';
 import type { CloudConfig } from './cloud';
 import { statisticOf, type Statistic } from './stats';
-import {
-  commandConfigSchema,
-  TEMPLATE_INFO,
-  type AgentHealth,
-  type CommandConfig,
-} from './commands';
 import { imageConfigSchema, imagePrompt, type ImageConfig, type ImageStatus } from './images';
 
 /**
@@ -32,7 +26,8 @@ import { imageConfigSchema, imagePrompt, type ImageConfig, type ImageStatus } fr
  * Version 2 added the run plan, the warm-up and per-round RTT; version 3 the preset, prefill mode,
  * full sampling and per-round nonce; version 4 telemetry; version 5 blind votes and each run's
  * token timeline; version 6 the transcription workload; version 7 the image workload; version 8
- * throughput mode for text; version 9 the command workload. Older files are migrated on read.
+ * throughput mode for text; version 9 a video encode workload, since removed. Older files are
+ * migrated on read.
  */
 export const SESSION_SCHEMA_VERSION = 9;
 export const MAX_RACE_MACHINES = 8;
@@ -88,11 +83,6 @@ export const sessionRequestSchema = z.preprocess(
       ...sessionRequestBase,
     }),
     z.object({ workload: z.literal('image'), config: imageConfigSchema, ...sessionRequestBase }),
-    z.object({
-      workload: z.literal('command'),
-      config: commandConfigSchema,
-      ...sessionRequestBase,
-    }),
   ]),
 );
 
@@ -115,11 +105,6 @@ export const preflightRequestSchema = z.preprocess(
       machineIds: sessionRequestBase.machineIds,
       config: imageConfigSchema,
     }),
-    z.object({
-      workload: z.literal('command'),
-      machineIds: sessionRequestBase.machineIds,
-      config: commandConfigSchema,
-    }),
   ]),
 );
 export type PreflightRequest = z.infer<typeof preflightRequestSchema>;
@@ -130,8 +115,7 @@ export type Workload = SessionRequest['workload'];
 export type WorkloadConfig =
   | { workload: 'text'; config: TextConfig }
   | { workload: 'transcribe'; config: TranscribeConfig }
-  | { workload: 'image'; config: ImageConfig }
-  | { workload: 'command'; config: CommandConfig };
+  | { workload: 'image'; config: ImageConfig };
 
 export type SessionState = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -163,8 +147,6 @@ export interface MachineProvenance {
   imageAfter: ImageStatus | null;
   /** The chat model the image load pushed out, and whether it came back after the race. */
   restore: RestoreOutcome | null;
-  /** The agent's health before a command session: its ffmpeg, encoders and clips. */
-  agent: AgentHealth | null;
   /** A cloud reference model: the provider and the model, with what it accepts. */
   cloud?: CloudConfig | null;
   /** Set when the machine runs LM Studio instead of Unsloth Studio. */
@@ -302,8 +284,6 @@ export interface SessionSummary {
     wer: number | null;
     /** Throughput mode: every request's tokens per second, added up. */
     aggregateTokPerSec: number | null;
-    /** Command only: frames encoded per second. */
-    encodeFps: number | null;
     /** Image only: time for one image, and denoising steps per second. */
     imageMs: number | null;
     stepsPerSec: number | null;
@@ -393,7 +373,6 @@ export function migrateSession(value: StoredSession): StoredSession {
       transcription: run.transcription ?? null,
       image: run.image ?? null,
       throughput: run.throughput ?? null,
-      command: run.command ?? null,
     })),
   });
   const provenance = (old.provenance ?? []).map((p) => ({
@@ -403,7 +382,6 @@ export function migrateSession(value: StoredSession): StoredSession {
     imageBefore: p.imageBefore ?? null,
     imageAfter: p.imageAfter ?? null,
     restore: p.restore ?? null,
-    agent: p.agent ?? null,
   }));
   if (value.workload === 'text' && (old.schemaVersion ?? 0) >= 6) {
     return {
@@ -471,22 +449,10 @@ export function imageLabel(config: ImageConfig): string {
   return `Image "${prompt.length > 60 ? `${prompt.slice(0, 60).trimEnd()}…` : prompt}" with ${model}${quant ? ` ${quant}` : ''}, ${config.width}×${config.height}, ${config.steps} steps`;
 }
 
-/** A few words about a command session's template, clip and settings, for the results log. */
-export function commandLabel(config: CommandConfig): string {
-  const settings =
-    config.template === 'x265'
-      ? `CRF ${config.crf}, ${config.x265Preset}`
-      : config.template === 'hevc-hardware'
-        ? `${config.bitrateMbps} Mbit/s`
-        : '';
-  return `Encode ${config.clip} with ${TEMPLATE_INFO[config.template].label}${settings ? `, ${settings}` : ''}${config.maxSeconds ? `, first ${config.maxSeconds} s` : ''}`;
-}
-
 /** The line the results log shows for a session. */
 export function sessionLabel(session: WorkloadConfig): string {
   if (session.workload === 'text') return session.config.prompt.slice(0, 160);
   if (session.workload === 'transcribe') return audioLabel(session.config);
-  if (session.workload === 'command') return commandLabel(session.config);
   return imageLabel(session.config);
 }
 
@@ -552,7 +518,6 @@ export function summarizeSession(session: StoredSession | SessionView): SessionS
         wer: pick((run) => run.transcription?.wer?.wer),
         aggregateTokPerSec: pick((run) => run.throughput?.aggregateTokPerSec),
         imageMs: pick((run) => run.image?.totalMs),
-        encodeFps: pick((run) => run.command?.fps),
         stepsPerSec: pick((run) => run.image?.stepsPerSec),
       };
     }),

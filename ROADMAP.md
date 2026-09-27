@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Eighteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Nineteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -33,7 +33,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 18 are `v1.1` to `v1.8`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 19 are `v1.1` to `v1.9`.
 
 ## Running a phase
 
@@ -57,13 +57,14 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 9 | Transcription | Race speech-to-text with real-time factor and word error rate | 8 | M | v0.9 |
 | 10 | Image generation | Race image generation with a live step timeline and the images side by side | 8 | M | v1.0 |
 | 11 | Throughput mode | Measure aggregate tokens per second under parallel requests | 6 | S | v1.1 |
-| 12 | Agent and command workloads | Run video encodes on each machine through a small agent | 8 | L | v1.2 |
+| 12 | Agent and command workloads | Removed in phase 19: video encodes through a small agent | 8 | L | v1.2 |
 | 13 | Result files | Keep every race as a shareable JSON result in a documented, versioned format | 8 | S | v1.3 |
 | 14 | Cloud reference models | Race ChatGPT, Claude and Gemini models next to local machines as references | 6 | M | v1.4 |
 | 15 | Results tab | Filter, sort and download every machine's run from every race in one table | 8 | S | v1.5 |
 | 16 | Long races and averages | Run up to 100 rounds and sum them up by median or average | 5 | S | v1.6 |
 | 17 | Sending runs | Send a run from the Results tab to a public results service, safely | 15 | M | v1.7 |
 | 18 | LM Studio machines | Race LM Studio next to Unsloth on the Text tab, and load its models | 4 | M | v1.8 |
+| 19 | Remove video encodes | The Command tab and its agent are gone, as Mani asked | 12 | S | v1.9 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -73,7 +74,7 @@ Milestones:
 - **M1 First race** (phases 1 to 4, v0.4): a usable two-machine text benchmark.
 - **M2 Trustworthy numbers** (phases 5 to 8, v0.8): results that survive scrutiny and can be shared.
 - **M3 Three workloads** (phases 9 and 10, v1.0): transcription and images on the same machinery. This is 1.0.
-- **M4 Extensions** (phases 11 and 12): throughput testing and command workloads.
+- **M4 Extensions** (phases 11 and 12): throughput testing, and command workloads, since removed.
 - **M5 Sharing and references** (phases 13 to 17): result files ready for a public results website,
   cloud models as reference points, one table of every run, long races summed up either way, and
   sending runs to a public results service. Added on 2026-09-25 at Mani's
@@ -95,13 +96,14 @@ flowchart LR
   P8 --> P9[9 Transcription]
   P8 --> P10[10 Images]
   P6 --> P11[11 Throughput]
-  P8 --> P12[12 Agent]
+  P8 --> P12[12 Agent, removed]
   P8 --> P13[13 Results]
   P6 --> P14[14 Cloud]
   P8 --> P15[15 Results tab]
   P5 --> P16[16 Averages]
   P15 --> P17[17 Sending runs]
   P4 --> P18[18 LM Studio]
+  P12 --> P19[19 Remove video encodes]
 ```
 
 ## Phase 1: Foundation and machines
@@ -553,41 +555,11 @@ Real-machine script (run on the RTX machine alone, whose model was already loade
 Exit checklist
 - [ ] Phase gate passes.
 
-## Phase 12: Agent and command workloads
+## Phase 12: Agent and command workloads (removed)
 
-**You can** run video encodes and other allowlisted commands on each machine with the same panes,
-telemetry and report.
-Needs: 8. Size: L. Cites PLAN.md 3.
-
-Scope
-- Agent: a small Node service from this repo, started on each machine, with a bearer token. `POST /jobs`
-  accepts an allowlisted command template and its parameters, and `GET /jobs/:id/stream` streams events. It
-  never runs arbitrary strings.
-- Command workload: ffmpeg presets for HEVC (VideoToolbox on the Mac, NVENC on NVIDIA), ProRes on the Mac,
-  and software x265 on both as a CPU comparison. The source clip must exist on each machine and is checked
-  by checksum.
-- COMMAND tab with preset chips as in the reference tool. Progress is parsed from ffmpeg. Metrics: wall
-  time, frames per second, speed factor, output size.
-- Optional agent telemetry: CPU and Neural Engine power on the Mac through macmon, and extra nvidia-smi
-  fields on Linux.
-- Machine cards gain an agent URL and token, and the probe covers the agent.
-
-Not in this phase: arbitrary scripts, remote file transfer.
-
-Mock additions: none in the Unsloth mock. The agent ships a fake command with scripted progress for tests.
-
-Automated tests
-- Unit: the ffmpeg progress parser on recorded output; rejection of anything outside the allowlist.
-- End-to-end, also the manual demo script: the agent on localhost runs the fake command through the
-  COMMAND tab.
-
-Real-machine script (prerequisites: ffmpeg and the source clip on both machines, the agent running. In
-phase 12 it ran on the RTX machine alone, NVENC and x265; the Mac's macmon step waits for the Mac)
-1. Run the HEVC hardware encode and the x265 software encode on both machines.
-2. Confirm that the Mac's extra telemetry appears when macmon is installed.
-
-Exit checklist
-- [ ] Phase gate passes.
+Built in v1.2: video encodes (HEVC and ProRes on the video encoder, x265 on the CPU) run through a
+small agent on each machine, raced on a COMMAND tab. Removed in phase 19 at Mani's request, with the
+agent; `docs/phases/phase-12.md` keeps the record.
 
 ## Phase 13: Result files
 
@@ -753,7 +725,7 @@ Scope
 - An LM Studio pane on the Models tab: load with context length, parallel requests and flash
   attention, and unload.
 
-Not in this phase: transcription, images, telemetry and commands on LM Studio machines.
+Not in this phase: transcription, images and telemetry on LM Studio machines.
 
 Mock additions: a fake LM Studio 0.4 with greeting, model list, load, unload and the chat stream,
 including just-in-time loading and an optional token.
@@ -767,6 +739,27 @@ Automated tests
 
 Real-machine script: probe the Lenovo's LM Studio; with Mani's go-ahead, load a model and race it
 against the same model under Unsloth on the RTX machine.
+
+Exit checklist
+- [ ] Phase gate passes.
+
+## Phase 19: Remove video encodes
+
+**You can** no longer race video encodes: Mani did not want the benchmark, so the Command tab, the
+agent and everything only they used are gone from the app and its documentation.
+Needs: 12. Size: S.
+
+Scope
+- Remove the Command tab, the command workload, its pre-flight, metrics, report sections and result
+  rows, the `agent/` workspace and its routes, and machines' agent address and token.
+- Keep what others depend on: result files keep their `agent` and `command` fields, always null, so
+  files written before still match the published JSON Schema. A saved video encode race is skipped
+  on start, with a log line. Machines saved with an agent address and token lose them on the next
+  save.
+
+Automated tests
+- The removed feature's tests go with it; an older machines file with an agent opens without it, and
+  every result file Mani saved still validates.
 
 Exit checklist
 - [ ] Phase gate passes.
@@ -793,13 +786,14 @@ Exit checklist
 | 9 | the chosen STT model downloaded, whisper-server built |
 | 10 | the chosen image model and quant downloaded |
 | 11 | nothing new |
-| 12 | ffmpeg, the source clip, the agent running |
+| 12 | removed |
 | 13 | nothing new |
 | 14 | nothing on the machines; an API key from each provider to race |
 | 15 | nothing new |
 | 16 | nothing new |
 | 17 | nothing new; the results service itself comes later |
 | 18 | LM Studio 0.4 or newer on the LM Studio machine, serving on the network |
+| 19 | nothing |
 
 ## Open questions and when they block
 
@@ -823,7 +817,6 @@ Exit checklist
 | Telemetry polling slows the machine under test | 7 | off switch, cost measured once |
 | Loading an image model evicts the chat model | 10 | explicit hand-off, optional reload afterwards |
 | Image settings resolve differently per platform | 10 | settings read back, printed, warned about |
-| The agent becomes a remote execution hole | 12 | allowlisted templates only, token, LAN only |
 | A cloud key leaks or reaches the wrong provider | 14 | kept like Unsloth keys, never in results or the browser, saved keys used only for their own provider |
 | A provider changes its API or model list | 14 | contracts in one module, fake providers copy them, errors shown in the provider's words |
 | A shared record leaks something private | 17 | a strict schema of allowed fields, redaction, the prompt opt-in, a full preview before sending |

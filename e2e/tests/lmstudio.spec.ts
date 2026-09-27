@@ -59,7 +59,6 @@ test('adds an LM Studio machine and probes it as LM Studio', async ({ page }) =>
   await dialog.getByLabel('Address', { exact: true }).fill('127.0.0.1');
   await expect(dialog.getByText('Will connect to')).toContainText('http://127.0.0.1:1234');
   await dialog.getByLabel('Address', { exact: true }).fill(`127.0.0.1:${E2E_LMSTUDIO_PORT}`);
-  await expect(dialog.getByText('Agent, for the Command tab')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Add and probe' }).click();
   await expect(dialog).toBeHidden();
 
