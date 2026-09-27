@@ -1,7 +1,7 @@
 # Phase 20 record
 
 - Date: 2026-09-27
-- Commit and tag: branch `phase-20`.
+- Commit and tag: branch `phase-20`, merged into `main` by pull request #2, tagged `v2.0`.
 - Asked by Mani: "Dockerize the app in a new branch and let's compare the numbers. I want to make
   this app open source so everyone can clone and run it on their machine to compare different
   machines head to head on their local network, so any person should be able to run it without
