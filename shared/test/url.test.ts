@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeAddress, normalizeBaseUrl } from '../src/url';
+import { describeAddress, loopbackHint, normalizeBaseUrl } from '../src/url';
 
 const ok = (input: string) => {
   const result = normalizeBaseUrl(input);
@@ -58,5 +58,15 @@ describe('describeAddress', () => {
     expect(describeAddress('http://192.168.1.10:8888')).toBe('192.168.1.10:8888');
     expect(describeAddress('http://h:8888/unsloth')).toBe('h:8888/unsloth');
     expect(describeAddress('not a url')).toBe('not a url');
+  });
+});
+
+describe('loopbackHint', () => {
+  it('points a loopback address in Docker at host.docker.internal', () => {
+    for (const url of ['http://127.0.0.1:8888', 'http://localhost:1234', 'http://[::1]:8888']) {
+      expect(loopbackHint(url)).toMatch(/host\.docker\.internal/);
+    }
+    expect(loopbackHint('http://192.168.1.10:8888')).toBe('');
+    expect(loopbackHint('not a url')).toBe('');
   });
 });

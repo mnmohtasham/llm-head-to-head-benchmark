@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Nineteen phases in five milestones. Each phase ends with a complete app that can be installed, run and
+- Twenty phases in six milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -20,7 +20,8 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 
 1. **Clean start.** From a fresh clone, `npm install` then `npm run dev` serves the app at
    http://localhost:3000 with every feature of the phase working. `npm run build` then `npm start` serves
-   the production build, which is the build used for real measurements.
+   the production build, which is the build used for real measurements. From phase 20,
+   `docker compose up -d --build` serves the same build in a container.
 2. **No-GPU demo.** `npm run demo` starts two mock Unsloth backends with different speed profiles plus the
    app, with both machines already added, so every feature of the phase works on any laptop.
 3. **Automated checks.** `npm run typecheck`, `npm run lint`, `npm test` (unit and integration against the
@@ -33,7 +34,8 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    migration test, or the phase record states a deliberate reset.
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
-8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 19 are `v1.1` to `v1.9`.
+8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 19 are `v1.1` to `v1.9`,
+   and phase 20 is `v2.0`.
 
 ## Running a phase
 
@@ -65,6 +67,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 17 | Sending runs | Send a run from the Results tab to a public results service, safely | 15 | M | v1.7 |
 | 18 | LM Studio machines | Race LM Studio next to Unsloth on the Text tab, and load its models | 4 | M | v1.8 |
 | 19 | Remove video encodes | The Command tab and its agent are gone, as Mani asked | 12 | S | v1.9 |
+| 20 | Docker | Run Model Duel on Linux, macOS or Windows with one `docker compose` command | 19 | S | v2.0 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -79,6 +82,8 @@ Milestones:
   cloud models as reference points, one table of every run, long races summed up either way, and
   sending runs to a public results service. Added on 2026-09-25 at Mani's
   request, after phase 12.
+- **M6 Open source** (phase 20, v2.0): anyone clones the repository and runs it in Docker on any
+  platform. Added on 2026-09-27 at Mani's request.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
 concurrency adds noise (phase 4). Statistics, pre-flight, telemetry and the report (phases 5 to 8) are
@@ -764,6 +769,33 @@ Automated tests
 Exit checklist
 - [ ] Phase gate passes.
 
+## Phase 20: Docker
+
+**You can** clone the repository and run Model Duel with `docker compose up -d --build` on Linux,
+macOS or Windows, with nothing installed but Docker, and every setting in `docker-compose.yml`.
+Needs: 19. Size: S.
+
+Scope
+- A multi-stage `Dockerfile` on the same Node version as a native install, a `.dockerignore` that
+  keeps `data/` and `.env` files out of the image, and a `docker-compose.yml` with every environment
+  variable, explained, a data volume, and port 3000 published to this computer only.
+- Every server option can come from the environment; an option on the command line wins. The
+  telemetry baseline variable is renamed `DUEL_TELEMETRY_BASELINE_MS`.
+- In a container, `host.docker.internal` counts as this computer, and a refused loopback address
+  says to use it.
+
+Automated tests
+- Unit tests for the loopback hint and for `host.docker.internal` as this computer; the image builds,
+  starts healthy and serves the page and API.
+
+Real-machine check
+- The same races through `npm start` and through the container, on the same machines, give the same
+  numbers within noise.
+
+Exit checklist
+- [ ] Phase gate passes.
+- [ ] Native and Docker numbers compared and recorded.
+
 ## Testing across phases
 
 - **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
@@ -794,6 +826,7 @@ Exit checklist
 | 17 | nothing new; the results service itself comes later |
 | 18 | LM Studio 0.4 or newer on the LM Studio machine, serving on the network |
 | 19 | nothing |
+| 20 | Docker on the controller computer |
 
 ## Open questions and when they block
 
@@ -821,6 +854,7 @@ Exit checklist
 | A provider changes its API or model list | 14 | contracts in one module, fake providers copy them, errors shown in the provider's words |
 | A shared record leaks something private | 17 | a strict schema of allowed fields, redaction, the prompt opt-in, a full preview before sending |
 | A web page makes the app act for it | 17 | cross-site requests that change anything are refused |
+| Docker's network adds time to the numbers | 20 | the same races compared through `npm start` and the container |
 
 ## Phase record template
 

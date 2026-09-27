@@ -12,7 +12,7 @@ import {
   type RouteResult,
 } from './probe';
 import type { SseMessage } from './sse';
-import { describeAddress } from './url';
+import { describeAddress, loopbackHint } from './url';
 
 /**
  * LM Studio as a second kind of local server, next to Unsloth Studio. Model Duel talks to its native
@@ -385,7 +385,8 @@ export function classifyLmProbe(raw: ProbeRaw): ProbeReport {
       'reachable',
       'error',
       known ? known.title(address) : `${address} did not answer: ${greeting.error.message}`,
-      known?.hint ?? 'Check the address and that LM Studio is running.',
+      (known?.hint ?? 'Check the address and that LM Studio is running.') +
+        (known === LM_NETWORK.refused ? loopbackHint(raw.baseUrl) : ''),
     );
     reachable = { status: 'error', summary: known?.summary ?? 'No answer' };
   } else if (greeting && !isLmGreeting(greeting)) {

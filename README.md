@@ -4,7 +4,7 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio) or [LM Studio](https://lmstudio.ai). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 19 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 20 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -20,7 +20,7 @@ one table to filter, sort and download, and sends a run to a public results serv
 
 ## Requirements
 
-- Node.js 22.19 or newer, with npm 10.
+- Node.js 22.19 or newer, with npm 10. Or only Docker: see [Run it with Docker](#run-it-with-docker).
 - Unsloth Studio, desktop app or `unsloth studio`, on every machine you want to benchmark.
 - For the browser tests: Google Chrome, or run `npx playwright install chromium` once.
 
@@ -36,6 +36,52 @@ npm run build && npm start    # production build, the one to use for measurement
 All three serve the app at http://localhost:3000. After `npm run build`, restart a running
 `npm start`: it keeps the routes it started with, and the page warns when they no longer match.
 
+## Run it with Docker
+
+Nothing to install but Docker: Docker Desktop on Windows or macOS, or Docker Engine with the
+Compose plugin on Linux.
+
+```bash
+git clone https://github.com/mnmohtasham/llm-head-to-head-benchmark.git model-duel
+cd model-duel
+docker compose up -d --build
+```
+
+Open http://localhost:3000. `docker compose logs -f` shows the log, `docker compose down` stops
+it. To update, `git pull`, then `docker compose up -d --build` again.
+
+- **Settings.** Every one is in the `environment` section of
+  [docker-compose.yml](docker-compose.yml), with what it does. Change it, then run
+  `docker compose up -d`.
+- **Your data** (machines, API keys, races, results, the signing key) is in the Docker volume
+  `model-duel-data`. It survives `docker compose down` and rebuilds; `docker compose down -v`
+  deletes it. To copy it out: `docker compose cp model-duel:/app/data ./model-duel-backup`.
+- **Machines on other computers**: add them by IP address, as always. Names ending in `.local`
+  usually do not resolve inside a container, so use the IP address.
+- **Unsloth or LM Studio on the same computer as Docker**: use `host.docker.internal` instead of
+  `127.0.0.1`, for example `host.docker.internal:8888`. Inside the container, `127.0.0.1` is the
+  container itself. The server must listen on the network, not only on this computer: turn on
+  Unsloth's LAN access, or LM Studio's **Serve on Local Network**. On Linux with a firewall such as
+  ufw, its port must also be open to Docker's network, as it already is for other computers.
+- **Opening the page from another device**: in the `ports` line, change `127.0.0.1:3000:3000` to
+  `3000:3000`. The app has no login, so do this only on a network you trust. To open it by a name
+  such as `my-pc.local`, add the name to `DUEL_ALLOW_HOSTS`.
+- **Using the `data` folder of a native install instead of the volume**: replace
+  `model-duel-data:/app/data` with `./data:/app/data`. On Linux, the container runs as user id
+  1000, so the folder must belong to that user.
+
+### Docker and measurements
+
+The container measures the same way as `npm start`: the same Node version and code, with every time
+taken inside the controller. Docker only adds its own network hop between the container and your
+network. Measured on Linux: 30 rounds on each of two fake machines gave the same first-token times
+and decode speeds within 0.1 %, and a round trip to another computer on the network took 25 µs
+longer, where normal variation is 1.2 to 3 ms. On an RTX 3060 running Qwen3.8 27B, the time between
+Unsloth's first token and Model Duel's was 20 to 29 ms both ways. On macOS and Windows, Docker Desktop runs containers
+in a small virtual machine, which adds a little more to each round trip; that is not measured yet. To
+check your own setup, race the same machines once with `npm start` and once in Docker. The
+[phase 20 record](docs/phases/phase-20.md) has the numbers.
+
 ## Connect your machines
 
 1. On each machine, open Unsloth and go to **Settings → API → Remote & LAN**. Press **Start**
@@ -47,7 +93,8 @@ All three serve the app at http://localhost:3000. After `npm run build`, restart
 4. The app probes the machine straight away. Press **Probe** again at any time.
 
 The app can run on any computer that reaches the machines, including one of them. For the
-Unsloth on the same computer, use `127.0.0.1` as the address.
+Unsloth on the same computer, use `127.0.0.1` as the address, or `host.docker.internal` when the
+app runs in Docker.
 
 ### What the probe checks
 
@@ -101,13 +148,20 @@ them side by side. Pick one machine for a single run.
 - **Prompt** offers presets. **Short** is a one-line question. **8K** and **32K** are the opening
   of Mill's *On Liberty*, about 7,600 and 30,400 tokens, followed by a request for a five-point
   summary. **Puzzle** and **Code** are a reasoning puzzle and a small coding task. **Fixed
-  length** asks for a long essay no model finishes, so every machine writes exactly **Max
-  tokens** and output length drops out of the comparison. **Custom** is your own prompt.
+  length** asks for an essay of at least 3,000 words, so every machine writes exactly **Max
+  tokens** and output length drops out of the comparison, as long as Max tokens is shorter than
+  the essay: keep it at about 2,000 or less. A machine that finishes first is flagged. With thinking
+  off it compares hardware most cleanly. **Custom** is your own prompt.
 - **Prefill** is **Cold** by default: a fresh line starts each round's prompt and a fixed seed is
   sent, so no machine can reuse a cached prompt. llama.cpp turns its cache off for seeded
   requests, and the nonce defeats MLX's cache. **Warm** sends the same prompt every round and no
   seed, so rounds after the first can reuse the cache; a round is flagged when a machine reused
   more than 64 cached prompt tokens.
+- **Output length moves a lot between rounds** of a thinking model: cold prefill changes the prompt
+  every round, so the seed cannot repeat an answer, and the same question can take 150 tokens in one
+  round and 2,000 in the next. First answer word, thinking time and total time follow the length.
+  To compare machines, go by decode speed, time to first token and prompt processing, use **Fixed
+  length**, or run more rounds.
 - **Sampling** holds temperature, top-p, top-k, min-p, repetition penalty and seed. Every field
   goes to every machine, so server defaults can never differ.
 
@@ -469,7 +523,11 @@ check it, and what a public service must do to stay safe.
 ## Security
 
 - The app has no login. It binds to 127.0.0.1 unless you pass `--host`, and then prints a
-  warning, because anyone who reaches it can use your machines through it.
+  warning, because anyone who reaches it can use your machines through it. In Docker, the `ports`
+  line of `docker-compose.yml` decides the same thing, and it starts as this computer only.
+- The Docker image holds no data and no keys: `.dockerignore` keeps `data/` and `.env` files out
+  of it. The container runs as an unprivileged user, with no Linux capabilities and a read-only
+  file system apart from its data volume.
 - It answers only requests addressed to localhost, an IP address or this computer's name, which
   stops web pages from reaching it through DNS rebinding. `--allow-host <name>` adds a name.
 - API keys live in `data/machines.json`, readable by your user only (mode 600). They never reach
@@ -492,7 +550,8 @@ check it, and what a public service must do to stay safe.
 | --------------------------------------------------------- | ------------------------------------------------------------------ |
 | `npm run dev`                                             | Vite on port 3000 with hot reload, API on 3001                     |
 | `npm run build`                                           | Builds the client, the controller and the fake Unsloth             |
-| `npm start`                                               | Serves the build. Options: `--port`, `--host`, `--data-dir`        |
+| `npm start`                                               | Serves the build. Options: `--port`, `--host`, `--data-dir`, `--allow-host`, or the environment variables `npm start -- --help` lists |
+| `docker compose up -d --build`                            | Builds the image and runs the app in Docker on http://localhost:3000 |
 | `npm run demo`                                            | Builds, then starts two fake machines, three fake cloud providers and the app, all added |
 | `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
 | `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
@@ -618,6 +677,11 @@ out.
   Load the model with speculative decoding off to compare machines like for like.
 - **`npm run dev` says "Port 3000 is already in use"**: `npm start` or `npm run demo` is still
   running. Stop it first.
+- **Docker says the port is already allocated or in use**: something else, often `npm start`, has
+  port 3000. Stop it, or change the middle number of the `ports` line in `docker-compose.yml`.
+- **In Docker, "Nothing is listening at 127.0.0.1:…" or "… did not answer in time" for a server on
+  the same computer**: use `host.docker.internal` as the address, turn on the server's network
+  access, and on Linux open its port in the firewall to Docker's network.
 - **"whisper.cpp is not installed on this machine."**: Whisper will run on the slower
   Transformers engine. Unsloth's `scripts/build_whisper_cpp.sh` builds the faster engine.
 - **"… is not downloaded for gguf on …"**: download that speech model in Unsloth Studio on that

@@ -1,4 +1,4 @@
-import { describeAddress } from './url';
+import { describeAddress, loopbackHint } from './url';
 
 export const PROBE_SCHEMA_VERSION = 1;
 
@@ -279,7 +279,7 @@ export function explainNetworkError(
     case 'refused':
       return {
         title: `Nothing is listening at ${address}.`,
-        hint: 'Check that Unsloth is running on that machine and that LAN access is on: Settings → API → Remote & LAN → Start. If Unsloth uses a port other than 8888, include it in the address.',
+        hint: `Check that Unsloth is running on that machine and that LAN access is on: Settings → API → Remote & LAN → Start. If Unsloth uses a port other than 8888, include it in the address.${loopbackHint(baseUrl)}`,
       };
     case 'timeout':
       return {

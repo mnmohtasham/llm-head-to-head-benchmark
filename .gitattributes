@@ -1,0 +1,3 @@
+# Every checkout keeps LF line endings, on Windows too, so Prettier, the tests and the Docker
+# build see the same files everywhere.
+* text=auto eol=lf
