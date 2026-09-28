@@ -60,6 +60,18 @@ function machineAddress(input: string, cloud: boolean, server: MachineServer = '
   );
 }
 
+/** Whether two addresses are the same server: scheme, host and port. */
+function sameServer(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+const KEY_FOR_NEW_ADDRESS =
+  'Enter the API key again: a saved key goes only to the address it was saved with.';
+
 function slug(text: string): string {
   const cleaned = text
     .toLowerCase()
@@ -166,7 +178,7 @@ export function registerMachineRoutes(
     const found = parsed.data.machineId ? store.get(parsed.data.machineId) : undefined;
     // A saved key goes only to its own provider.
     const saved = found?.cloud?.provider === parsed.data.provider ? found : undefined;
-    const typedUrl = parsed.data.baseUrl ? normalizeBaseUrl(parsed.data.baseUrl, 443) : null;
+    const typedUrl = parsed.data.baseUrl ? machineAddress(parsed.data.baseUrl, true) : null;
     if (typedUrl && !typedUrl.ok) {
       return validationError(reply, [{ path: ['baseUrl'], message: typedUrl.error }]);
     }
@@ -174,6 +186,10 @@ export function registerMachineRoutes(
       (typedUrl?.ok ? typedUrl.url : null) ??
       saved?.baseUrl ??
       CLOUD_INFO[parsed.data.provider].baseUrl;
+    // ...and only to the address it was saved with, so no request can send it anywhere else.
+    if (!parsed.data.apiKey && saved?.apiKey && !sameServer(saved.baseUrl, baseUrl)) {
+      return validationError(reply, [{ path: ['apiKey'], message: KEY_FOR_NEW_ADDRESS }]);
+    }
     const apiKey = parsed.data.apiKey || saved?.apiKey || null;
     const listed = await listCloudModels(parsed.data.provider, baseUrl, apiKey);
     if (listed.error !== null) {
@@ -231,6 +247,10 @@ export function registerMachineRoutes(
     );
     if (!url.ok) return validationError(reply, [{ path: ['baseUrl'], message: url.error }]);
     const { apiKey } = parsed.data;
+    // A saved key never follows a machine to a new address unless it is typed again.
+    if (current?.apiKey && apiKey !== null && !apiKey && !sameServer(current.baseUrl, url.url)) {
+      return validationError(reply, [{ path: ['apiKey'], message: KEY_FOR_NEW_ADDRESS }]);
+    }
     const result = await store.update(request.params.id, {
       name: parsed.data.name,
       baseUrl: url.url,

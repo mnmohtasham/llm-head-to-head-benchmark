@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.19, 2026-09-27. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.20, 2026-09-28. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -18,7 +18,9 @@ sections 2.7, 6 and 9. v2.14 adds the Results tab (phase 15), in sections 6 and 
 median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public results service
 (phase 17), in sections 6 and 7.3. v2.17 adds LM Studio machines (phase 18), in section 2.8. v2.18 removes the video encode workload and
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
-sections 3 and 8, and records how far output length moves between rounds, in section 5.
+sections 3 and 8, and records how far output length moves between rounds, in section 5. v2.20
+makes it ready for production and open source (phase 21): an optional password and the security
+measures in section 3, test servers that only the tests start in section 9, and no demo.
 
 ## 0. Decisions so far
 
@@ -275,7 +277,7 @@ are under `/api/inference/images/` only.
 ### 2.7 Cloud reference models
 
 Not Unsloth, but raced beside it on the Text tab. Contracts as documented by each provider and
-checked on 2026-09-25; `shared/src/cloud.ts` holds them and the fake providers in `mock/src/cloud.ts`
+checked on 2026-09-25; `shared/src/cloud.ts` holds them and the stand-in providers in `test-servers/src/cloud.ts`
 copy them.
 
 - **Participants.** A cloud participant is a machine record with `cloud: {provider, model}`: its key
@@ -320,7 +322,7 @@ copy them.
 
 A machine can run LM Studio 0.4 or newer instead of Unsloth Studio (`server: lmstudio`, default port
 1234). Checked against LM Studio's docs and a real 0.4.25 on 2026-09-26; `shared/src/lmstudio.ts`
-holds the contract and `mock/src/lmstudio.ts` copies it.
+holds the contract and `test-servers/src/lmstudio.ts` copies it.
 
 - **Identify and list.** `GET /lmstudio-greeting` answers `{"lmstudio": true}` without a token.
   `GET /api/v1/models` lists every downloaded model: `key`, `display_name`, `type` (llm or embedding),
@@ -359,10 +361,14 @@ holds the contract and `mock/src/lmstudio.ts` copies it.
   runs on.
 - Client: React, Vite, TypeScript, plain CSS. Dark theme, one accent colour per machine.
 - Packages: `server/`, `client/`, `shared/` (types, metric math, SSE parser, workload interfaces),
-  `mock/` (mock Unsloth backend), `fixtures/` (recorded streams), `data/`.
+  `test-servers/` (stand-in servers for the tests), `fixtures/` (recorded streams), `data/`.
 - Machine record: `{id, name, baseUrl, apiKey, notes, probe}`. Keys live in `data/machines.json`
   (mode 600) and are never written into session files or exports. The controller binds to loopback
-  and refuses requests addressed to unknown host names, which blocks DNS rebinding.
+  and refuses requests addressed to unknown host names, which blocks DNS rebinding. As built in phase 21:
+  an optional password (`DUEL_PASSWORD`) guards every route but the health check behind an HttpOnly,
+  SameSite=Strict session cookie signed with a secret in `data/auth.json`; every answer carries a strict
+  Content-Security-Policy and framing, sniffing and referrer headers; a saved key goes only to the address
+  it was saved with; and answers from machines are read with size limits, streams included.
 - Session record: `{id, workload, config, machines[], rounds[], provenance, telemetry, votes,
   schemaVersion}`. Sides are a list, not A and B. As built in phase 4, `data/sessions/<id>.json` holds
   `schemaVersion: 1`, `createdAt`, `finishedAt`, `state` (running, done, failed, cancelled or
@@ -704,7 +710,7 @@ signature over the same bytes, with a key pair made per installation and kept in
 (http only to loopback, for testing) without credentials; sends time out after 20 seconds, follow
 no redirects, read at most 64 KB of the answer and use only a checked `id`, a `url` on the
 service's host and a short plain-text `message`. `docs/share-api.md` is the contract and the
-security checklist for the service; `mock/src/share.ts` is a working reference.
+security checklist for the service; `test-servers/src/share.ts` is a working reference.
 
 ## 8. Timing discipline
 
@@ -716,9 +722,10 @@ diagnostic, since servers flush headers at different moments. Measure with the p
 dev server; the dev server shows a banner. The production build in Docker measures the same as on
 the host within noise (phase 20 record).
 
-## 9. Mock Unsloth backend
+## 9. Test servers
 
-`mock/` implements the routes in section 2 with configurable startup delay, per-token latency, jitter, a
+`test-servers/` holds stand-ins that only the automated tests start; they are never built, shipped
+or started by the app, and there is no demo mode (phase 21). The stand-in Unsloth implements the routes in section 2 with configurable startup delay, per-token latency, jitter, a
 reasoning phase of N tokens, usage and timings in the final chunk, `context_truncated` injection, stalls,
 dropped connections, in-band error frames, tool frames, keep-alive comments, thinking sent as answer text,
 monitor rows and cancel by id, STT with per-engine availability by profile (no whisper.cpp on the Mac
@@ -727,10 +734,10 @@ profile and engine, and transcripts with deterministic word errors, image loads 
 background, the chat and image hand-off, step progress that follows Unsloth's phases, a failing load,
 a PNG per seed, and request slots with a first-in, first-out admission queue and a slowdown per
 busy slot, image progress at a fixed steps per second, and telemetry that ramps during
-runs. It can also replay recorded fixtures with their original timing. `npm run demo` starts two mocks on
-different ports plus the app. `mock/src/cloud.ts` (`npm run mock -- --cloud <provider>`) is a fake OpenAI,
-Anthropic or Gemini API: model lists with models to leave out, streaming in each provider's events,
-usage, key checks, and each provider's error body on demand.
+runs. It can also replay recorded fixtures with their original timing. `test-servers/src/cloud.ts` is a
+stand-in OpenAI, Anthropic or Gemini API: model lists with models to leave out, streaming in each
+provider's events, usage, key checks, and each provider's error body on demand. `e2e/serve.ts` starts
+them for the browser tests. The smoke tests in `smoke/` check a real install and use none of them.
 
 ## 10. Recorder
 
@@ -773,7 +780,7 @@ testable app.
 
 ## 14. Non-goals
 
-No auth on the controller, no multi-user, no servers besides Unsloth Studio and LM Studio (section 2.8), no
+No user accounts or roles (one optional password for the whole app, phase 21), no multi-user, no servers besides Unsloth Studio and LM Studio (section 2.8), no
 cloud models except as text references (section 2.7), no
 video encode benchmark (built in phase 12, removed in phase 19), no model downloads, no training, no
 i18n.

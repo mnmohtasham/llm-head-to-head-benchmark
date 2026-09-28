@@ -1,7 +1,7 @@
 import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app';
+import { buildApp, SECURITY_HEADERS } from '../src/app';
 import { tempDir, testApp } from './helpers';
 
 const cleanup: string[] = [];
@@ -64,6 +64,22 @@ describe('unknown routes', () => {
     const page = await app.inject({ url: '/anything/else' });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain('<title>Model Duel</title>');
+    await app.close();
+  });
+});
+
+describe('security headers', () => {
+  it('come with the page and with every answer, and the API is never cached', async () => {
+    const app = await appWithClient({ 'index.html': '<!doctype html><title>Model Duel</title>' });
+    for (const url of ['/', '/api/health', '/api/machines', '/api/no-such-route']) {
+      const response = await app.inject({ url });
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+        expect(response.headers[name], `${url} ${name}`).toBe(value);
+      }
+    }
+    expect((await app.inject({ url: '/api/machines' })).headers['cache-control']).toBe('no-store');
+    expect(SECURITY_HEADERS['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(SECURITY_HEADERS['content-security-policy']).not.toContain('unsafe');
     await app.close();
   });
 });

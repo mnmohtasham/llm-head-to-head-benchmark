@@ -15,7 +15,13 @@ import {
   type TimedEvent,
   type Timings,
 } from '../src/chat';
-import { SseParser, type SseMessage } from '../src/sse';
+import {
+  SSE_MAX_EVENT,
+  SSE_MAX_LINE,
+  SseParser,
+  SseTooLargeError,
+  type SseMessage,
+} from '../src/sse';
 
 const encoder = new TextEncoder();
 
@@ -139,6 +145,54 @@ describe('SseParser', () => {
 
   it('drops an event the stream cut off before its blank line', () => {
     expect(shape(parse(encoder.encode('data: done\n\ndata: half'), []))).toEqual(['data:done']);
+  });
+});
+
+describe('SseParser limits', () => {
+  const encoder = new TextEncoder();
+  const stream = 'data: one\r\n\r\n: note\n\ndata: two\rdata: lines\r\r\ndata: {"x":1}\n\n';
+
+  it('reads a stream the same however it is split into reads', () => {
+    const whole = new SseParser();
+    const expected = [...whole.push(encoder.encode(stream), 0), ...whole.end(0)].map((m) =>
+      m.kind === 'data' ? m.data : m.text,
+    );
+    for (let size = 1; size <= 7; size += 1) {
+      const parser = new SseParser();
+      const got: SseMessage[] = [];
+      for (let at = 0; at < stream.length; at += size) {
+        got.push(...parser.push(encoder.encode(stream.slice(at, at + size)), 0));
+      }
+      got.push(...parser.end(0));
+      expect(
+        got.map((m) => (m.kind === 'data' ? m.data : m.text)),
+        `reads of ${size}`,
+      ).toEqual(expected);
+    }
+  });
+
+  it('takes a long line in small reads in linear time', () => {
+    const parser = new SseParser();
+    const piece = encoder.encode('x'.repeat(1024));
+    const started = performance.now();
+    parser.push(encoder.encode('data: '), 0);
+    for (let i = 0; i < 3500; i += 1) parser.push(piece, 0);
+    const [message] = parser.push(encoder.encode('\n\n'), 0);
+    expect(message?.kind === 'data' && message.data.length).toBe(3500 * 1024);
+    // Rescanning the whole line on every read took seconds here.
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
+  it('stops at a line or an event larger than any real one', () => {
+    const line = new SseParser();
+    expect(() => line.push(encoder.encode(`data: ${'x'.repeat(SSE_MAX_LINE)}`), 0)).toThrow(
+      SseTooLargeError,
+    );
+    const event = new SseParser();
+    const chunk = encoder.encode(`data: ${'y'.repeat(1024 * 1024)}\n`);
+    expect(() => {
+      for (let i = 0; i <= SSE_MAX_EVENT / (1024 * 1024); i += 1) event.push(chunk, 0);
+    }).toThrow(SseTooLargeError);
   });
 });
 

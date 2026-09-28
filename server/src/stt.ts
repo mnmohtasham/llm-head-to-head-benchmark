@@ -4,6 +4,7 @@ import { Agent, request } from 'undici';
 import type { Audio } from './audio';
 import type { StoredMachine } from './store';
 import { toNetworkError, UnslothClient } from './unsloth';
+import { readText } from './limits';
 
 const client = (machine: StoredMachine) =>
   new UnslothClient(machine.baseUrl, machine.apiKey, { connectTimeoutMs: 3000 });
@@ -164,7 +165,7 @@ async function postStreamed(
       bodyTimeout: options.timeoutMs,
     });
     const headersAt = performance.now();
-    const text = await response.body.text();
+    const text = await readText(response.body);
     let parsed: unknown = text;
     try {
       parsed = JSON.parse(text) as unknown;

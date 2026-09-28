@@ -150,33 +150,56 @@ export function numberToWords(n: number): string {
   return String(n);
 }
 
+/** A word without the apostrophes around it, in one pass however many there are. */
+function trimApostrophes(word: string): string {
+  let start = 0;
+  let end = word.length;
+  while (start < end && word[start] === "'") start += 1;
+  while (end > start && word[end - 1] === "'") end -= 1;
+  return word.slice(start, end);
+}
+
 /**
  * Text as word error rate compares it: lower case, numbers spelled out, punctuation and dashes
- * gone, apostrophes inside words kept, one space between words.
+ * gone, apostrophes inside words kept, one space between words. The transcript comes from a
+ * machine, so every step takes time in proportion to its length, whatever it holds.
  */
 export function normalizeForWer(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[’‘]/g, "'")
-    .replace(
-      /(\d+)\.(\d+)/g,
-      (_m, a: string, b: string) =>
-        `${numberToWords(Number(a))} point ${b
-          .split('')
-          .map((d) => numberToWords(Number(d)))
-          .join(' ')}`,
-    )
-    .replace(/\d+/g, (digits) => ` ${numberToWords(Number(digits))} `)
+    .replace(/\d+(?:\.\d+)?/g, (number) => {
+      const [whole = '', fraction] = number.split('.');
+      const words = numberToWords(Number(whole));
+      if (fraction === undefined) return ` ${words} `;
+      const digits = fraction.split('').map((d) => numberToWords(Number(d)));
+      return ` ${words} point ${digits.join(' ')} `;
+    })
     .replace(/[^a-z0-9'\s]/g, ' ')
-    .replace(/(^|\s)'+|'+(\s|$)/g, ' ')
     .split(/\s+/)
+    .map(trimApostrophes)
     .filter(Boolean);
 }
 
+/**
+ * The most reference words × transcript words aligned: a half-hour transcript fits, and a machine
+ * that answers with far more text than was spoken cannot make the controller allocate gigabytes.
+ */
+export const MAX_WER_CELLS = 25_000_000;
+
 /** Word error rate by word-level Levenshtein alignment of the normalised texts. */
 export function wordErrorRate(reference: string, hypothesis: string): WerResult {
+  return alignWords(normalizeForWer(reference), normalizeForWer(hypothesis));
+}
+
+/** The word error rate, or null when the texts are too long to align within MAX_WER_CELLS. */
+export function wordErrorRateWithin(reference: string, hypothesis: string): WerResult | null {
   const ref = normalizeForWer(reference);
   const hyp = normalizeForWer(hypothesis);
+  return (ref.length + 1) * (hyp.length + 1) > MAX_WER_CELLS ? null : alignWords(ref, hyp);
+}
+
+function alignWords(ref: string[], hyp: string[]): WerResult {
   const rows = ref.length + 1;
   const cols = hyp.length + 1;
   // Costs never exceed the longer text, so half-hour transcripts fit 16 bits and half the memory.

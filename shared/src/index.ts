@@ -23,3 +23,4 @@ export * from './telemetry';
 export * from './throughput';
 export * from './transcribe';
 export * from './url';
+export * from './csv';

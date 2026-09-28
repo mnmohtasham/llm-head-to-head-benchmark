@@ -16,7 +16,7 @@ import {
   type SessionStreamMessage,
 } from '@duel/shared';
 import { createReadStream } from 'node:fs';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
 import { listImageModels, readImageStatus } from '../imagegen';
@@ -114,10 +114,34 @@ export function registerSessionRoutes(
     },
   );
 
-  /** Audio for a transcription race, sent as the raw file; stored by its hash. */
+  /**
+   * Audio for a transcription race, sent as the raw file; stored by its hash. One file arrives at
+   * a time, since each is held in memory until it is stored.
+   */
+  const uploads = new WeakSet<object>();
+  const endUpload = async (request: object) => {
+    if (uploads.delete(request)) uploading -= 1;
+  };
+  let uploading = 0;
   app.post<{ Querystring: { name?: string } }>(
     '/api/audio',
-    { bodyLimit: AUDIO_UPLOAD_LIMIT },
+    {
+      bodyLimit: AUDIO_UPLOAD_LIMIT,
+      onRequest: async (request, reply) => {
+        if (uploading > 0) {
+          return fail(
+            reply,
+            429,
+            'busy',
+            'Another audio file is still arriving. Try again when it has finished.',
+          );
+        }
+        uploading += 1;
+        uploads.add(request);
+      },
+      onResponse: endUpload,
+      onRequestAbort: endUpload,
+    },
     async (request, reply) => {
       const body = request.body;
       if (!Buffer.isBuffer(body) || body.length === 0) {
@@ -162,6 +186,7 @@ export function registerSessionRoutes(
     return preflight(machines as StoredMachine[], parsed.data);
   });
 
+  let starting = false;
   app.post('/api/sessions', async (request, reply) => {
     const parsed = sessionRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -176,7 +201,9 @@ export function registerSessionRoutes(
     if (machines.some((machine) => !machine)) {
       return fail(reply, 404, 'not_found', 'There is no machine with that id.');
     }
-    if (sessions.running()) {
+    // Pre-flight waits on the machines, so a second request could slip in before this race is
+    // running; `starting` holds the place until it is.
+    if (sessions.running() || starting) {
       return fail(
         reply,
         409,
@@ -184,12 +211,27 @@ export function registerSessionRoutes(
         'A race is already running. Wait for it to finish or cancel it first.',
       );
     }
-    const checked = await preflight(machines as StoredMachine[], parsed.data);
+    starting = true;
+    try {
+      return await startRace(machines as StoredMachine[], parsed.data, request, reply);
+    } finally {
+      starting = false;
+    }
+  });
+
+  /** Pre-flight, then the race; the caller holds the one race slot while this runs. */
+  async function startRace(
+    machines: StoredMachine[],
+    data: z.infer<typeof sessionRequestSchema>,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) {
+    const checked = await preflight(machines, data);
     if (hasErrors(checked.issues)) {
       const first = checked.issues.find((issue) => issue.level === 'error');
       return fail(reply, 400, 'preflight', first?.text ?? 'Pre-flight failed.', checked.issues);
     }
-    if (hasWarnings(checked.issues) && !parsed.data.acknowledgeWarnings) {
+    if (hasWarnings(checked.issues) && !data.acknowledgeWarnings) {
       return fail(
         reply,
         409,
@@ -199,22 +241,22 @@ export function registerSessionRoutes(
       );
     }
     const view = sessions.start(
-      machines as StoredMachine[],
-      parsed.data.workload === 'text'
+      machines,
+      data.workload === 'text'
         ? {
-            ...parsed.data,
-            config: { ...parsed.data.config, prompt: resolvePrompt(parsed.data.config) },
+            ...data,
+            config: { ...data.config, prompt: resolvePrompt(data.config) },
           }
-        : parsed.data.workload === 'image'
+        : data.workload === 'image'
           ? {
-              ...parsed.data,
-              config: { ...parsed.data.config, prompt: imagePrompt(parsed.data.config) },
+              ...data,
+              config: { ...data.config, prompt: imagePrompt(data.config) },
             }
-          : parsed.data,
+          : data,
     );
-    request.log.info({ sessionId: view.id, machines: parsed.data.machineIds }, 'race started');
+    request.log.info({ sessionId: view.id, machines: data.machineIds }, 'race started');
     return reply.code(201).send(view);
-  });
+  }
 
   app.get('/api/sessions', async () => ({ sessions: sessions.list() }));
 

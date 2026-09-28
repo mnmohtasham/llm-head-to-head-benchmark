@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_LMSTUDIO_PORT, E2E_MOCK_PORTS } from '../ports';
 
-// LM Studio demo script: add an LM Studio machine, see its models on the Models tab and load
+// LM Studio scenario: add an LM Studio machine, see its models on the Models tab and load
 // another, then race it on the Text tab next to an Unsloth machine.
-const [, LINUX] = DEMO_MACHINES;
+const [, LINUX] = TEST_MACHINES;
 const LINUX_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`;
 const LM = `http://127.0.0.1:${E2E_LMSTUDIO_PORT}`;
 const NAME = 'Studio box';

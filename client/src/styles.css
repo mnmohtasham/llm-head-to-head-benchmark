@@ -2167,3 +2167,26 @@ textarea {
 .dialog-body form {
   padding: 0;
 }
+
+.signin {
+  min-height: 100vh;
+  padding: 16px;
+  display: grid;
+  place-items: center;
+}
+
+.signin-card {
+  width: min(420px, 100%);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px solid var(--line-strong);
+  border-top: 6px solid var(--accent);
+  background: var(--panel);
+}
+
+.signin-note {
+  margin: 0;
+  color: var(--muted);
+}

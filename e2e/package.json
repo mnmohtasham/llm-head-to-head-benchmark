@@ -2,7 +2,7 @@
   "name": "@duel/e2e",
   "version": "0.1.0",
   "private": true,
-  "description": "Browser tests that run each phase's demo script against npm run demo.",
+  "description": "Browser tests that race stand-in servers through the production build of the app.",
   "type": "module",
   "devDependencies": {
     "@playwright/test": "^1.63.0"

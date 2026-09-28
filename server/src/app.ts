@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import type { ApiErrorBody } from '@duel/shared';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { AudioStore } from './audio';
+import { registerAuth } from './auth';
 import { ImageStore } from './imagestore';
 import { chatRestorer } from './restore';
 import { ResultStore } from './results';
@@ -43,6 +44,10 @@ export interface AppOptions {
   allowedHosts?: readonly string[];
   /** How long to wait for the results service; tests shorten it. */
   shareTimeouts?: { connectMs: number; totalMs: number };
+  /** A password for the whole app; null or missing leaves it open. */
+  password?: string | null;
+  /** The clock sessions expire by; tests move it. */
+  clock?: () => number;
 }
 
 /** Log paths that could carry a key, blanked even if a future change logs them by mistake. */
@@ -54,7 +59,43 @@ export const REDACTED_LOG_PATHS = [
   'body.apiKey',
   'body.token',
   '*.token',
+  'body.password',
+  '*.password',
+  'req.headers.cookie',
+  'headers.cookie',
+  'req.headers["x-api-key"]',
+  'headers["x-api-key"]',
+  'req.headers["x-goog-api-key"]',
+  'headers["x-goog-api-key"]',
+  'privateKey',
+  '*.privateKey',
 ];
+
+/**
+ * Sent with every response. The page runs only its own scripts and styles, talks only to this
+ * server, can never be framed by another site, and names no page in the Referer it sends on.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'content-security-policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data:",
+    "media-src 'self'",
+    "connect-src 'self'",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-resource-policy': 'same-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+};
 
 function hostnameOf(hostHeader: string): string {
   if (hostHeader.startsWith('[')) return hostHeader.slice(1, hostHeader.indexOf(']')).toLowerCase();
@@ -105,7 +146,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     options.logger && typeof options.logger === 'object'
       ? { redact: { paths: REDACTED_LOG_PATHS, censor: '[redacted]' }, ...options.logger }
       : (options.logger ?? false);
-  const app = Fastify({ logger, bodyLimit: 64 * 1024 });
+  // A request body must arrive within ten minutes: long enough for the largest audio file on a
+  // slow network, short enough that a stalled upload cannot hold a socket for ever.
+  const app = Fastify({ logger, bodyLimit: 64 * 1024, requestTimeout: 10 * 60_000 });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) reply.header(name, value);
+    // Answers hold machines, runs and settings: no cache keeps a copy.
+    if (request.url.startsWith('/api/')) reply.header('cache-control', 'no-store');
+    return payload;
+  });
 
   app.addHook('onRequest', async (request, reply) => {
     // A page on another site may make this browser send requests here; only reads are allowed.
@@ -123,6 +173,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         "Model Duel answers only requests addressed to localhost, an IP address or this computer's name. Start it with --allow-host <name> to add another name.",
     };
     return reply.code(403).send(body);
+  });
+
+  await registerAuth(app, options.dataDir, {
+    password: options.password ?? null,
+    ...(options.clock ? { now: options.clock } : {}),
   });
 
   const store = new MachineStore(options.dataDir);

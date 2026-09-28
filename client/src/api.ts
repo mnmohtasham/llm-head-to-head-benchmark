@@ -89,6 +89,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Sent on window when a request needs a password the page has not signed in with. */
+export const SIGNED_OUT_EVENT = 'model-duel:signed-out';
+
 export const STALE_SERVER_MESSAGE =
   'The running Model Duel server does not know this request, so it is probably older than this page. Stop the server and start it again with npm start.';
 
@@ -125,6 +128,9 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = (data ?? {}) as Partial<ApiErrorBody>;
+    if (response.status === 401 && error.error === 'unauthorized') {
+      window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+    }
     if (isMissingRoute(response.status, error)) throw new ApiError(STALE_SERVER_MESSAGE, 404);
     throw new ApiError(
       error.message ?? `The request failed with HTTP ${response.status}.`,
@@ -218,6 +224,10 @@ export const api = {
   unload: (id: string) => call<MachineStatusView>('POST', `${machineUrl(id)}/unload`),
 
   health: () => call<HealthInfo>('GET', '/api/health'),
+  auth: () => call<{ required: boolean; signedIn: boolean }>('GET', '/api/auth'),
+  login: (password: string) =>
+    call<{ required: boolean; signedIn: boolean }>('POST', '/api/login', { password }),
+  logout: () => call<{ required: boolean; signedIn: boolean }>('POST', '/api/logout'),
   startSession: (request: SessionRequest) => call<SessionView>('POST', '/api/sessions', request),
   presets: () => call<{ presets: PresetView[] }>('GET', '/api/presets'),
   preflight: (request: PreflightRequest) =>

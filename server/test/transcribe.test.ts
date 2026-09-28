@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import {
   LIBRISPEECH_CLIP,
   sessionStats,
@@ -265,6 +265,9 @@ describe('a transcription race', () => {
     const unscored = await race([linuxId], { audio: { ...audio, reference: null } });
     expect(unscored.rounds[0]?.runs[0]?.transcription?.wer).toBeNull();
     expect((await upload(new Uint8Array(0), 'empty.wav')).statusCode).toBe(400);
+    // The name goes into a multipart header to the machine, so it keeps no line breaks or quotes.
+    const named = await upload(tone, 'clip.wav"\r\nX-Injected: 1');
+    expect(named.json<{ name: string }>().name).toBe('clip.wavX-Injected: 1');
   });
 
   it('cancels a transcription in flight', async () => {

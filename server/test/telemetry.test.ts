@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import {
   SseParser,
   type MachineView,

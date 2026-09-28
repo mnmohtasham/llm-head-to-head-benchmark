@@ -1,3 +1,4 @@
+import { csvCell } from './csv';
 import { metricKind, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { CLOUD_INFO } from './cloud';
@@ -632,9 +633,7 @@ export function scoreboard(session: SessionView): ScoreLine[] {
 }
 
 function csvField(value: number | string | null | undefined): string {
-  if (value === null || value === undefined) return '';
-  const s = typeof value === 'number' ? String(Math.round(value * 1000) / 1000) : value;
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return csvCell(typeof value === 'number' ? Math.round(value * 1000) / 1000 : value);
 }
 
 /** Tables as CSV: each table's own header row, a blank line between tables. */
@@ -653,22 +652,32 @@ export function toCsv(tables: readonly TableModel[]): string {
     .concat('\r\n');
 }
 
-function mdEscape(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+/**
+ * Text from machines, models or people made inert in Markdown: no HTML, links, emphasis or code,
+ * and nothing that ends a table cell or line.
+ */
+function mdText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/[\\`*_[\]!]/g, '\\$&')
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n/g, ' ');
 }
 
 function mdTable(table: TableModel, withDetail: boolean): string {
   const lines = [
-    `| ${table.columns.map(mdEscape).join(' | ')} |`,
+    `| ${table.columns.map(mdText).join(' | ')} |`,
     `| ${table.columns.map(() => '---').join(' | ')} |`,
   ];
   for (const row of table.rows) {
-    const label = row.hint ? `${row.label} (${row.hint})` : row.label;
+    const label = mdText(row.hint ? `${row.label} (${row.hint})` : row.label);
     const cells = row.cells.map((cell) => {
-      const main = cell.best ? `**${cell.text}**` : cell.text;
-      return withDetail && cell.detail ? `${main}<br>${cell.detail}` : main;
+      const main = cell.best ? `**${mdText(cell.text)}**` : mdText(cell.text);
+      return withDetail && cell.detail ? `${main}<br>${mdText(cell.detail)}` : main;
     });
-    lines.push(`| ${[label, ...cells].map(mdEscape).join(' | ')} |`);
+    lines.push(`| ${[label, ...cells].join(' | ')} |`);
   }
   return lines.join('\n');
 }
@@ -699,14 +708,14 @@ export function toMarkdown(session: SessionView): string {
   const names = session.machines.map((m) => m.name);
   const plan = session.plan;
   const lines: string[] = [
-    `# Model Duel: ${names.join(' against ')}`,
+    `# Model Duel: ${mdText(names.join(' against '))}`,
     '',
     `Race of ${when} UTC, ${session.rounds.length} ${session.rounds.length === 1 ? 'round' : 'rounds'}, state ${session.state}.`,
     '',
   ];
   const scores = scoreboard(session);
   if (scores.length > 0) {
-    lines.push('## Scoreboard', '', ...scores.map((line) => `- ${line.text}`), '');
+    lines.push('## Scoreboard', '', ...scores.map((line) => `- ${mdText(line.text)}`), '');
   }
   lines.push(
     `## ${comparisonTable(session).title}`,
@@ -723,7 +732,7 @@ export function toMarkdown(session: SessionView): string {
     lines.push(
       '## Settings',
       '',
-      `- Prompt: ${preset}, ${cfg.prompt.split(/\s+/).filter(Boolean).length.toLocaleString('en-US')} words, starting "${mdEscape(cfg.prompt.slice(0, 160))}${cfg.prompt.length > 160 ? '…' : ''}"`,
+      `- Prompt: ${preset}, ${cfg.prompt.split(/\s+/).filter(Boolean).length.toLocaleString('en-US')} words, starting "${mdText(cfg.prompt.slice(0, 160))}${cfg.prompt.length > 160 ? '…' : ''}"`,
       `- Max tokens ${cfg.maxTokens}, thinking ${cfg.thinking ? 'on' : 'off'}${cfg.reasoningEffort ? `, effort ${cfg.reasoningEffort}` : ''}`,
       `- ${cfg.prefill === 'cold' ? 'Cold' : 'Warm'} prefill: ${cfg.prefill === 'cold' ? "a fresh line started each round's prompt and the seed was sent, so no cached prompt helped" : 'the same prompt every round without a seed, so later rounds could reuse the cache'}`,
       `- Sampling: temperature ${sampling.temperature}, top-p ${sampling.topP}, top-k ${sampling.topK}, min-p ${sampling.minP}, repetition penalty ${sampling.repetitionPenalty}${cfg.prefill === 'cold' ? `, seed ${sampling.seed}` : ''}`,
@@ -739,8 +748,8 @@ export function toMarkdown(session: SessionView): string {
     lines.push(
       '## Settings',
       '',
-      `- Prompt: "${mdEscape(prompt)}"${cfg.negativePrompt ? `, negative "${mdEscape(cfg.negativePrompt)}"` : ''}`,
-      `- Model ${cfg.model}${cfg.ggufFilename ? `, file ${cfg.ggufFilename}` : ', diffusers pipeline'}`,
+      `- Prompt: "${mdText(prompt)}"${cfg.negativePrompt ? `, negative "${mdText(cfg.negativePrompt)}"` : ''}`,
+      `- Model ${mdText(cfg.model)}${cfg.ggufFilename ? `, file ${mdText(cfg.ggufFilename)}` : ', diffusers pipeline'}`,
       `- ${cfg.width}×${cfg.height}, ${cfg.steps} steps, guidance ${cfg.guidance}, seed ${cfg.seed}, one image per run`,
       `- Memory mode ${cfg.memoryMode}, speed mode ${cfg.speedMode} asked for${cfg.speedMode === 'off' ? ', the bit-identical baseline' : ''}`,
       '- Step times come from polling Unsloth ten times a second, so they are good to about 100 ms. The decode time runs from the last step to the answer and includes saving the image.',
@@ -751,8 +760,8 @@ export function toMarkdown(session: SessionView): string {
     lines.push(
       '## Settings',
       '',
-      `- Audio: ${audioLabel(cfg)}`,
-      `- Model ${cfg.model}, engine ${cfg.engine} asked for, device ${cfg.device}, language ${cfg.language}`,
+      `- Audio: ${mdText(audioLabel(cfg))}`,
+      `- Model ${mdText(cfg.model)}, engine ${cfg.engine} asked for, device ${cfg.device}, language ${mdText(cfg.language)}`,
       '- Processing time runs from the last byte of the file sent to the first byte of the answer; Unsloth measures its own from the end of the upload.',
       '- Real-time factor is audio seconds per processing second: 20× transcribes a minute in three seconds.',
       '- Word error rate compares lower-cased words with punctuation removed and numbers spelled out.',

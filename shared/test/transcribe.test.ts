@@ -12,6 +12,7 @@ import {
   transcribePreflightIssues,
   wavFile,
   wordErrorRate,
+  wordErrorRateWithin,
   type SttPreflightMachine,
 } from '../src';
 
@@ -214,5 +215,42 @@ describe('a model loaded with another engine', () => {
     expect(
       transcribePreflightIssues(machines, { model: 'large-v3-turbo', engine: 'transformers' }),
     ).toEqual([]);
+  });
+});
+
+describe('wordErrorRateWithin', () => {
+  it('aligns ordinary transcripts and skips one far too long to be a transcription', () => {
+    expect(wordErrorRateWithin('one two three', 'one two three')?.wer).toBe(0);
+    const reference = Array.from({ length: 5000 }, (_, i) => `word${i % 50}`).join(' ');
+    const flood = 'spam '.repeat(10_000);
+    expect(wordErrorRateWithin(reference, flood)).toBeNull();
+  });
+});
+
+describe('normalizeForWer on hostile transcripts', () => {
+  it('takes time in proportion to the text, however it repeats', () => {
+    const started = performance.now();
+    expect(normalizeForWer('9'.repeat(100_000)).length).toBeGreaterThan(0);
+    expect(normalizeForWer(`1.${'9'.repeat(100_000)}x`).length).toBeGreaterThan(0);
+    expect(normalizeForWer(`${"'".repeat(100_000)}x${"'".repeat(100_000)}`)).toEqual(['x']);
+    expect(normalizeForWer(`a${"'".repeat(100_000)}b`)).toEqual([`a${"'".repeat(100_000)}b`]);
+    // The old patterns backtracked over each run from every position in it: minutes here.
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
+  it('still reads numbers and apostrophes as before', () => {
+    expect(normalizeForWer("It's 3.14, 'quoted' and 1.2.3")).toEqual([
+      "it's",
+      'three',
+      'point',
+      'one',
+      'four',
+      'quoted',
+      'and',
+      'one',
+      'point',
+      'two',
+      'three',
+    ]);
   });
 });

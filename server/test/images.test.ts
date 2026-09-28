@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import {
   sessionStats,
   type ImageConfig,

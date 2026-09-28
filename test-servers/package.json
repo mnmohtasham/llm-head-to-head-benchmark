@@ -1,8 +1,8 @@
 {
-  "name": "@duel/mock",
+  "name": "@duel/test-servers",
   "version": "0.1.0",
   "private": true,
-  "description": "A fake Unsloth Studio backend for tests and the no-GPU demo.",
+  "description": "Stand-in Unsloth Studio, LM Studio, cloud provider and results-service servers for the automated tests. Never built, shipped or started by the app.",
   "type": "module",
   "exports": {
     ".": "./src/server.ts",

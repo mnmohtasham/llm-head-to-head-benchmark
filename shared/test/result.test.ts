@@ -5,6 +5,7 @@ import {
   canonicalJson,
   METRICS,
   redactDeep,
+  machineHosts,
   redactText,
   resultJsonSchema,
   resultSchema,
@@ -120,5 +121,30 @@ describe('the result file', () => {
       await readFile(new URL('../../docs/result-format.schema.json', import.meta.url), 'utf8'),
     ) as unknown;
     expect(committed).toEqual(resultJsonSchema());
+  });
+});
+
+describe('redactText with machine hosts', () => {
+  it('takes out host names written without a scheme, and Windows paths', () => {
+    const hosts = machineHosts([
+      { baseUrl: 'http://gpu-box.local:8888' },
+      { baseUrl: 'https://abc.trycloudflare.com' },
+      { baseUrl: 'https://api.openai.com' },
+      { baseUrl: 'http://lenovo:8888' },
+    ]);
+    expect(hosts).toEqual(['abc.trycloudflare.com', 'gpu-box.local']);
+    expect(redactText('Nothing is listening at gpu-box.local:8888.', hosts)).toBe(
+      'Nothing is listening at <address>.',
+    );
+    expect(redactText('abc.trycloudflare.com did not answer in time.', hosts)).toBe(
+      '<address> did not answer in time.',
+    );
+    // Ordinary words that happen to be a host stay, and so do other names.
+    expect(redactText('Lenovo GPU memory is full on gpu-box.localdomain', hosts)).toBe(
+      'Lenovo GPU memory is full on gpu-box.localdomain',
+    );
+    expect(redactText(String.raw`could not open D:\models\qwen\q4.gguf`)).toBe(
+      String.raw`could not open <path>\q4.gguf`,
+    );
   });
 });

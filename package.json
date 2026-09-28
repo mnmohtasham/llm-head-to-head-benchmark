@@ -1,17 +1,22 @@
 {
   "name": "model-duel",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "Benchmark local AI models across machines that run Unsloth Studio.",
+  "description": "Race local AI models head to head on the machines of your network: Unsloth Studio, LM Studio and cloud models, side by side.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mnmohtasham/llm-head-to-head-benchmark.git"
+  },
   "type": "module",
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.23.2"
   },
   "workspaces": [
     "shared",
     "server",
     "client",
-    "mock",
+    "test-servers",
     "e2e"
   ],
   "scripts": {
@@ -22,15 +27,16 @@
     "build:client": "vite build --config client/vite.config.ts",
     "build:node": "tsx scripts/build-node.ts",
     "start": "node server/dist/index.js",
-    "demo": "npm run build && tsx scripts/demo.ts",
-    "mock": "tsx mock/src/index.ts",
     "record:probe": "tsx scripts/record-probe.ts",
-    "typecheck": "tsc -p shared && tsc -p shared/test && tsc -p server && tsc -p mock && tsc -p client && tsc -p client/tsconfig.node.json && tsc -p e2e && tsc -p scripts",
+    "typecheck": "tsc -p shared && tsc -p shared/test && tsc -p server && tsc -p test-servers && tsc -p client && tsc -p client/tsconfig.node.json && tsc -p e2e && tsc -p smoke && tsc -p scripts",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test -c e2e/playwright.config.ts",
+    "smoke": "tsx smoke/smoke.ts",
+    "smoke:browser": "playwright test -c smoke/playwright.config.ts",
+    "smoke:docker": "tsx smoke/docker.ts",
     "record": "tsx scripts/record-stream.ts",
     "result-schema": "tsx scripts/result-schema.ts",
     "verify-result": "tsx scripts/verify-result.ts"

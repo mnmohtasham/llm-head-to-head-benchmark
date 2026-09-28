@@ -56,7 +56,12 @@ export class AudioStore {
     const id = createHash('sha256').update(bytes).digest('hex');
     const meta: UploadedAudio = {
       id,
-      name: name.slice(0, 200) || 'audio',
+      // The name goes into a multipart header to the machine: no control characters or quotes.
+      name:
+        name
+          .replace(/[\p{Cc}"\\]/gu, '')
+          .trim()
+          .slice(0, 200) || 'audio',
       bytes: bytes.length,
       contentType: contentType || 'application/octet-stream',
       seconds: parseWav(bytes)?.seconds ?? null,

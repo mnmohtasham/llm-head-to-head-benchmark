@@ -1,16 +1,15 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_CLOUDS, TEST_MACHINES } from '../stand-ins';
 import { E2E_CLOUD_PORTS, E2E_MOCK_PORTS } from '../ports';
 
-// Phase 14 demo script: add a cloud model with its key, fetch the provider's models and pick one,
+// Phase 14 scenario: add a cloud model with its key, fetch the provider's models and pick one,
 // then race it on the Text tab next to a local machine, as a reference.
-const [, LINUX] = DEMO_MACHINES;
+const [, LINUX] = TEST_MACHINES;
 const LINUX_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`;
 const OPENAI = `http://127.0.0.1:${E2E_CLOUD_PORTS[0]}`;
 const ANTHROPIC = `http://127.0.0.1:${E2E_CLOUD_PORTS[1]}`;
-// The demo's fake providers accept these keys, and nothing else.
-const OPENAI_KEY = 'sk-proj-demo-openai-0000000000000000000001';
-const ANTHROPIC_KEY = 'sk-ant-api03-demo-anthropic-000000000000001';
+// The stand-in providers accept these keys, and nothing else.
+const [{ apiKey: OPENAI_KEY }, { apiKey: ANTHROPIC_KEY }] = TEST_CLOUDS;
 
 test.describe.configure({ mode: 'serial' });
 

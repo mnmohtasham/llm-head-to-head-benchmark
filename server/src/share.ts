@@ -5,7 +5,7 @@ import {
   sign,
   type KeyObject,
 } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { chmod, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   checkShareEndpoint,
@@ -71,12 +71,20 @@ export class ShareStore {
 
   async init(): Promise<void> {
     let saved: Partial<ShareFile> | null;
+    let text: string | null = null;
     try {
-      saved = JSON.parse(await readFile(this.file, 'utf8')) as Partial<ShareFile>;
+      text = await readFile(this.file, 'utf8');
+      saved = JSON.parse(text) as Partial<ShareFile>;
     } catch {
       saved = null;
     }
+    if (text !== null && !(saved?.privateKey && saved.publicKey)) {
+      // An unreadable file keeps the old signing key: set it aside rather than lose it quietly.
+      await rename(this.file, `${this.file}.unreadable-${Date.now()}`);
+    }
     if (saved?.privateKey && saved.publicKey) {
+      // It holds the signing key and the service token: this user only, even if copied in wider.
+      await chmod(this.file, 0o600);
       this.data = {
         schemaVersion: 1,
         endpoint: typeof saved.endpoint === 'string' ? saved.endpoint : null,

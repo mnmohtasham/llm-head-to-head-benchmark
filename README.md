@@ -4,7 +4,10 @@ Model Duel benchmarks local AI models on two or more machines that run
 [Unsloth Studio](https://unsloth.ai/docs/new/studio) or [LM Studio](https://lmstudio.ai). A browser app talks to Unsloth on every
 machine through its API, runs the same workload on each, and compares the results.
 
-**Status: phase 20 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+Model Duel is free and open source under the [MIT license](LICENSE). Run it on any computer on
+your network, with Docker or Node.js, and open it in a browser.
+
+**Status: phase 21 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -20,21 +23,31 @@ one table to filter, sort and download, and sends a run to a public results serv
 
 ## Requirements
 
-- Node.js 22.19 or newer, with npm 10. Or only Docker: see [Run it with Docker](#run-it-with-docker).
+- Docker, or Node.js 22.23.2 or newer with npm 10. Node 22.23.2 is the first Node 22 release with
+  the fixes of its September 2026 security release.
 - Unsloth Studio, desktop app or `unsloth studio`, on every machine you want to benchmark.
 - For the browser tests: Google Chrome, or run `npx playwright install chromium` once.
 
 ## Quick start
 
+With Docker, on Linux, macOS or Windows (details in [Run it with Docker](#run-it-with-docker)):
+
 ```bash
-npm install
-npm run demo                  # fake Unsloth machines and cloud providers plus the app, no GPU needed
-npm run dev                   # development with hot reload
-npm run build && npm start    # production build, the one to use for measurements
+git clone https://github.com/mnmohtasham/llm-head-to-head-benchmark.git llm-h2h
+cd llm-h2h
+docker compose up -d --build
 ```
 
-All three serve the app at http://localhost:3000. After `npm run build`, restart a running
-`npm start`: it keeps the routes it started with, and the page warns when they no longer match.
+With Node.js:
+
+```bash
+npm ci
+npm run build && npm start    # the production build, the one to use for measurements
+```
+
+Both serve the app at http://localhost:3000. Then [connect your machines](#connect-your-machines).
+After `npm run build`, restart a running `npm start`: it keeps the routes it started with, and the
+page warns when they no longer match. `npm run smoke` checks that a running app is healthy.
 
 ## Run it with Docker
 
@@ -42,20 +55,21 @@ Nothing to install but Docker: Docker Desktop on Windows or macOS, or Docker Eng
 Compose plugin on Linux.
 
 ```bash
-git clone https://github.com/mnmohtasham/llm-head-to-head-benchmark.git model-duel
-cd model-duel
+git clone https://github.com/mnmohtasham/llm-head-to-head-benchmark.git llm-h2h
+cd llm-h2h
 docker compose up -d --build
 ```
 
-Open http://localhost:3000. `docker compose logs -f` shows the log, `docker compose down` stops
-it. To update, `git pull`, then `docker compose up -d --build` again.
+Open http://localhost:3000. The container is called `llm-h2h`: `docker compose logs -f` shows its
+log, `docker compose down` stops it. To update, `git pull`, then `docker compose up -d --build`
+again.
 
 - **Settings.** Every one is in the `environment` section of
   [docker-compose.yml](docker-compose.yml), with what it does. Change it, then run
   `docker compose up -d`.
 - **Your data** (machines, API keys, races, results, the signing key) is in the Docker volume
-  `model-duel-data`. It survives `docker compose down` and rebuilds; `docker compose down -v`
-  deletes it. To copy it out: `docker compose cp model-duel:/app/data ./model-duel-backup`.
+  `llm-h2h-data`. It survives `docker compose down` and rebuilds; `docker compose down -v`
+  deletes it. To copy it out: `docker compose cp llm-h2h:/app/data ./llm-h2h-backup`.
 - **Machines on other computers**: add them by IP address, as always. Names ending in `.local`
   usually do not resolve inside a container, so use the IP address.
 - **Unsloth or LM Studio on the same computer as Docker**: use `host.docker.internal` instead of
@@ -63,18 +77,22 @@ it. To update, `git pull`, then `docker compose up -d --build` again.
   container itself. The server must listen on the network, not only on this computer: turn on
   Unsloth's LAN access, or LM Studio's **Serve on Local Network**. On Linux with a firewall such as
   ufw, its port must also be open to Docker's network, as it already is for other computers.
-- **Opening the page from another device**: in the `ports` line, change `127.0.0.1:3000:3000` to
-  `3000:3000`. The app has no login, so do this only on a network you trust. To open it by a name
-  such as `my-pc.local`, add the name to `DUEL_ALLOW_HOSTS`.
+- **A password**: put `DUEL_PASSWORD='your password'` in a file named `.env` next to
+  `docker-compose.yml`, then run `docker compose up -d`. The single quotes keep `$` and spaces as
+  typed. Git and the image build leave `.env` out, so the password never reaches the repository,
+  as it could if typed into `docker-compose.yml`.
+- **Opening the page from another device**: set a password first, then in the `ports` line
+  change `127.0.0.1:3000:3000` to `3000:3000`. To open it by a name such as `my-pc.local`, add the
+  name to `DUEL_ALLOW_HOSTS`. See [Security](#security).
 - **Using the `data` folder of a native install instead of the volume**: replace
-  `model-duel-data:/app/data` with `./data:/app/data`. On Linux, the container runs as user id
+  `llm-h2h-data:/app/data` with `./data:/app/data`. On Linux, the container runs as user id
   1000, so the folder must belong to that user.
 
 ### Docker and measurements
 
 The container measures the same way as `npm start`: the same Node version and code, with every time
 taken inside the controller. Docker only adds its own network hop between the container and your
-network. Measured on Linux: 30 rounds on each of two fake machines gave the same first-token times
+network. Measured on Linux: 30 rounds on each of two stand-in machines gave the same first-token times
 and decode speeds within 0.1 %, and a round trip to another computer on the network took 25 µs
 longer, where normal variation is 1.2 to 3 ms. On an RTX 3060 running Qwen3.8 27B, the time between
 Unsloth's first token and Model Duel's was 20 to 29 ms both ways. On macOS and Windows, Docker Desktop runs containers
@@ -387,7 +405,8 @@ On the Text tab, cloud models show with their provider and model and are not pic
 - Telemetry, energy, the Models tab and the other workloads skip cloud models.
 - **Result files** mark each machine as `local` or `cloud`, with the provider and model.
 - **API address.** Leave it empty for the provider's API. Change it only for a gateway that speaks
-  the same API, or for the fake providers of the demo.
+  the same API. A saved key goes only to the address it was saved with: after changing the
+  address, enter the key again.
 
 ## Race machines on speech-to-text
 
@@ -517,128 +536,79 @@ changed on the way and let only you replace your records; the private key never 
 `data/share.json`. [docs/share-api.md](docs/share-api.md) describes what a service receives, how to
 check it, and what a public service must do to stay safe.
 
-`npm run demo` points **Results service** at a fake one on port 18888, which keeps what it gets at
-`GET http://127.0.0.1:18888/__mock/received`.
-
 ## Security
 
-- The app has no login. It binds to 127.0.0.1 unless you pass `--host`, and then prints a
-  warning, because anyone who reaches it can use your machines through it. In Docker, the `ports`
-  line of `docker-compose.yml` decides the same thing, and it starts as this computer only.
-- The Docker image holds no data and no keys: `.dockerignore` keeps `data/` and `.env` files out
-  of it. The container runs as an unprivileged user, with no Linux capabilities and a read-only
-  file system apart from its data volume.
-- It answers only requests addressed to localhost, an IP address or this computer's name, which
-  stops web pages from reaching it through DNS rebinding. `--allow-host <name>` adds a name.
-- API keys live in `data/machines.json`, readable by your user only (mode 600). They never reach
-  the browser, the logs or an export. The app shows only `sk-unsloth-…1234`.
-- Cloud API keys are kept the same way. They go only to their own provider's API address, and a
-  saved key is never sent to another provider. **Fetch models** sends the key to Model Duel's
-  server, which asks the provider; the browser never talks to the provider.
-- Requests that change anything are refused when a browser says another web site made them, so a
-  web page you visit cannot make Model Duel cancel a race, unload a model or send a record.
-- Sending a record needs your click and a confirmation showing the record. The server builds it,
-  so the page cannot slip anything else in. The results service's address must be https, redirects
-  are not followed, and only a short message, an id and a link on the service's own host are read
-  back. The signing key and the service token stay in `data/share.json` (mode 600).
-- Unsloth's LAN access is plain HTTP. Anyone on the same network can read the traffic,
-  including the key. Use it on a network you trust.
+Model Duel is built to run on a home or office network you trust. [SECURITY.md](SECURITY.md) has
+the full picture and how to report a vulnerability.
+
+- **Who can open it.** `npm start` binds to 127.0.0.1, so only this computer can open the page;
+  `--host` opens it wider and prints a warning. In Docker, the `ports` line of
+  `docker-compose.yml` decides the same, and it starts as this computer only.
+- **Password.** Set `DUEL_PASSWORD` (8 characters or more), or `DUEL_PASSWORD_FILE` for a Docker
+  secret, and the app asks for it before anything else. In Docker, keep it in `.env`, not in
+  `docker-compose.yml`. Set one before opening the app to your
+  network. Sessions last 30 days in an HttpOnly, SameSite=Strict cookie; a restart keeps them and a
+  new password ends them all. Ten wrong passwords from one address make it wait 15 minutes. The
+  password travels over plain HTTP on your network, like everything else, so for access from
+  outside use a VPN or an HTTPS reverse proxy.
+- **API keys** live in `data/machines.json`, readable by your user only (mode 600). They never
+  reach the browser, the logs, a result file or an export; the app shows only `sk-unsloth-…1234`.
+  A key goes only to the address it was saved with: changing a machine's address, or asking a
+  provider's models from another address, needs the key typed again. A cloud key goes only to its
+  own provider, over HTTPS unless the address says otherwise.
+- **Web pages cannot use it.** It answers only requests addressed to localhost, an IP address or
+  this computer's name, which stops DNS rebinding; `--allow-host` or `DUEL_ALLOW_HOSTS` adds a
+  name. Requests that change anything are refused when a browser says another site made them.
+  Every answer carries a strict Content-Security-Policy, and no other site can frame the page.
+- **Untrusted answers.** What machines, providers and the results service send is read with size
+  limits and never shown as HTML. A stream larger than any real answer is stopped, CSV exports
+  cannot carry spreadsheet formulas, and Markdown exports carry no HTML or links from machines.
+- **Sending a record** needs your click and a confirmation showing the record. The server builds
+  it, so the page cannot slip anything else in. The results service's address must be https,
+  redirects are not followed, and only a short message, an id and a link on the service's own host
+  are read back. The signing key and the service token stay in `data/share.json` (mode 600).
+- **Docker.** The image holds no data and no keys, and no npm or other package manager. The
+  container runs as an unprivileged user, with no Linux capabilities, a read-only file system
+  apart from its data volume, a process limit and rotated logs.
+- **Your network.** Unsloth's LAN access is plain HTTP, so anyone on the same network can read the
+  traffic, including the key. Use it on a network you trust.
 
 ## Commands
 
-| Command                                                   | What it does                                                       |
-| --------------------------------------------------------- | ------------------------------------------------------------------ |
-| `npm run dev`                                             | Vite on port 3000 with hot reload, API on 3001                     |
-| `npm run build`                                           | Builds the client, the controller and the fake Unsloth             |
-| `npm start`                                               | Serves the build. Options: `--port`, `--host`, `--data-dir`, `--allow-host`, or the environment variables `npm start -- --help` lists |
-| `docker compose up -d --build`                            | Builds the image and runs the app in Docker on http://localhost:3000 |
-| `npm run demo`                                            | Builds, then starts two fake machines, three fake cloud providers and the app, all added |
-| `npm run mock -- --profile mac-mlx --port 18881`          | Starts one fake Unsloth                                            |
-| `npm run mock -- --cloud anthropic --port 18886`          | Starts one fake cloud provider: `openai`, `anthropic` or `gemini`  |
-| `npm run mock -- --share --port 18888`                    | Starts a fake results service, taking records at `/api/runs`       |
-| `npm run mock -- --lmstudio --port 18889`                 | Starts a fake LM Studio 0.4; `--api-key` makes it require a token  |
-| `npm run record:probe -- --url <address> --name <name>`   | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`   |
-| `npm run record -- --machine <name> --effort low`          | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
-| `npm run verify-result -- <file>`                          | Checks result files against the format and their checksum          |
-| `npm run result-schema`                                    | Rewrites the JSON Schemas in `docs/` from the formats' definitions |
-| `npm run typecheck`, `npm run lint`, `npm run format`     | TypeScript, ESLint and Prettier                                    |
-| `npm test`                                                | Unit and integration tests                                         |
-| `npm run test:e2e`                                        | Builds, starts the demo on port 3100, 18891, 18892 and 18911 to 18915, runs browser tests |
+| Command                                                 | What it does                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------------- |
+| `npm run build`                                         | Builds the page and the controller                                   |
+| `npm start`                                             | Serves the build. Options: `--port`, `--host`, `--data-dir`, `--allow-host`, or the environment variables `npm start -- --help` lists |
+| `docker compose up -d --build`                          | Builds the image and runs the app in Docker on http://localhost:3000 |
+| `npm run smoke -- --url <address>`                      | Checks a running app: health, page, headers, host and cross-site refusals, password, API. Set `SMOKE_PASSWORD` when it has one |
+| `npm run smoke:browser`                                 | Opens every tab of a running app in Chrome (`SMOKE_URL`, `SMOKE_PASSWORD`) and fails on script errors or blocked content |
+| `npm run smoke:docker`                                  | Builds the image, runs it on a spare port without and with a password, smoke-tests it and removes it; `-- --browser` adds the browser checks |
+| `npm run dev`                                           | Vite on port 3000 with hot reload, API on 3001                       |
+| `npm run typecheck`, `npm run lint`, `npm run format`   | TypeScript, ESLint and Prettier                                      |
+| `npm test`                                              | Unit and integration tests                                           |
+| `npm run test:e2e`                                      | Builds, then runs the browser tests against the app and its test servers on ports 3100, 3101, 18891, 18892 and 18911 to 18915 |
+| `npm run record:probe -- --url <address> --name <name>` | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`     |
+| `npm run record -- --machine <name> --effort low`       | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
+| `npm run verify-result -- <file>`                       | Checks result files against the format and their checksum            |
+| `npm run result-schema`                                 | Rewrites the JSON Schemas in `docs/` from the formats' definitions   |
 
-## The fake Unsloth
+## Development and tests
 
-`mock/` answers like Unsloth Studio. Its response shapes follow the Unsloth backend source, and
-its key errors match what a real server returned. There are two profiles, `mac-mlx` and
-`linux-cuda`. Control routes change its behaviour while it runs:
+`npm run dev` serves the page with hot reload on port 3000 and the API on 3001. Measure with
+`npm start` only: the dev server shows a banner, because hot reload makes timings noisy.
 
-```bash
-# Reject every key, as if it had been deleted in Unsloth
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"rejectKey": true}'
-# Make a route disappear, hang, or answer with an error
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"routes": {"/v1/props": {"missing": true}, "/v1/models": {"hang": true}}}'
-# Slow loads, a failing load, a memory warning, a busy GPU
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"loadMs": 20000, "failNextLoad": "Failed to load GGUF model", "memoryWarning": "Does not fit"}'
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"gpuBusy": true}'
-# Streaming: prompt time, time per token, how much it thinks and answers
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"stream": {"startupMs": 800, "tokenMs": 30, "reasoningTokens": 200, "answerTokens": 300}}'
-# Streaming faults: go silent, drop the connection, send Unsloth's error frame
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"stream": {"stallAfterTokens": 20}}'
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"stream": {"disconnectAfterTokens": 20}}'
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"stream": {"errorAfterTokens": 20}}'
-# Back to normal
-curl -X POST http://127.0.0.1:18882/__mock/reset
-```
+The automated tests need no GPU and no cloud key. `test-servers/` holds stand-ins for Unsloth
+Studio, LM Studio, the three cloud providers and a results service, which answer as the real ones
+do, with shapes taken from their source and from recordings of real machines in `fixtures/`. Only
+the tests start them: they are not part of the build, the Docker image or the app. `npm test` runs
+the unit and integration tests, and `npm run test:e2e` the browser tests, which race the stand-ins
+through the production build, and sign in to a second copy of the app that has a password.
 
-Speech-to-text has its own settings: how long a model takes to load, processing time per second
-of audio, and how soon an idle model unloads. Its transcripts get every 30th to 50th word wrong,
-the same words every time, so the word error rate differs by profile and engine.
-
-```bash
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"stt": {"loadMs": 2000, "msPerAudioSecond": 40, "idleUnloadMs": 10000}}'
-```
-
-Image generation has a load time, a time per step at 1024 by 1024 (smaller images take
-proportionally less), a decode time, and a load that fails. Loading an image model unloads the
-mock's chat model and the other way round, as in Unsloth. Its images are coloured shapes that
-depend only on the seed.
-
-```bash
-curl -X POST http://127.0.0.1:18882/__mock/config -H 'content-type: application/json' \
-     -d '{"image": {"loadMs": 3000, "stepMs": 200, "decodeMs": 500, "failNextLoad": "Out of memory"}}'
-```
-
-Chat requests take the loaded model's slots; extra ones wait first in, first out, and each busy
-slot slows every stream by `stream.slotSlowdown` (0.3 by default). `slotCapacity` makes the mock
-serve fewer requests at once than it reports, to fill the queue on purpose.
-
-Other stream settings are `jitterMs`, `tokensPerChunk`, `keepaliveEveryMs`, `errorMessage`,
-`toolFrames` (Unsloth's UI frames, which clients must ignore), `truncated` (the prompt was cut to
-fit), `thinkingInAnswer` (the model skipped its thinking block), `cachedPromptTokens` and
-`draftAcceptRate` (reported prompt cache and speculative decoding numbers).
-
-The demo also starts three fake cloud providers on ports 18885 to 18887, speaking OpenAI's,
-Anthropic's and Gemini's APIs as documented: their model lists (with models Model Duel must leave
-out), their streaming events, usage and error bodies. Each accepts only its demo key. They take
-`startupMs`, `tokenMs`, `thinkingTokens`, `answerTokens` and `failWith` (an HTTP status, answered
-with the provider's error body):
-
-```bash
-curl -X POST http://127.0.0.1:18885/__mock/config -H 'content-type: application/json' \
-     -d '{"failWith": 429}'
-```
-
-Each profile has a model inventory like a real machine: complete and partial quants, an LM Studio
-model behind a `ref:` handle, an MLX or safetensors model, and image models the Models tab leaves
-out.
+The smoke tests check a real install instead, with no stand-ins: `npm run smoke` and
+`npm run smoke:browser` only read, so they are safe against your own machines, and
+`npm run smoke:docker` checks the Docker setup from a clean build. Continuous integration runs the
+checks, the tests and the Docker smoke test on every push, CodeQL on every change to `main`, and
+Dependabot keeps npm packages, the Node image and the workflow actions up to date.
 
 ## Troubleshooting
 
@@ -675,8 +645,18 @@ out.
 - **Chunks arrive in groups, with uneven gaps between them**: speculative decoding is on, and the
   tokens it keeps arrive together. The notes under the table say how many drafts Unsloth kept.
   Load the model with speculative decoding off to compare machines like for like.
-- **`npm run dev` says "Port 3000 is already in use"**: `npm start` or `npm run demo` is still
-  running. Stop it first.
+- **`npm run dev` says "Port 3000 is already in use"**: `npm start` or the Docker container is
+  still running. Stop it first.
+- **"Enter the API key again: a saved key goes only to the address it was saved with."**: you
+  changed a machine's address. Type its key again, or remove the key if the new address needs
+  none.
+- **The page asks for a password**: the app was started with `DUEL_PASSWORD`. **"Too many wrong
+  passwords"** means ten wrong tries from your address; wait 15 minutes. To change the password,
+  change `DUEL_PASSWORD` and restart, which signs everyone out.
+- **"The password must be at least 8 characters long."** when starting: choose a longer
+  `DUEL_PASSWORD`, or leave it empty for no password.
+- **"… sent an answer larger than any real one."**: the address answers with far more than
+  Unsloth or LM Studio ever send. Check that it is the right server.
 - **Docker says the port is already allocated or in use**: something else, often `npm start`, has
   port 3000. Stop it, or change the middle number of the `ports` line in `docker-compose.yml`.
 - **In Docker, "Nothing is listening at 127.0.0.1:…" or "… did not answer in time" for a server on
@@ -702,9 +682,14 @@ out.
 | `shared/`     | Types, validation, the probe classifier, the stream parser and metrics |
 | `server/`     | The controller: Fastify API, Unsloth client, probe, machine store |
 | `client/`     | The React app                                                     |
-| `mock/`       | The fake Unsloth backend and the fake cloud providers             |
-| `e2e/`        | Playwright browser tests                                          |
-| `scripts/`    | Build, demo, and the probe and stream recorders                   |
+| `test-servers/` | Stand-in Unsloth, LM Studio, cloud and results-service servers for the tests only |
+| `e2e/`        | Playwright browser tests and the launcher that starts their test servers |
+| `smoke/`      | Smoke tests for a running install and for the Docker setup        |
+| `scripts/`    | Build, and the probe and stream recorders                         |
 | `fixtures/`   | Recorded probes, model lists and streams used by the tests        |
 | `docs/phases` | One record per finished phase                                     |
 | `data/`       | Your machines, probes, last loads and saved races. Not in git     |
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Mani Mohtasham.

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -82,7 +82,8 @@ function isStoredMachine(value: unknown): value is StoredMachine {
 
 /** Writes through a temporary file so a crash never leaves a half-written file behind. */
 export async function writeFileAtomic(file: string, data: string): Promise<void> {
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  // Random, so two writes of one file in the same millisecond never share a temporary file.
+  const temporary = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(temporary, data, { mode: 0o600 });
   await rename(temporary, file);
   await chmod(file, 0o600);

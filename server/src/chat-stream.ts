@@ -9,8 +9,10 @@ import {
 } from '@duel/shared';
 import { Agent, request } from 'undici';
 import { toNetworkError } from './unsloth';
+import { MAX_STREAM_BYTES, readTextStart, TooLargeError } from './limits';
 
-export type StreamFailure = 'cancelled' | 'idle-timeout' | 'total-timeout' | 'network' | 'http';
+export type StreamFailure =
+  'cancelled' | 'idle-timeout' | 'total-timeout' | 'too-large' | 'network' | 'http';
 
 export interface StreamOutcome {
   timeline: RunTimeline;
@@ -33,6 +35,9 @@ export interface StreamTarget {
   /** Events once the stream has ended, for providers that end without saying so. */
   end?: () => ChatEvent[];
 }
+
+/** More events than any real run sends: a max_tokens of 131,072 with thinking stays far below. */
+const MAX_STREAM_EVENTS = 500_000;
 
 /** Headers worth keeping from an answer: request ids and server-side processing time. */
 const KEPT_HEADERS = [
@@ -127,7 +132,7 @@ export async function streamSse(
       if (typeof value === 'string') kept[name] = value;
     }
     if (status !== 200) {
-      const text = await response.body.text();
+      const text = await readTextStart(response.body);
       try {
         errorBody = JSON.parse(text) as unknown;
       } catch {
@@ -135,9 +140,15 @@ export async function streamSse(
       }
       failure = 'http';
     } else {
+      let received = 0;
       for await (const chunk of response.body) {
         const t = performance.now();
         const bytes = chunk as Uint8Array;
+        received += bytes.length;
+        // No real answer comes near these; a server that goes on is stopped, not buffered.
+        if (received > MAX_STREAM_BYTES || events.length > MAX_STREAM_EVENTS) {
+          throw new TooLargeError(MAX_STREAM_BYTES);
+        }
         options.onRead?.(bytes, t);
         take(parser.push(bytes, t));
       }
@@ -153,6 +164,7 @@ export async function streamSse(
     const code = (error as { code?: string }).code ?? '';
     if (options.signal.aborted) failure = 'cancelled';
     else if (total.aborted) failure = 'total-timeout';
+    else if (code === 'E_TOO_LARGE') failure = 'too-large';
     else if (IDLE_CODES.has(code)) failure = 'idle-timeout';
     else {
       failure = 'network';

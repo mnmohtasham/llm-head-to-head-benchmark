@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import {
   DEFAULT_LOAD_SETTINGS,
   type LoadJob,

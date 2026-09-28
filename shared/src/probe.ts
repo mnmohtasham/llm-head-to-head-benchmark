@@ -215,7 +215,7 @@ function routeProblem(route: RouteResult): string {
 }
 
 export type NetworkCategory =
-  'refused' | 'timeout' | 'unreachable' | 'dns' | 'reset' | 'tls' | 'other';
+  'refused' | 'timeout' | 'unreachable' | 'dns' | 'reset' | 'tls' | 'too-large' | 'other';
 
 const CATEGORY_BY_CODE: Record<string, NetworkCategory> = {
   ECONNREFUSED: 'refused',
@@ -239,6 +239,8 @@ const CATEGORY_BY_CODE: Record<string, NetworkCategory> = {
   UND_ERR_SOCKET: 'reset',
   UND_ERR_CLOSED: 'reset',
   EPROTO: 'tls',
+  // Model Duel's own: an answer larger than any real one, so it stopped reading.
+  E_TOO_LARGE: 'too-large',
 };
 
 export function networkCategory(code: string): NetworkCategory {
@@ -258,6 +260,7 @@ const NETWORK_SUMMARY: Record<NetworkCategory, string> = {
   dns: 'Unknown host',
   reset: 'Connection cut',
   tls: 'TLS failed',
+  'too-large': 'Answer too large',
   other: 'Failed',
 };
 
@@ -300,6 +303,11 @@ export function explainNetworkError(
       return {
         title: `The connection to ${address} was cut off.`,
         hint: 'A firewall on that machine may be refusing Unsloth: on a Mac, allow incoming connections for Unsloth under System Settings → Network → Firewall → Options. Otherwise something other than Unsloth may be using this port, or the address needs https:// instead of http://.',
+      };
+    case 'too-large':
+      return {
+        title: `${address} sent an answer larger than any real one.`,
+        hint: 'Check that the address is Unsloth or LM Studio. Model Duel stops reading answers this large instead of running out of memory.',
       };
     case 'tls':
       return {

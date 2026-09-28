@@ -1,8 +1,10 @@
 # Never in the image: your machines, keys, results and signing key live in data/.
 data/
-.demo-data/
 .env
 .env.*
+.npmrc
+*.pem
+*.key
 
 # Rebuilt inside the image.
 **/node_modules/
@@ -12,11 +14,12 @@ data/
 .git/
 .github/
 **/test/
-e2e/tests/
-e2e/.data/
-e2e/test-results/
-e2e/playwright-report/
 coverage/
+# The tests and their stand-in servers: only their package.json, which npm ci needs.
+e2e/*
+!e2e/package.json
+test-servers/*
+!test-servers/package.json
 docs/
 fixtures/
 *.log
@@ -27,3 +30,4 @@ fixtures/
 Dockerfile
 docker-compose*.yml
 .dockerignore
+smoke/

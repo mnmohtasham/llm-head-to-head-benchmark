@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
-// Phase 2 demo script: load one model everywhere, skip a machine without the quant, filter and
+// Phase 2 scenario: load one model everywhere, skip a machine without the quant, filter and
 // load one machine, unload, see a failure and a memory warning, cancel a load.
-const [MAC, LINUX] = DEMO_MACHINES;
+const [MAC, LINUX] = TEST_MACHINES;
 const MAC_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[0]}`;
 const LINUX_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`;
 const GEMMA = 'unsloth/gemma-4-12b-it-GGUF';
@@ -19,7 +19,7 @@ function pane(page: Page, name: string) {
 
 async function ensureMachines(request: APIRequestContext) {
   const existing = (await (await request.get('/api/machines')).json()) as Array<{ name: string }>;
-  for (const [index, machine] of DEMO_MACHINES.entries()) {
+  for (const [index, machine] of TEST_MACHINES.entries()) {
     if (existing.some((m) => m.name === machine.name)) continue;
     await request.post('/api/machines', {
       data: {

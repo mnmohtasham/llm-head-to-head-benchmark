@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildApp } from './app';
+import { MIN_PASSWORD_LENGTH } from './auth';
 
 const HELP = `Model Duel controller.
 
@@ -20,6 +21,8 @@ Every option can also be set in the environment (shown in brackets); an option g
                       [DUEL_ALLOW_HOSTS, comma separated]
 
 Environment only:
+  DUEL_PASSWORD                Ask for this password before anything else (at least 8 characters)
+  DUEL_PASSWORD_FILE           Read the password from this file instead, e.g. a Docker secret
   LOG_LEVEL                    fatal, error, warn (default), info, debug or trace
   DUEL_TELEMETRY_BASELINE_MS   Idle hardware sampled before and after a race (default 5000)
   DUEL_IN_CONTAINER            1 when running in Docker, for the startup message
@@ -92,12 +95,34 @@ const allowedHosts = [
 const baselineMs = env('DUEL_TELEMETRY_BASELINE_MS');
 const inContainer = env('DUEL_IN_CONTAINER') === '1';
 
+/** The password from DUEL_PASSWORD, or from the file DUEL_PASSWORD_FILE names; null for none. */
+function readPassword(): string | null {
+  const file = env('DUEL_PASSWORD_FILE');
+  let password = process.env.DUEL_PASSWORD ?? '';
+  if (file) {
+    try {
+      password = readFileSync(file, 'utf8').replace(/\r?\n$/, '');
+    } catch (error) {
+      fail(`Could not read DUEL_PASSWORD_FILE (${file}): ${(error as Error).message}`);
+    }
+  }
+  // Nothing started from here needs it.
+  delete process.env.DUEL_PASSWORD;
+  if (password === '') return null;
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    fail(`The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`);
+  }
+  return password;
+}
+const password = readPassword();
+
 const app = await buildApp({
   dataDir,
   clientDir,
   version: readVersion(),
   logger: { level: env('LOG_LEVEL') ?? 'warn' },
   allowedHosts,
+  password,
   mode: values['api-only'] ? 'dev' : 'production',
   // The telemetry baseline before and after a race; tests shorten it.
   ...(baselineMs
@@ -137,13 +162,15 @@ if (values['api-only']) {
 if (clientDir && !app.hasReplyDecorator('sendFile')) {
   process.stdout.write('The client is not built yet. Run npm run build, or use npm run dev.\n');
 }
-if (inContainer) {
+if (password !== null) {
+  process.stdout.write('A password is required to use it.\n');
+} else if (inContainer) {
   process.stdout.write(
-    'Who can open it is set by the ports line: with 127.0.0.1 in front, only this computer. The app has no login.\n',
+    'Who can open it is set by the ports line: with 127.0.0.1 in front, only this computer. Set DUEL_PASSWORD before opening it to your network.\n',
   );
 } else if (!loopback) {
   process.stderr.write(
-    `Warning: Model Duel has no login. Anyone who can reach port ${port} on this computer can see your machines and use their API keys through it.\n`,
+    `Warning: Model Duel has no password. Anyone who can reach port ${port} on this computer can see your machines and use their API keys through it. Set DUEL_PASSWORD to require one.\n`,
   );
 }
 

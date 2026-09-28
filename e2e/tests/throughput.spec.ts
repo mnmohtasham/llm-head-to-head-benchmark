@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
-// Phase 11 demo script: switch the Text tab to throughput, let pre-flight reload each model with
+// Phase 11 scenario: switch the Text tab to throughput, let pre-flight reload each model with
 // four slots, and race four requests at once per machine.
 const MOCKS = [`http://127.0.0.1:${E2E_MOCK_PORTS[0]}`, `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`];
 
@@ -42,7 +42,7 @@ test('races four requests at once per machine, after reloading with four slots',
   page,
 }) => {
   await page.goto('/#/text');
-  for (const machine of DEMO_MACHINES) {
+  for (const machine of TEST_MACHINES) {
     const box = page.getByRole('checkbox', { name: new RegExp(machine.name) });
     await expect(box).toBeEnabled();
     await box.setChecked(true);
@@ -66,7 +66,7 @@ test('races four requests at once per machine, after reloading with four slots',
   });
 
   await page.getByRole('button', { name: 'Start' }).click();
-  for (const machine of DEMO_MACHINES) {
+  for (const machine of TEST_MACHINES) {
     await expect(pane(page, machine.name).getByTestId('run-state')).toHaveText('Done', {
       timeout: 20_000,
     });

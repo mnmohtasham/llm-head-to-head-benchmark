@@ -2,7 +2,7 @@ import type { ServerResponse } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 /**
- * Fake cloud providers for tests and the demo: OpenAI's Responses API, Anthropic's Messages API and
+ * Stand-in cloud providers for the tests: OpenAI's Responses API, Anthropic's Messages API and
  * Gemini's streamGenerateContent, with their model lists, stream events and error shapes as the
  * providers documented them on 2026-09-25.
  */

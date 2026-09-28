@@ -216,28 +216,60 @@ const URL_OR_ADDRESS =
 /** API keys a provider might echo in an error, even masked. */
 const API_KEY = /\b(?:sk-(?:ant-|proj-|unsloth-)?[\w*.…-]{6,}|AIza[\w-]{20,})/g;
 const ABSOLUTE_PATH = /(?:^|(?<=[\s="'(]))(?:\/[\w.@+-]+){2,}/g;
+const WINDOWS_PATH = /(?:^|(?<=[\s="'(]))[A-Za-z]:\\(?:[^\\\s"'<>|]+\\)*[^\\\s"'<>|]*/g;
 
 /**
  * Takes local paths and network addresses out of a message or setting: home folders become `~`,
- * other absolute paths keep only their last part, and URLs and IP addresses become `<address>`.
+ * other absolute paths keep only their last part, and URLs, IP addresses and the given host
+ * names, which messages often write without a scheme, become `<address>`.
  */
-export function redactText(text: string): string {
-  return text
+export function redactText(text: string, hosts: readonly string[] = []): string {
+  let out = text
     .replace(API_KEY, '<key>')
     .replace(URL_OR_ADDRESS, '<address>')
     .replace(HOME, '~')
-    .replace(ABSOLUTE_PATH, (path) => `<path>/${path.split('/').pop() ?? ''}`);
+    .replace(ABSOLUTE_PATH, (path) => `<path>/${path.split('/').pop() ?? ''}`)
+    .replace(WINDOWS_PATH, (path) => `<path>\\${path.split('\\').pop() ?? ''}`);
+  for (const host of hosts) {
+    const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(?<![\\w.-])${escaped}(?::\\d+)?(?![\\w-])`, 'g'), '<address>');
+  }
+  return out;
 }
 
+/**
+ * The host names of a session's machines that name a network, such as `gpu-box.local` or a tunnel
+ * address, longest first. Single names like `lenovo` are left, since they read as ordinary words,
+ * and so are cloud providers' public hosts, which say nothing about the sender.
+ */
+export function machineHosts(machines: ReadonlyArray<{ baseUrl: string }>): string[] {
+  const hosts = new Set<string>();
+  for (const machine of machines) {
+    try {
+      const host = new URL(machine.baseUrl).hostname.replace(/^\[|\]$/g, '');
+      if (/[.:]/.test(host) && !PUBLIC_API_HOSTS.has(host.toLowerCase())) hosts.add(host);
+    } catch {
+      // Not a URL: nothing to take out.
+    }
+  }
+  return [...hosts].sort((a, b) => b.length - a.length);
+}
+
+const PUBLIC_API_HOSTS = new Set([
+  'api.openai.com',
+  'api.anthropic.com',
+  'generativelanguage.googleapis.com',
+]);
+
 /** `redactText` on every string inside a value, keys included. */
-export function redactDeep<T>(value: T): T {
-  if (typeof value === 'string') return redactText(value) as T;
-  if (Array.isArray(value)) return value.map((v) => redactDeep(v as unknown)) as T;
+export function redactDeep<T>(value: T, hosts: readonly string[] = []): T {
+  if (typeof value === 'string') return redactText(value, hosts) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v as unknown, hosts)) as T;
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-        redactText(k),
-        redactDeep(v),
+        redactText(k, hosts),
+        redactDeep(v, hosts),
       ]),
     ) as T;
   }
@@ -264,6 +296,7 @@ export function buildResult(
   generator: { version: string; build: string | null },
 ): UnsignedResult {
   const view = publicSession(structuredClone(session));
+  const hosts = machineHosts(session.machines);
   const kind = metricKind(session);
   const machineIndex = new Map(session.machines.map((m, i) => [m.id, i]));
   const index = (id: string | null) => (id === null ? null : (machineIndex.get(id) ?? null));
@@ -282,28 +315,31 @@ export function buildResult(
     flags: r.flags.map((f) => ({
       machine: index(f.machineId),
       kind: f.kind,
-      text: redactText(f.text),
+      text: redactText(f.text, hosts),
     })),
     runs: r.runs.map((run) => ({
       machine: index(run.machineId) ?? -1,
       state: run.state,
-      error: run.error === null ? null : redactText(run.error),
+      error: run.error === null ? null : redactText(run.error, hosts),
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
-      modelBefore: run.modelBefore === null ? null : redactText(run.modelBefore),
-      modelAfter: run.modelAfter === null ? null : redactText(run.modelAfter),
+      modelBefore: run.modelBefore === null ? null : redactText(run.modelBefore, hosts),
+      modelAfter: run.modelAfter === null ? null : redactText(run.modelAfter, hosts),
       sendOffsetMs: run.sendOffsetMs,
       rtt: run.rtt,
       loopLagMs: run.loopLagMs,
       metrics: runMetrics(kind, run),
-      details: redactDeep({
-        client: asObject(run.client),
-        server: asObject(run.server),
-        transcription: asObject(run.transcription),
-        image: asObject(run.image),
-        throughput: asObject(run.throughput),
-        command: null,
-      }),
+      details: redactDeep(
+        {
+          client: asObject(run.client),
+          server: asObject(run.server),
+          transcription: asObject(run.transcription),
+          image: asObject(run.image),
+          throughput: asObject(run.throughput),
+          command: null,
+        },
+        hosts,
+      ),
       text: text ? { reasoning: run.reasoning, answer: run.answer } : null,
       telemetry: asObject(run.telemetry),
       timeline: run.timeline,
@@ -320,7 +356,7 @@ export function buildResult(
     createdAt: session.createdAt,
     finishedAt: session.finishedAt,
     state: session.state,
-    error: session.error === null ? null : redactText(session.error),
+    error: session.error === null ? null : redactText(session.error, hosts),
     generator: {
       app: 'Model Duel',
       version: generator.version,
@@ -358,23 +394,26 @@ export function buildResult(
           studio: p?.versions.studio ?? null,
           llamaCpp: p?.versions.llamaCpp ?? null,
         },
-        state: redactDeep({
-          textBefore: asObject(p?.statusBefore),
-          textAfter: asObject(p?.statusAfter),
-          sttBefore: asObject(p?.sttBefore),
-          sttAfter: asObject(p?.sttAfter),
-          imageBefore: asObject(p?.imageBefore),
-          imageAfter: asObject(p?.imageAfter),
-          restore: asObject(p?.restore),
-          agent: null,
-        }),
-        request: p?.request ? redactDeep(asObject(p.request)) : null,
+        state: redactDeep(
+          {
+            textBefore: asObject(p?.statusBefore),
+            textAfter: asObject(p?.statusAfter),
+            sttBefore: asObject(p?.sttBefore),
+            sttAfter: asObject(p?.sttAfter),
+            imageBefore: asObject(p?.imageBefore),
+            imageAfter: asObject(p?.imageAfter),
+            restore: asObject(p?.restore),
+            agent: null,
+          },
+          hosts,
+        ),
+        request: p?.request ? redactDeep(asObject(p.request), hosts) : null,
         setup: setup.rows
           .filter((row) => row.key !== 'address' && row.key !== 'notes')
           .map((row) => ({
             key: row.key,
             label: row.label,
-            value: redactText(String(row.cells[i]?.text ?? '')),
+            value: redactText(String(row.cells[i]?.text ?? ''), hosts),
             differs: row.differs === true,
           })),
       };

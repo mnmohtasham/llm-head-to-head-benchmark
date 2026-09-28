@@ -1,8 +1,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
-import { startMockServer, type RunningMock } from '@duel/mock';
-import { startShareMock, verifyEnvelope, type RunningShareMock } from '@duel/mock/share';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
+import { startShareMock, verifyEnvelope, type RunningShareMock } from '@duel/test-servers/share';
 import type { MachineView, SessionView, ShareRecord } from '@duel/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ShareSettingsView } from '../src/share';

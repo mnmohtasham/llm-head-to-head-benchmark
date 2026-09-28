@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# Model Duel in a container. Use docker-compose.yml to run it: docker compose up -d
+# llm-h2h: Model Duel in a container. Use docker-compose.yml to run it: docker compose up -d
 #
-# The same Node version as a native install, on glibc like most Linux desktops, so the controller
-# measures the same way in both.
-ARG NODE_IMAGE=node:22.22.2-trixie-slim
+# The latest Node 22 release, on glibc like most Linux desktops, so the controller measures the
+# same way as a native install on Linux.
+ARG NODE_IMAGE=node:22.23.3-trixie-slim
 
 # Builds the page and the controller. Manifests first, so the dependency layer is reused until
 # package-lock.json changes.
@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY client/package.json client/
-COPY mock/package.json mock/
+COPY test-servers/package.json test-servers/
 COPY e2e/package.json e2e/
 RUN npm ci --no-audit --no-fund
 COPY . .
@@ -27,11 +27,19 @@ COPY package.json package-lock.json ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY client/package.json client/
-COPY mock/package.json mock/
+COPY test-servers/package.json test-servers/
 COPY e2e/package.json e2e/
 RUN npm ci --omit=dev --workspace server --no-audit --no-fund
 
 FROM ${NODE_IMAGE}
+LABEL org.opencontainers.image.title="llm-h2h" \
+      org.opencontainers.image.description="Model Duel: race local AI models on the machines of your network" \
+      org.opencontainers.image.source="https://github.com/mnmohtasham/llm-head-to-head-benchmark" \
+      org.opencontainers.image.licenses="MIT"
+# The app needs only node: no package manager stays in the image to be misused or to carry CVEs.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn \
+      /usr/local/bin/yarnpkg
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
