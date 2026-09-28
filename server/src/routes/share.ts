@@ -1,6 +1,9 @@
 import {
   buildShareRecord,
   checkShareEndpoint,
+  DEFAULT_SHARE_ACCOUNT,
+  DEFAULT_SHARE_ENDPOINT,
+  DEFAULT_SHARE_NAME,
   SHARE_MAX_BYTES,
   shareOptionsSchema,
   shareSigningText,
@@ -70,8 +73,11 @@ export function registerShareRoutes(
       }
       url = checked.url;
     }
-    // A saved token stays with the address it was given for.
-    const moved = url !== share.endpoint && share.token !== null && token === undefined;
+    // A saved token stays with the service it was given for: another one never gets it.
+    const moved =
+      (url ?? DEFAULT_SHARE_ENDPOINT) !== share.endpoint &&
+      share.token !== null &&
+      token === undefined;
     return share.update({
       endpoint: url,
       token: token === null ? null : token ? token : moved ? null : undefined,
@@ -133,8 +139,14 @@ export function registerShareRoutes(
     const parsed = sendRequest.safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'That is not a run to send.');
     const endpoint = share.endpoint;
-    if (!endpoint) {
-      return fail(reply, 409, 'no_endpoint', 'Set the results service address first.');
+    // LLM Bench takes runs only with a token: without one nothing is sent that it would refuse.
+    if (share.isDefault && !share.token) {
+      return fail(
+        reply,
+        409,
+        'no_token',
+        `Add your ${DEFAULT_SHARE_NAME} token first: sign in at ${DEFAULT_SHARE_ACCOUNT} with Google and make one.`,
+      );
     }
     const key = `${parsed.data.sessionId}/${parsed.data.machineId}`;
     if (sending.has(key)) return fail(reply, 409, 'sending', 'This run is being sent already.');

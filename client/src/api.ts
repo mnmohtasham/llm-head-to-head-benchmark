@@ -68,7 +68,10 @@ export interface SentShare {
 
 /** Sharing settings as the server shows them: never the token or the signing key. */
 export interface ShareSettingsView {
-  endpoint: string | null;
+  /** Where records go: the chosen service, or the built-in one. */
+  endpoint: string;
+  /** Whether that is the built-in service, LLM Bench. */
+  isDefault: boolean;
   hasToken: boolean;
   tokenMasked: string | null;
   publicKey: string;
@@ -164,7 +167,7 @@ export const api = {
   updateShareSettings: (input: { endpoint: string | null; token?: string | null }) =>
     call<ShareSettingsView>('PUT', '/api/share/settings', input),
   sharePreview: (input: { sessionId: string; machineId: string; options: ShareOptions }) =>
-    call<{ record: ShareRecord; sha256: string; endpoint: string | null }>(
+    call<{ record: ShareRecord; sha256: string; endpoint: string }>(
       'POST',
       '/api/share/preview',
       input,

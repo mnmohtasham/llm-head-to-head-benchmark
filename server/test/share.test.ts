@@ -3,7 +3,12 @@ import path from 'node:path';
 import { rm } from 'node:fs/promises';
 import { startMockServer, type RunningMock } from '@duel/test-servers';
 import { startShareMock, verifyEnvelope, type RunningShareMock } from '@duel/test-servers/share';
-import type { MachineView, SessionView, ShareRecord } from '@duel/shared';
+import {
+  DEFAULT_SHARE_ENDPOINT,
+  type MachineView,
+  type SessionView,
+  type ShareRecord,
+} from '@duel/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ShareSettingsView } from '../src/share';
 import { testApp } from './helpers';
@@ -102,7 +107,12 @@ afterEach(async () => {
 describe('share settings', () => {
   it('makes a signing key that stays on this computer', async () => {
     const view = await settings();
-    expect(view).toMatchObject({ endpoint: null, hasToken: false, sent: {} });
+    expect(view).toMatchObject({
+      endpoint: DEFAULT_SHARE_ENDPOINT,
+      isDefault: true,
+      hasToken: false,
+      sent: {},
+    });
     expect(view.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(view.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     const file = path.join(ctx.dataDir, 'share.json');
@@ -129,15 +139,30 @@ describe('share settings', () => {
       tokenMasked: '…7890',
     });
     expect(ok.body).not.toContain('share-token-1234567890');
-    // A new address does not inherit the token, and no address means no token.
+    // A new address does not inherit the token, and neither does the built-in service.
     const moved = await setEndpoint('https://other.example.com/api/runs');
     expect(moved.json<ShareSettingsView>().hasToken).toBe(false);
     await setEndpoint('https://other.example.com/api/runs', 'share-token-1234567890');
     expect((await setEndpoint(null)).json<ShareSettingsView>()).toMatchObject({
-      endpoint: null,
+      endpoint: DEFAULT_SHARE_ENDPOINT,
+      isDefault: true,
       hasToken: false,
     });
     expect((await setEndpoint(service.endpoint)).statusCode).toBe(200);
+  });
+
+  it('keeps a token for the built-in service, typed out or not, and drops it on leaving', async () => {
+    const saved = await setEndpoint(null, 'llmb_token-for-the-built-in-service');
+    expect(saved.json<ShareSettingsView>()).toMatchObject({ isDefault: true, hasToken: true });
+    // Its own address, typed out, is still the built-in service and keeps the token.
+    const typed = await setEndpoint(DEFAULT_SHARE_ENDPOINT);
+    expect(typed.json<ShareSettingsView>()).toMatchObject({ isDefault: true, hasToken: true });
+    const file = JSON.parse(await readFile(path.join(ctx.dataDir, 'share.json'), 'utf8')) as {
+      endpoint: string | null;
+    };
+    expect(file.endpoint).toBeNull();
+    const left = await setEndpoint('https://results.example.com/api/runs');
+    expect(left.json<ShareSettingsView>()).toMatchObject({ isDefault: false, hasToken: false });
   });
 });
 
@@ -198,7 +223,10 @@ describe('the record', () => {
 
 describe('sending', () => {
   it('signs the record, sends it, and remembers where it went', async () => {
-    expect((await send()).statusCode).toBe(409);
+    // The built-in service without a token: refused here, before anything leaves this computer.
+    const noToken = await send();
+    expect(noToken.statusCode).toBe(409);
+    expect(noToken.json<{ error: string }>().error).toBe('no_token');
     await setEndpoint(service.endpoint);
     const sent = await send();
     expect(sent.statusCode, sent.body).toBe(200);

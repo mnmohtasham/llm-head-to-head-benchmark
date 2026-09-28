@@ -9,6 +9,10 @@ between Model Duel and such a service, and a checklist for building the service 
   with `npm run result-schema`.
 - A working reference: `test-servers/src/share.ts`, the stand-in service the tests send records
   to.
+- The built-in service: Model Duel sends to LLM Bench, `https://llm-bench.selfhostapps.com/api/runs`
+  (`DEFAULT_SHARE_ENDPOINT`), unless the user chooses another service. LLM Bench needs a token from
+  its account page, so Model Duel sends nothing there without one, and it publishes runs without
+  names or prompts, so Model Duel leaves both out of records for it.
 
 ## The request
 
