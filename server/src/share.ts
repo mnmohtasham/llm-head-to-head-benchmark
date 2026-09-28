@@ -9,6 +9,7 @@ import { chmod, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   checkShareEndpoint,
+  DEFAULT_SHARE_ENDPOINT,
   maskApiKey,
   shareSigningText,
   type ShareEnvelope,
@@ -32,7 +33,10 @@ export interface SentRecord {
 
 /** What the page may see: never the token or the private key. */
 export interface ShareSettingsView {
-  endpoint: string | null;
+  /** Where records go: the chosen service, or the built-in one. */
+  endpoint: string;
+  /** Whether that is the built-in service, which follows DEFAULT_SHARE_ENDPOINT. */
+  isDefault: boolean;
   hasToken: boolean;
   tokenMasked: string | null;
   /** The sender's public key, base64url, and a short fingerprint of it to show. */
@@ -44,6 +48,7 @@ export interface ShareSettingsView {
 
 interface ShareFile {
   schemaVersion: 1;
+  /** Another service's address; null sends to the built-in one. */
   endpoint: string | null;
   token: string | null;
   /** PKCS #8 PEM. Stays in this file. */
@@ -124,8 +129,13 @@ export class ShareStore {
     return this.state.publicKey;
   }
 
-  get endpoint(): string | null {
-    return this.state.endpoint;
+  /** Where records go: the chosen service, or the built-in one. */
+  get endpoint(): string {
+    return this.state.endpoint ?? DEFAULT_SHARE_ENDPOINT;
+  }
+
+  get isDefault(): boolean {
+    return this.state.endpoint === null;
   }
 
   get token(): string | null {
@@ -135,7 +145,8 @@ export class ShareStore {
   view(): ShareSettingsView {
     const s = this.state;
     return {
-      endpoint: s.endpoint,
+      endpoint: this.endpoint,
+      isDefault: s.endpoint === null,
       hasToken: s.token !== null,
       tokenMasked: maskApiKey(s.token),
       publicKey: s.publicKey,
@@ -144,16 +155,14 @@ export class ShareStore {
     };
   }
 
-  /** `endpoint` null removes it; `token` undefined keeps it, null removes it. */
+  /** `endpoint` null means the built-in service; `token` undefined keeps it, null removes it. */
   async update(patch: {
     endpoint: string | null;
     token?: string | null;
   }): Promise<ShareSettingsView> {
     const s = this.state;
-    s.endpoint = patch.endpoint;
+    s.endpoint = patch.endpoint === DEFAULT_SHARE_ENDPOINT ? null : patch.endpoint;
     if (patch.token !== undefined) s.token = patch.token;
-    // No address, no token: a token must never go to an address it was not meant for.
-    if (s.endpoint === null) s.token = null;
     await this.save();
     return this.view();
   }

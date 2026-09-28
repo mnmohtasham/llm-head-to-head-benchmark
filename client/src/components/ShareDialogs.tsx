@@ -1,4 +1,12 @@
-import { checkShareEndpoint, shortDate, type DeviceRun, type ShareRecord } from '@duel/shared';
+import {
+  checkShareEndpoint,
+  DEFAULT_SHARE_ACCOUNT,
+  DEFAULT_SHARE_ENDPOINT,
+  DEFAULT_SHARE_NAME,
+  shortDate,
+  type DeviceRun,
+  type ShareRecord,
+} from '@duel/shared';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, api, messageOf, type SentShare, type ShareSettingsView } from '../api';
 
@@ -42,7 +50,10 @@ function Dialog({
   );
 }
 
-/** Where records go: the service's address, an optional token, and this sender's key. */
+/**
+ * Where records go: LLM Bench, built in, or another service's address; a token; and this sender's
+ * key.
+ */
 export function ShareSettingsDialog({
   settings,
   onSaved,
@@ -53,27 +64,33 @@ export function ShareSettingsDialog({
   onClose: () => void;
 }) {
   const id = useId();
-  const [endpoint, setEndpoint] = useState(settings.endpoint ?? '');
+  const [builtIn, setBuiltIn] = useState(settings.isDefault);
+  const [endpoint, setEndpoint] = useState(settings.isDefault ? '' : settings.endpoint);
   const [token, setToken] = useState('');
   const [removeToken, setRemoveToken] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const checked = endpoint.trim() ? checkShareEndpoint(endpoint) : null;
+  const checked = !builtIn && endpoint.trim() ? checkShareEndpoint(endpoint) : null;
+  const missing = !builtIn && !endpoint.trim();
+  const defaultHost = new URL(DEFAULT_SHARE_ENDPOINT).host;
+  // A saved token stays with its service: choosing another one leaves it behind.
+  const moving =
+    settings.hasToken && (builtIn ? !settings.isDefault : endpoint.trim() !== settings.endpoint);
 
-  const save = async (event: FormEvent, close: () => void, clear = false) => {
+  const save = async (event: FormEvent, close: () => void) => {
     event.preventDefault();
     setError(null);
-    if (!clear && checked && !checked.ok) return;
+    if (missing) {
+      setError('Enter the other service’s address, or choose LLM Bench.');
+      return;
+    }
+    if (checked && !checked.ok) return;
     setBusy(true);
     try {
-      const saved = await api.updateShareSettings(
-        clear
-          ? { endpoint: null }
-          : {
-              endpoint: endpoint.trim() || null,
-              ...(removeToken ? { token: null } : token.trim() ? { token: token.trim() } : {}),
-            },
-      );
+      const saved = await api.updateShareSettings({
+        endpoint: builtIn ? null : endpoint.trim(),
+        ...(removeToken ? { token: null } : token.trim() ? { token: token.trim() } : {}),
+      });
       onSaved(saved);
       close();
     } catch (failure) {
@@ -91,25 +108,54 @@ export function ShareSettingsDialog({
             goes. Only runs you send leave this computer.
           </p>
           <div className="field">
-            <label htmlFor={`${id}-endpoint`}>Service address</label>
-            <input
-              id={`${id}-endpoint`}
-              value={endpoint}
-              onChange={(event) => setEndpoint(event.target.value)}
-              placeholder="https://results.example.com/api/runs"
-              autoComplete="off"
-              spellCheck={false}
-              inputMode="url"
-              aria-invalid={Boolean(checked && !checked.ok)}
-            />
-            <p className={checked && !checked.ok ? 'field-error' : 'field-hint'}>
-              {checked && !checked.ok
-                ? checked.error
-                : 'The full address that takes records, over https. Model Duel sends each record there with a POST.'}
+            <span className="field-label" id={`${id}-service-label`}>
+              Send runs to
+            </span>
+            <div className="toggle-chips" role="radiogroup" aria-labelledby={`${id}-service-label`}>
+              {[
+                { value: true, label: DEFAULT_SHARE_NAME },
+                { value: false, label: 'Another service' },
+              ].map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={builtIn === option.value}
+                  className={`toggle-chip${builtIn === option.value ? ' toggle-chip-on' : ''}`}
+                  onClick={() => setBuiltIn(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="field-hint">
+              {builtIn
+                ? `${DEFAULT_SHARE_NAME} (${defaultHost}) is the public results site for Model Duel. It shows runs without names.`
+                : 'Any service that takes Model Duel’s records, for example one you run yourself.'}
             </p>
           </div>
+          {builtIn ? null : (
+            <div className="field">
+              <label htmlFor={`${id}-endpoint`}>Service address</label>
+              <input
+                id={`${id}-endpoint`}
+                value={endpoint}
+                onChange={(event) => setEndpoint(event.target.value)}
+                placeholder="https://results.example.com/api/runs"
+                autoComplete="off"
+                spellCheck={false}
+                inputMode="url"
+                aria-invalid={Boolean(checked && !checked.ok)}
+              />
+              <p className={checked && !checked.ok ? 'field-error' : 'field-hint'}>
+                {checked && !checked.ok
+                  ? checked.error
+                  : 'The full address that takes records, over https. Model Duel sends each record there with a POST.'}
+              </p>
+            </div>
+          )}
           <div className="field">
-            <label htmlFor={`${id}-token`}>Token (optional)</label>
+            <label htmlFor={`${id}-token`}>{builtIn ? 'Token' : 'Token (optional)'}</label>
             <input
               id={`${id}-token`}
               type="password"
@@ -117,18 +163,30 @@ export function ShareSettingsDialog({
               onChange={(event) => setToken(event.target.value)}
               disabled={removeToken}
               placeholder={
-                settings.hasToken
+                settings.hasToken && !moving
                   ? `Leave empty to keep ${settings.tokenMasked ?? 'the saved token'}`
-                  : 'Only if the service gave you one'
+                  : builtIn
+                    ? 'Paste the token from your LLM Bench account'
+                    : 'Only if the service gave you one'
               }
               autoComplete="off"
               spellCheck={false}
             />
             <p className="field-hint">
-              Sent as a bearer token to this address only. It is kept on this computer and never
+              {builtIn ? (
+                <>
+                  Sign in at{' '}
+                  <a href={DEFAULT_SHARE_ACCOUNT} target="_blank" rel="noopener noreferrer">
+                    {defaultHost}/account
+                  </a>{' '}
+                  with Google and make a token there.{' '}
+                </>
+              ) : null}
+              Sent as a bearer token to this service only. It is kept on this computer and never
               shown again.
+              {moving ? ' Changing the service removes the saved token.' : ''}
             </p>
-            {settings.hasToken ? (
+            {settings.hasToken && !moving ? (
               <label className="check">
                 <input
                   type="checkbox"
@@ -154,16 +212,6 @@ export function ShareSettingsDialog({
             </p>
           ) : null}
           <div className="dialog-actions">
-            {settings.endpoint ? (
-              <button
-                type="button"
-                className="btn btn-quiet btn-danger"
-                onClick={(event) => void save(event, close, true)}
-                disabled={busy}
-              >
-                Remove address
-              </button>
-            ) : null}
             <button type="button" className="btn btn-quiet" onClick={close}>
               Cancel
             </button>
@@ -207,8 +255,13 @@ export function ShareDialog({
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SentShare | null>(null);
   const earlier = settings.sent[run.key];
-  const host = settings.endpoint ? new URL(settings.endpoint).host : null;
+  const host = new URL(settings.endpoint).host;
   const custom = run.prompt?.startsWith('Custom') ?? false;
+  // LLM Bench shows runs without names or prompts, so neither is offered, and it needs a token.
+  const builtIn = settings.isDefault;
+  const needsToken = builtIn && !settings.hasToken;
+  const shownName = builtIn ? '' : displayName;
+  const withPrompt = builtIn ? false : includePrompt;
 
   useEffect(() => {
     let cancelled = false;
@@ -218,7 +271,7 @@ export function ShareDialog({
         .sharePreview({
           sessionId: run.sessionId,
           machineId: run.machineId,
-          options: { displayName, includePrompt },
+          options: { displayName: shownName, includePrompt: withPrompt },
         })
         .then(
           (shown) => {
@@ -236,7 +289,7 @@ export function ShareDialog({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [run.sessionId, run.machineId, displayName, includePrompt]);
+  }, [run.sessionId, run.machineId, shownName, withPrompt]);
 
   const send = async () => {
     if (!preview) return;
@@ -246,7 +299,7 @@ export function ShareDialog({
       const answer = await api.shareSend({
         sessionId: run.sessionId,
         machineId: run.machineId,
-        options: { displayName, includePrompt },
+        options: { displayName: shownName, includePrompt: withPrompt },
         sha256: preview.sha256,
       });
       setSent(answer);
@@ -289,42 +342,55 @@ export function ShareDialog({
             <p className="field-hint">
               {run.machine}, {shortDate(run.createdAt)}: {run.gpu ?? 'unknown GPU'},{' '}
               {run.model ?? 'no model'}
-              {run.quant ? ` ${run.quant}` : ''}.{' '}
-              {host ? (
-                <>
-                  It goes to <b>{host}</b>, a public service anyone can read.{' '}
-                </>
-              ) : null}
+              {run.quant ? ` ${run.quant}` : ''}. It goes to <b>{host}</b>, a public service anyone
+              can read.{' '}
               <button type="button" className="btn btn-quiet btn-inline" onClick={onSettings}>
-                {host ? 'Change the address' : 'Set the service address'}
+                {needsToken ? 'Add your token' : 'Change the service'}
               </button>
             </p>
+            {needsToken ? (
+              <p className="field-hint" data-testid="share-needs-token">
+                {DEFAULT_SHARE_NAME} takes runs only with your token. Sign in at{' '}
+                <a href={DEFAULT_SHARE_ACCOUNT} target="_blank" rel="noopener noreferrer">
+                  {host}/account
+                </a>{' '}
+                with Google, make a token, and add it here.
+              </p>
+            ) : null}
             {earlier ? (
               <p className="field-hint" data-testid="share-earlier">
                 Sent to {earlier.host} on {shortDate(earlier.at)}. Sending again replaces it there.
               </p>
             ) : null}
-            <div className="field">
-              <label htmlFor={`${id}-name`}>Name shown publicly (optional)</label>
-              <input
-                id={`${id}-name`}
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                maxLength={60}
-                placeholder="Leave empty to show only the hardware"
-                autoComplete="off"
-              />
-            </div>
-            {custom ? (
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={includePrompt}
-                  onChange={(event) => setIncludePrompt(event.target.checked)}
-                />
-                Include my prompt. It may be private; leave it out unless you want it public.
-              </label>
-            ) : null}
+            {builtIn ? (
+              <p className="field-hint">
+                {DEFAULT_SHARE_NAME} shows runs without names or prompts, so neither is sent.
+              </p>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor={`${id}-name`}>Name shown publicly (optional)</label>
+                  <input
+                    id={`${id}-name`}
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    maxLength={60}
+                    placeholder="Leave empty to show only the hardware"
+                    autoComplete="off"
+                  />
+                </div>
+                {custom ? (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={includePrompt}
+                      onChange={(event) => setIncludePrompt(event.target.checked)}
+                    />
+                    Include my prompt. It may be private; leave it out unless you want it public.
+                  </label>
+                ) : null}
+              </>
+            )}
             <p className="field-hint">Never sent: {NEVER_SENT.join('; ')}.</p>
             <details className="share-preview" open>
               <summary>The record, exactly as it will be sent</summary>
@@ -345,9 +411,9 @@ export function ShareDialog({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void send()}
-                disabled={!preview || !host || sending}
+                disabled={!preview || needsToken || sending}
               >
-                {sending ? 'Sending…' : host ? `Send to ${host}` : 'Set an address first'}
+                {sending ? 'Sending…' : needsToken ? 'Add your token first' : `Send to ${host}`}
               </button>
             </div>
           </>

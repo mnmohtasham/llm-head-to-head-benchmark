@@ -196,6 +196,15 @@ function clean(value: string | null | undefined, max: number): string | null {
  * Where records may go: https, or http to this computer for testing. No user name or password in
  * the address, which would travel in every request, and no fragment.
  */
+/**
+ * The results service Model Duel sends to unless the user picks another: LLM Bench, which asks for
+ * a token from its account page and publishes runs without names or prompts.
+ */
+export const DEFAULT_SHARE_ENDPOINT = 'https://llm-bench.selfhostapps.com/api/runs';
+export const DEFAULT_SHARE_NAME = 'LLM Bench';
+/** Where people sign in to LLM Bench and make the token Model Duel sends. */
+export const DEFAULT_SHARE_ACCOUNT = 'https://llm-bench.selfhostapps.com/account';
+
 export function checkShareEndpoint(
   input: string,
 ): { ok: true; url: string } | { ok: false; error: string } {

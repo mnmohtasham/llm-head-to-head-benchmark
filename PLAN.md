@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.20, 2026-09-28. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.21, 2026-09-28. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -20,7 +20,7 @@ median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public 
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
 sections 3 and 8, and records how far output length moves between rounds, in section 5. v2.20
 makes it ready for production and open source (phase 21): an optional password and the security
-measures in section 3, test servers that only the tests start in section 9, and no demo.
+measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 builds in LLM Bench as the results service, in section 7.3.
 
 ## 0. Decisions so far
 
@@ -711,6 +711,11 @@ signature over the same bytes, with a key pair made per installation and kept in
 no redirects, read at most 64 KB of the answer and use only a checked `id`, a `url` on the
 service's host and a short plain-text `message`. `docs/share-api.md` is the contract and the
 security checklist for the service; `test-servers/src/share.ts` is a working reference.
+After phase 21 the service became LLM Bench, a separate project at
+`https://llm-bench.selfhostapps.com`: it is the built-in address (`DEFAULT_SHARE_ENDPOINT`, kept as
+null in `data/share.json` so a later default applies), and the settings choose it or another
+address. It needs a token from its account page, so Model Duel refuses to send to it without one,
+and it shows runs without names, so the display name and prompt are not offered for it.
 
 ## 8. Timing discipline
 

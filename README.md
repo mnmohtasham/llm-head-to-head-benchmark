@@ -518,14 +518,18 @@ such as AMD's 780M, report the memory they may share as their GPU memory.
 ### Send a run to a results service
 
 A results service collects runs from anyone and shows them in a public table. Model Duel sends a run
-there only when you ask, one row at a time.
+there only when you ask, one row at a time. It is set up for **LLM Bench**
+(https://llm-bench.selfhostapps.com), the public results site for Model Duel, which shows runs
+without names.
 
-1. On **Results**, press **Results service** and enter the service's address, the full https
-   address that takes records. Add a token only if the service gave you one.
-2. Press **Send** at the start of a row. The dialog shows the record exactly as it will be sent.
-3. Optionally type a **Name shown publicly**; without one, the service shows only the hardware. For a
-   custom prompt, tick **Include my prompt** only if you want it public.
-4. Press **Send to …**. The row's button then reads **Sent ✓**; sending again replaces the record
+1. Sign in at https://llm-bench.selfhostapps.com/account with Google and make a token.
+2. On **Results**, press **Results service** and paste the token. To use another service instead,
+   choose **Another service** and enter its full https address; add a token only if it gave you
+   one.
+3. Press **Send** at the start of a row. The dialog shows the record exactly as it will be sent.
+4. For another service, you may type a **Name shown publicly**, and for a custom prompt tick
+   **Include my prompt** only if you want it public. LLM Bench shows neither, so it is not asked.
+5. Press **Send to …**. The row's button then reads **Sent ✓**; sending again replaces the record
    on the service.
 
 A record holds the hardware, the model and how it was loaded, the race's settings and every

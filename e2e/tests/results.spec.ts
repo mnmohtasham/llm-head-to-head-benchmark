@@ -209,8 +209,25 @@ test('sends one run to the results service, after showing exactly what goes', as
   await request.post(`${SERVICE}/__mock/reset`);
   await page.goto('/#/results');
   await page.getByLabel('Search').fill('results-spec');
+  // LLM Bench is built in: without its token nothing can be sent, and no name or prompt is offered.
   await page.getByRole('button', { name: 'Results service' }).click();
   const settings = page.getByTestId('share-settings');
+  await expect(settings.getByRole('radio', { name: 'LLM Bench' })).toBeChecked();
+  await expect(settings.getByLabel('Service address')).toHaveCount(0);
+  await expect(
+    settings.getByRole('link', { name: 'llm-bench.selfhostapps.com/account' }),
+  ).toBeVisible();
+  await settings.getByRole('button', { name: 'Cancel' }).click();
+  await row(page, LINUX.name).getByTestId('row-send').click();
+  const unsent = page.getByTestId('share-dialog');
+  await expect(unsent.getByTestId('share-needs-token')).toBeVisible();
+  await expect(unsent.getByRole('button', { name: 'Add your token first' })).toBeDisabled();
+  await expect(unsent.getByLabel('Name shown publicly (optional)')).toHaveCount(0);
+  await unsent.getByRole('button', { name: 'Cancel' }).click();
+
+  // Another service: the stand-in one.
+  await page.getByRole('button', { name: 'Results service' }).click();
+  await settings.getByRole('radio', { name: 'Another service' }).click();
   await settings.getByLabel('Service address').fill('http://results.example.com/api/runs');
   await expect(settings.getByText('Use https.')).toBeVisible();
   await settings.getByLabel('Service address').fill(`${SERVICE}/api/runs`);
