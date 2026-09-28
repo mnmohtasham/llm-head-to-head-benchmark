@@ -43,7 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.20.4",
+    "@types/node": "^26.6.2",
     "concurrently": "^10.0.5",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
