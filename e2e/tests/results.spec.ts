@@ -1,14 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { TEST_MACHINES } from '../stand-ins';
-import { E2E_MOCK_PORTS, E2E_SHARE_PORT } from '../ports';
+import { E2E_MOCK_PORTS } from '../ports';
 
 // Phase 15 scenario: after a race, find each machine's run in the Results tab, filter and sort
 // the table, pick columns, and download what it shows.
 const [MAC, LINUX] = TEST_MACHINES;
 const MOCKS = [`http://127.0.0.1:${E2E_MOCK_PORTS[0]}`, `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`];
 const MARKER = 'results-spec: why do GPUs have more memory bandwidth than CPUs?';
-const SERVICE = `http://127.0.0.1:${E2E_SHARE_PORT}`;
 
 test.describe.configure({ mode: 'serial' });
 
@@ -81,8 +80,7 @@ test.beforeAll(async ({ request }) => {
 });
 test.afterAll(async ({ request }) => {
   await reset(request);
-  await request.put('/api/share/settings', { data: { endpoint: null } });
-  await request.post(`${SERVICE}/__mock/reset`);
+  await request.put('/api/share/settings', { data: { token: null } });
   for (const id of added) await request.delete(`/api/machines/${id}`);
 });
 
@@ -202,70 +200,44 @@ test('downloads the rows shown as CSV, and fits a phone screen', async ({ page }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
-test('sends one run to the results service, after showing exactly what goes', async ({
-  page,
-  request,
-}) => {
-  await request.post(`${SERVICE}/__mock/reset`);
+test('readies one run for LLM Bench, after showing exactly what goes', async ({ page }) => {
   await page.goto('/#/results');
   await page.getByLabel('Search').fill('results-spec');
-  // LLM Bench is built in: without its token nothing can be sent, and no name or prompt is offered.
+  // Runs go to LLM Bench only; it takes them with a token from its account page.
   await page.getByRole('button', { name: 'Results service' }).click();
   const settings = page.getByTestId('share-settings');
-  await expect(settings.getByRole('radio', { name: 'LLM Bench' })).toBeChecked();
-  await expect(settings.getByLabel('Service address')).toHaveCount(0);
+  await expect(settings).toContainText('LLM Bench (llm-bench.selfhostapps.com)');
   await expect(
     settings.getByRole('link', { name: 'llm-bench.selfhostapps.com/account' }),
-  ).toBeVisible();
-  await settings.getByRole('button', { name: 'Cancel' }).click();
-  await row(page, LINUX.name).getByTestId('row-send').click();
-  const unsent = page.getByTestId('share-dialog');
-  await expect(unsent.getByTestId('share-needs-token')).toBeVisible();
-  await expect(unsent.getByRole('button', { name: 'Add your token first' })).toBeDisabled();
-  await expect(unsent.getByLabel('Name shown publicly (optional)')).toHaveCount(0);
-  await unsent.getByRole('button', { name: 'Cancel' }).click();
-
-  // Another service: the stand-in one.
-  await page.getByRole('button', { name: 'Results service' }).click();
-  await settings.getByRole('radio', { name: 'Another service' }).click();
-  await settings.getByLabel('Service address').fill('http://results.example.com/api/runs');
-  await expect(settings.getByText('Use https.')).toBeVisible();
-  await settings.getByLabel('Service address').fill(`${SERVICE}/api/runs`);
+  ).toHaveAttribute('href', 'https://llm-bench.selfhostapps.com/account');
+  await expect(settings.getByLabel('Service address')).toHaveCount(0);
   await expect(settings.getByTestId('share-fingerprint')).toHaveText(/^[0-9a-f]{16}$/);
-  await settings.getByRole('button', { name: 'Save' }).click();
-  await expect(settings).toBeHidden();
+  await settings.getByRole('button', { name: 'Cancel' }).click();
 
+  // Without a token nothing can be sent.
   await row(page, LINUX.name).getByTestId('row-send').click();
   const dialog = page.getByTestId('share-dialog');
+  await expect(dialog.getByTestId('share-needs-token')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Add your token first' })).toBeDisabled();
+  // The record holds no name and no prompt, and none is offered.
   const shown = dialog.getByTestId('share-record');
   await expect(shown).toContainText('"format": "model-duel-run"');
   await expect(shown).toContainText('NVIDIA GeForce RTX 5090');
-  // Neither the machine's name nor the custom prompt is in the record.
+  await expect(shown).toContainText('"displayName": null');
+  await expect(shown).toContainText('"promptText": null');
   await expect(shown).not.toContainText(LINUX.name);
   await expect(shown).not.toContainText('memory bandwidth than CPUs');
-  await dialog.getByLabel('Include my prompt').check();
-  await expect(shown).toContainText('memory bandwidth than CPUs');
-  await dialog.getByLabel('Include my prompt').uncheck();
-  await expect(shown).not.toContainText('memory bandwidth than CPUs');
-  await dialog.getByLabel('Name shown publicly (optional)').fill('E2E bench');
-  await expect(shown).toContainText('"displayName": "E2E bench"');
+  await expect(dialog.getByLabel('Name shown publicly (optional)')).toHaveCount(0);
+  await expect(dialog.getByLabel('Include my prompt')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Add your token', exact: true }).click();
 
-  await dialog.getByRole('button', { name: `Send to 127.0.0.1:${E2E_SHARE_PORT}` }).click();
-  await expect(dialog.getByTestId('share-sent')).toContainText('took the record: Thank you.');
-  await expect(dialog.getByRole('link', { name: /Open it on/ })).toHaveAttribute(
-    'href',
-    new RegExp(`^${SERVICE}/runs/`),
-  );
-  await dialog.getByRole('button', { name: 'Done' }).click();
-  await expect(row(page, LINUX.name).getByTestId('row-send')).toHaveText('Sent ✓');
-
-  const received = (await (await request.get(`${SERVICE}/__mock/received`)).json()) as Array<{
-    record: { displayName: string; raceId: string; settings: { promptText: string | null } };
-  }>;
-  expect(received).toHaveLength(1);
-  expect(received[0]?.record).toMatchObject({
-    displayName: 'E2E bench',
-    raceId: sessionId,
-    settings: { promptText: null },
-  });
+  await settings.getByLabel('Token').fill('llmb_e2e-token-not-real-0000000000000');
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await expect(settings).toBeHidden();
+  await row(page, LINUX.name).getByTestId('row-send').click();
+  // Ready to go, but the tests never send to the real LLM Bench.
+  await expect(
+    dialog.getByRole('button', { name: 'Send to llm-bench.selfhostapps.com' }),
+  ).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

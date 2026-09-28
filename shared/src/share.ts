@@ -197,13 +197,13 @@ function clean(value: string | null | undefined, max: number): string | null {
  * the address, which would travel in every request, and no fragment.
  */
 /**
- * The results service Model Duel sends to unless the user picks another: LLM Bench, which asks for
- * a token from its account page and publishes runs without names or prompts.
+ * The one results service Model Duel sends to: LLM Bench. It takes runs only with a token from its
+ * account page, and publishes them without names or prompts, so records carry neither.
  */
-export const DEFAULT_SHARE_ENDPOINT = 'https://llm-bench.selfhostapps.com/api/runs';
-export const DEFAULT_SHARE_NAME = 'LLM Bench';
+export const SHARE_SERVICE_ENDPOINT = 'https://llm-bench.selfhostapps.com/api/runs';
+export const SHARE_SERVICE_NAME = 'LLM Bench';
 /** Where people sign in to LLM Bench and make the token Model Duel sends. */
-export const DEFAULT_SHARE_ACCOUNT = 'https://llm-bench.selfhostapps.com/account';
+export const SHARE_SERVICE_ACCOUNT = 'https://llm-bench.selfhostapps.com/account';
 
 export function checkShareEndpoint(
   input: string,

@@ -20,7 +20,7 @@ median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public 
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
 sections 3 and 8, and records how far output length moves between rounds, in section 5. v2.20
 makes it ready for production and open source (phase 21): an optional password and the security
-measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 builds in LLM Bench as the results service, in section 7.3.
+measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 makes LLM Bench the only results service, in section 7.3.
 
 ## 0. Decisions so far
 
@@ -712,10 +712,11 @@ no redirects, read at most 64 KB of the answer and use only a checked `id`, a `u
 service's host and a short plain-text `message`. `docs/share-api.md` is the contract and the
 security checklist for the service; `test-servers/src/share.ts` is a working reference.
 After phase 21 the service became LLM Bench, a separate project at
-`https://llm-bench.selfhostapps.com`: it is the built-in address (`DEFAULT_SHARE_ENDPOINT`, kept as
-null in `data/share.json` so a later default applies), and the settings choose it or another
-address. It needs a token from its account page, so Model Duel refuses to send to it without one,
-and it shows runs without names, so the display name and prompt are not offered for it.
+`https://llm-bench.selfhostapps.com`, and at Mani's request the only one: records go to
+`SHARE_SERVICE_ENDPOINT` and nowhere else, the settings hold just its token, and a token an earlier
+version saved for another service is dropped. LLM Bench needs the token, so Model Duel refuses to
+send without one, and it shows runs without names, so records always carry a null display name and
+prompt.
 
 ## 8. Timing discipline
 

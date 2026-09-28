@@ -517,28 +517,22 @@ such as AMD's 780M, report the memory they may share as their GPU memory.
 
 ### Send a run to a results service
 
-A results service collects runs from anyone and shows them in a public table. Model Duel sends a run
-there only when you ask, one row at a time. It is set up for **LLM Bench**
-(https://llm-bench.selfhostapps.com), the public results site for Model Duel, which shows runs
-without names.
+Runs go to **LLM Bench** (https://llm-bench.selfhostapps.com), the public results site for Model
+Duel, which shows them without names. Model Duel sends a run there only when you ask, one row at a
+time, and to no other service.
 
 1. Sign in at https://llm-bench.selfhostapps.com/account with Google and make a token.
-2. On **Results**, press **Results service** and paste the token. To use another service instead,
-   choose **Another service** and enter its full https address; add a token only if it gave you
-   one.
+2. On **Results**, press **Results service** and paste the token.
 3. Press **Send** at the start of a row. The dialog shows the record exactly as it will be sent.
-4. For another service, you may type a **Name shown publicly**, and for a custom prompt tick
-   **Include my prompt** only if you want it public. LLM Bench shows neither, so it is not asked.
-5. Press **Send to …**. The row's button then reads **Sent ✓**; sending again replaces the record
-   on the service.
+4. Press **Send to llm-bench.selfhostapps.com**. The row's button then reads **Sent ✓**; sending
+   again replaces the record there.
 
 A record holds the hardware, the model and how it was loaded, the race's settings and every
-measurement with its per-round values. It never holds API keys or tokens, machine names, addresses or
-notes, answers or thinking, file names or paths, and never your prompt unless you ticked the box.
-Every record is signed with a key made on this computer, so the service can tell it was not
-changed on the way and let only you replace your records; the private key never leaves
-`data/share.json`. [docs/share-api.md](docs/share-api.md) describes what a service receives, how to
-check it, and what a public service must do to stay safe.
+measurement with its per-round values. It never holds API keys or tokens, your name, machine names,
+addresses or notes, your prompt, answers or thinking, or file names or paths. Every record is signed
+with a key made on this computer, so LLM Bench can tell it was not changed on the way and let only
+you replace your records; the private key never leaves `data/share.json`.
+[docs/share-api.md](docs/share-api.md) describes what LLM Bench receives and how it checks it.
 
 ## Security
 
@@ -568,9 +562,10 @@ the full picture and how to report a vulnerability.
   limits and never shown as HTML. A stream larger than any real answer is stopped, CSV exports
   cannot carry spreadsheet formulas, and Markdown exports carry no HTML or links from machines.
 - **Sending a record** needs your click and a confirmation showing the record. The server builds
-  it, so the page cannot slip anything else in. The results service's address must be https,
-  redirects are not followed, and only a short message, an id and a link on the service's own host
-  are read back. The signing key and the service token stay in `data/share.json` (mode 600).
+  it, so the page cannot slip anything else in. It goes to LLM Bench only, over https, with no name
+  or prompt; redirects are not followed, and only a short message, an id and a link on LLM Bench's
+  own host are read back. The signing key and your LLM Bench token stay in `data/share.json` (mode
+  600).
 - **Docker.** The image holds no data and no keys, and no npm or other package manager. The
   container runs as an unprivileged user, with no Linux capabilities, a read-only file system
   apart from its data volume, a process limit and rotated logs.
@@ -590,7 +585,7 @@ the full picture and how to report a vulnerability.
 | `npm run dev`                                           | Vite on port 3000 with hot reload, API on 3001                       |
 | `npm run typecheck`, `npm run lint`, `npm run format`   | TypeScript, ESLint and Prettier                                      |
 | `npm test`                                              | Unit and integration tests                                           |
-| `npm run test:e2e`                                      | Builds, then runs the browser tests against the app and its test servers on ports 3100, 3101, 18891, 18892 and 18911 to 18915 |
+| `npm run test:e2e`                                      | Builds, then runs the browser tests against the app and its test servers on ports 3100, 3101, 18891, 18892, 18911 to 18913 and 18915 |
 | `npm run record:probe -- --url <address> --name <name>` | Probes a machine and saves a fixture; key from `UNSLOTH_API_KEY`     |
 | `npm run record -- --machine <name> --effort low`       | Streams one prompt from a saved machine into `fixtures/streams/`, without the key |
 | `npm run verify-result -- <file>`                       | Checks result files against the format and their checksum            |

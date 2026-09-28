@@ -1,10 +1,10 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
 import { startMockServer, type RunningMock } from '@duel/test-servers';
 import { startShareMock, verifyEnvelope, type RunningShareMock } from '@duel/test-servers/share';
 import {
-  DEFAULT_SHARE_ENDPOINT,
+  SHARE_SERVICE_ENDPOINT,
   type MachineView,
   type SessionView,
   type ShareRecord,
@@ -14,6 +14,8 @@ import type { ShareSettingsView } from '../src/share';
 import { testApp } from './helpers';
 
 const KEY = 'sk-unsloth-share-linux-0000000000000001';
+/** The stand-in service asks for a token, as LLM Bench does. */
+const TOKEN = 'llmb_share-test-token-000000000001';
 let linux: RunningMock;
 let service: RunningShareMock;
 let ctx: Awaited<ReturnType<typeof testApp>>;
@@ -22,24 +24,20 @@ let session: SessionView;
 
 const settings = async () =>
   (await ctx.app.inject({ method: 'GET', url: '/api/share/settings' })).json<ShareSettingsView>();
-const setEndpoint = (endpoint: string | null, token?: string | null) =>
-  ctx.app.inject({
-    method: 'PUT',
-    url: '/api/share/settings',
-    payload: token === undefined ? { endpoint } : { endpoint, token },
-  });
-const preview = (options: Record<string, unknown> = {}) =>
+const setToken = (token: unknown) =>
+  ctx.app.inject({ method: 'PUT', url: '/api/share/settings', payload: { token } });
+const preview = () =>
   ctx.app.inject({
     method: 'POST',
     url: '/api/share/preview',
-    payload: { sessionId: session.id, machineId: linuxId, options },
+    payload: { sessionId: session.id, machineId: linuxId },
   });
-async function send(options: Record<string, unknown> = {}) {
-  const shown = (await preview(options)).json<{ sha256: string }>();
+async function send() {
+  const shown = (await preview()).json<{ sha256: string }>();
   return ctx.app.inject({
     method: 'POST',
     url: '/api/share/send',
-    payload: { sessionId: session.id, machineId: linuxId, options, sha256: shown.sha256 },
+    payload: { sessionId: session.id, machineId: linuxId, sha256: shown.sha256 },
   });
 }
 const control = (body: unknown) =>
@@ -51,7 +49,7 @@ const control = (body: unknown) =>
 
 beforeAll(async () => {
   linux = await startMockServer({ profile: 'linux-cuda', apiKey: KEY });
-  service = await startShareMock();
+  service = await startShareMock({ token: TOKEN });
 });
 afterAll(async () => {
   await Promise.all([linux.close(), service.close()]);
@@ -64,7 +62,10 @@ beforeEach(async () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ stream: { startupMs: 30, tokenMs: 3, jitterMs: 0, answerTokens: 15 } }),
   });
-  ctx = await testApp({ shareTimeouts: { connectMs: 1000, totalMs: 3000 } });
+  ctx = await testApp({
+    shareTimeouts: { connectMs: 1000, totalMs: 3000 },
+    shareEndpoint: service.endpoint,
+  });
   const created = await ctx.app.inject({
     method: 'POST',
     url: '/api/machines',
@@ -105,64 +106,53 @@ afterEach(async () => {
 });
 
 describe('share settings', () => {
-  it('makes a signing key that stays on this computer', async () => {
+  it('makes a signing key that stays on this computer, and sends to LLM Bench', async () => {
     const view = await settings();
-    expect(view).toMatchObject({
-      endpoint: DEFAULT_SHARE_ENDPOINT,
-      isDefault: true,
-      hasToken: false,
-      sent: {},
-    });
+    expect(view).toMatchObject({ endpoint: service.endpoint, hasToken: false, sent: {} });
     expect(view.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(view.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     const file = path.join(ctx.dataDir, 'share.json');
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(await readFile(file, 'utf8')).toContain('PRIVATE KEY');
     expect(JSON.stringify(view)).not.toContain('PRIVATE');
+    // Only the tests point it anywhere else.
+    const plain = await testApp();
+    const shown = await plain.app.inject({ method: 'GET', url: '/api/share/settings' });
+    expect(shown.json<ShareSettingsView>().endpoint).toBe(SHARE_SERVICE_ENDPOINT);
+    await plain.app.close();
+    await rm(plain.dataDir, { recursive: true, force: true });
   });
 
-  it('takes https, or http to this computer only, and keeps the token hidden', async () => {
-    for (const bad of [
-      'http://results.example.com/api/runs',
-      'ftp://results.example.com/',
-      'https://user:pass@results.example.com/api/runs',
-      'https://results.example.com/api/runs#x',
-      'results.example.com',
+  it('takes a token and nothing else, and keeps it hidden', async () => {
+    const saved = await setToken(TOKEN);
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<ShareSettingsView>()).toMatchObject({ hasToken: true, tokenMasked: '…0001' });
+    expect(saved.body).not.toContain(TOKEN);
+    for (const payload of [
+      { endpoint: 'https://results.example.com/api/runs' },
+      { endpoint: 'https://results.example.com/api/runs', token: TOKEN },
+      { token: '' },
     ]) {
-      expect((await setEndpoint(bad)).statusCode, bad).toBe(400);
+      const refused = await ctx.app.inject({ method: 'PUT', url: '/api/share/settings', payload });
+      expect(refused.statusCode, JSON.stringify(payload)).toBe(400);
     }
-    const ok = await setEndpoint('https://results.example.com/api/runs', 'share-token-1234567890');
-    expect(ok.statusCode).toBe(200);
-    expect(ok.json<ShareSettingsView>()).toMatchObject({
-      endpoint: 'https://results.example.com/api/runs',
-      hasToken: true,
-      tokenMasked: '…7890',
-    });
-    expect(ok.body).not.toContain('share-token-1234567890');
-    // A new address does not inherit the token, and neither does the built-in service.
-    const moved = await setEndpoint('https://other.example.com/api/runs');
-    expect(moved.json<ShareSettingsView>().hasToken).toBe(false);
-    await setEndpoint('https://other.example.com/api/runs', 'share-token-1234567890');
-    expect((await setEndpoint(null)).json<ShareSettingsView>()).toMatchObject({
-      endpoint: DEFAULT_SHARE_ENDPOINT,
-      isDefault: true,
-      hasToken: false,
-    });
-    expect((await setEndpoint(service.endpoint)).statusCode).toBe(200);
+    expect((await setToken(null)).json<ShareSettingsView>().hasToken).toBe(false);
   });
 
-  it('keeps a token for the built-in service, typed out or not, and drops it on leaving', async () => {
-    const saved = await setEndpoint(null, 'llmb_token-for-the-built-in-service');
-    expect(saved.json<ShareSettingsView>()).toMatchObject({ isDefault: true, hasToken: true });
-    // Its own address, typed out, is still the built-in service and keeps the token.
-    const typed = await setEndpoint(DEFAULT_SHARE_ENDPOINT);
-    expect(typed.json<ShareSettingsView>()).toMatchObject({ isDefault: true, hasToken: true });
-    const file = JSON.parse(await readFile(path.join(ctx.dataDir, 'share.json'), 'utf8')) as {
-      endpoint: string | null;
+  it('drops a token an earlier version saved for another service', async () => {
+    const file = path.join(ctx.dataDir, 'share.json');
+    const reopen = async (change: Record<string, unknown>) => {
+      const saved = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+      await writeFile(file, JSON.stringify({ ...saved, ...change }));
+      await ctx.app.close();
+      ctx = await testApp({ dataDir: ctx.dataDir, shareEndpoint: service.endpoint });
+      return settings();
     };
-    expect(file.endpoint).toBeNull();
-    const left = await setEndpoint('https://results.example.com/api/runs');
-    expect(left.json<ShareSettingsView>()).toMatchObject({ isDefault: false, hasToken: false });
+    const kept = await reopen({ endpoint: null, token: TOKEN });
+    expect(kept.hasToken).toBe(true);
+    const dropped = await reopen({ endpoint: 'https://other.example/api/runs', token: 'theirs' });
+    expect(dropped.hasToken).toBe(false);
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ endpoint: null, token: null });
   });
 });
 
@@ -200,22 +190,24 @@ describe('the record', () => {
     expect(text).not.toContain(answerText);
   });
 
-  it('adds the prompt and a display name only when asked, as plain text', async () => {
-    const { record } = (
-      await preview({
-        includePrompt: true,
-        displayName: '  Mani\u202e RTX\u0007 box https://evil.example/x  ',
-      })
-    ).json<{ record: ShareRecord }>();
-    expect(record.settings.promptText).toBe('My private medical question about ~/notes.txt');
-    expect(record.displayName).toBe('Mani RTX box <address>');
+  it('never carries a name or the prompt, however it is asked', async () => {
+    const asked = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/share/preview',
+      payload: {
+        sessionId: session.id,
+        machineId: linuxId,
+        options: { includePrompt: true, displayName: 'Mani' },
+      },
+    });
+    expect(asked.statusCode).toBe(400);
   });
 
   it('has nothing to send for a machine without a finished round', async () => {
     const answer = await ctx.app.inject({
       method: 'POST',
       url: '/api/share/preview',
-      payload: { sessionId: session.id, machineId: 'someone-else', options: {} },
+      payload: { sessionId: session.id, machineId: 'someone-else' },
     });
     expect(answer.statusCode).toBe(400);
   });
@@ -223,11 +215,12 @@ describe('the record', () => {
 
 describe('sending', () => {
   it('signs the record, sends it, and remembers where it went', async () => {
-    // The built-in service without a token: refused here, before anything leaves this computer.
+    // Without a token nothing is sent: refused here, before anything leaves this computer.
     const noToken = await send();
     expect(noToken.statusCode).toBe(409);
     expect(noToken.json<{ error: string }>().error).toBe('no_token');
-    await setEndpoint(service.endpoint);
+    expect(service.received()).toHaveLength(0);
+    await setToken(TOKEN);
     const sent = await send();
     expect(sent.statusCode, sent.body).toBe(200);
     expect(sent.json()).toMatchObject({ status: 201, host: new URL(service.url).host });
@@ -245,24 +238,18 @@ describe('sending', () => {
   });
 
   it('sends only what was previewed', async () => {
-    await setEndpoint(service.endpoint);
-    const shown = (await preview()).json<{ sha256: string }>();
+    await setToken(TOKEN);
     const changed = await ctx.app.inject({
       method: 'POST',
       url: '/api/share/send',
-      payload: {
-        sessionId: session.id,
-        machineId: linuxId,
-        options: { includePrompt: true },
-        sha256: shown.sha256,
-      },
+      payload: { sessionId: session.id, machineId: linuxId, sha256: 'f'.repeat(64) },
     });
     expect(changed.statusCode).toBe(409);
     expect(service.received()).toHaveLength(0);
   });
 
   it('reports refusals and redirects, and drops links to other hosts', async () => {
-    await setEndpoint(service.endpoint);
+    await setToken(TOKEN);
     await control({ failWith: 503 });
     const refused = await send();
     expect(refused.statusCode).toBe(502);
@@ -280,17 +267,12 @@ describe('sending', () => {
     expect(foreign.json<{ url: string | null }>().url).toBeNull();
   });
 
-  it('sends the token to a service that needs one', async () => {
-    const guarded = await startShareMock({ token: 'service-token-000000000001' });
-    try {
-      await setEndpoint(guarded.endpoint);
-      expect((await send()).json<{ message: string }>().message).toMatch(/HTTP 401/);
-      await setEndpoint(guarded.endpoint, 'service-token-000000000001');
-      expect((await send()).statusCode).toBe(200);
-      expect(guarded.received()).toHaveLength(1);
-    } finally {
-      await guarded.close();
-    }
+  it('sends the token, and reports one the service refuses', async () => {
+    await setToken('llmb_not-the-right-token-0000000000');
+    expect((await send()).json<{ message: string }>().message).toMatch(/HTTP 401/);
+    await setToken(TOKEN);
+    expect((await send()).statusCode).toBe(200);
+    expect(service.received()).toHaveLength(1);
   });
 });
 

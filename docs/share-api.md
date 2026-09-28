@@ -9,22 +9,22 @@ between Model Duel and such a service, and a checklist for building the service 
   with `npm run result-schema`.
 - A working reference: `test-servers/src/share.ts`, the stand-in service the tests send records
   to.
-- The built-in service: Model Duel sends to LLM Bench, `https://llm-bench.selfhostapps.com/api/runs`
-  (`DEFAULT_SHARE_ENDPOINT`), unless the user chooses another service. LLM Bench needs a token from
-  its account page, so Model Duel sends nothing there without one, and it publishes runs without
-  names or prompts, so Model Duel leaves both out of records for it.
+- The service: Model Duel sends to LLM Bench, `https://llm-bench.selfhostapps.com/api/runs`
+  (`SHARE_SERVICE_ENDPOINT`), and to no other. LLM Bench needs a token from its account page, so
+  Model Duel sends nothing without one, and it publishes runs without names or prompts, so every
+  record has `displayName` and `settings.promptText` null.
 
 ## The request
 
 Model Duel's server, not the browser, sends each record:
 
 ```
-POST <the service address the user entered>
+POST https://llm-bench.selfhostapps.com/api/runs
 Content-Type: application/json
 Accept: application/json
 User-Agent: ModelDuel/<version>
 Idempotency-Key: <record.submissionId>
-Authorization: Bearer <token>        (only when the user entered a token)
+Authorization: Bearer <token>        (from the user's LLM Bench account page)
 
 { "record": { ... }, "sha256": "<hex>", "signature": { "algorithm": "Ed25519", "publicKey": "<base64url>", "value": "<base64url>" } }
 ```
@@ -44,11 +44,11 @@ Authorization: Bearer <token>        (only when the user entered a token)
 | `raceId` | The race's random UUID; records of machines in the same race share it. |
 | `raceDate` | When the race started, ISO 8601 in UTC. |
 | `generator` | `app` (`model-duel`), `version`, `build`. |
-| `displayName` | A name the sender chose to show, or `null`. Plain text, at most 60 characters. |
+| `displayName` | Always `null`: LLM Bench shows runs without names. The format keeps the field. |
 | `race` | `workload`, `kind` (the metric set), `state` (`done` or `partial`), `rounds`, `roundsDone`, `warmup`, `sequencing`, `statistic` (`median` or `mean`), `machines` (how many raced; they are not named). |
 | `machine` | `kind` (`local` or `cloud`), `provider` (for cloud), `gpus` (name and memory in GB), `gpuMemoryGb`, `platform` (CUDA, ROCm, MLX…), `memoryGb`, `os` (family and version only), `studio`, `llamaCpp`. |
 | `model` | `id`, `quant`, `engine`, `contextLength`, `kvCache` (type, not size), `gpuLayers` (−1 is automatic), `totalLayers`, `slots`, `speculative`, `gpuMemoryMode`. |
-| `settings` | `prompt` (a preset id or `custom`), `promptText` (only when the sender opted in), `promptTokens`, `prefill`, `thinking`, `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
+| `settings` | `prompt` (a preset id or `custom`), `promptText` (always `null`: prompts are never sent), `promptTokens`, `prefill`, `thinking`, `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
 | `metrics` | Per metric: `key`, `label`, `unit`, `better` (`lower`, `higher` or `null`), `n`, `median`, `mean`, `min`, `max`, `stdev`, and `values`, one per counted round (`null` where the round failed). |
 | `finish` | Text runs: how the counted rounds ended, such as `{"stop": 3}`. |
 
@@ -155,13 +155,14 @@ The service is public and anyone can send it anything, including records Model D
 
 - Sends a record only when the user presses **Send** on a row and then confirms in a dialog that
   shows the whole record exactly as it will go. The server builds the record; the browser sends only
-  which run and the two options, plus the checksum of the preview. If the record changed since the
-  preview, nothing is sent.
-- Leaves out everything listed under "Never in a record", and the machine's name unless the user
-  types a name to show. The prompt goes only when the user ticks the box, for custom prompts.
-- Keeps the signing key, the token and the service address in `data/share.json`, readable by the
-  user only. The private key and the token never reach the browser, the logs or a record.
-- Refuses non-https addresses (except to this computer), addresses with a user name or password,
-  redirects, answers over 64 KB, and links to other hosts.
+  which run, plus the checksum of the preview. If the record changed since the preview, nothing is
+  sent.
+- Leaves out everything listed under "Never in a record", and always the display name and the
+  prompt.
+- Sends only to LLM Bench, and only with a token; a token an earlier version saved for another
+  service is dropped, never sent to LLM Bench.
+- Keeps the signing key and the token in `data/share.json`, readable by the user only. The private
+  key and the token never reach the browser, the logs or a record.
+- Refuses redirects, answers over 64 KB, and links to other hosts.
 - Refuses requests that change anything when a browser says they come from another web site, so a
   web page cannot make Model Duel send a record.

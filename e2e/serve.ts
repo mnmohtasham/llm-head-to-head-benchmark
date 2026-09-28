@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { startMockServer } from '@duel/test-servers';
 import { startCloudMock } from '@duel/test-servers/cloud';
 import { startLmStudioMock } from '@duel/test-servers/lmstudio';
-import { startShareMock } from '@duel/test-servers/share';
 import {
   E2E_APP_PORT,
   E2E_AUTH_APP_PORT,
@@ -21,7 +20,6 @@ import {
   E2E_LMSTUDIO_PORT,
   E2E_MOCK_PORTS,
   E2E_PASSWORD,
-  E2E_SHARE_PORT,
 } from './ports';
 import { TEST_CLOUDS, TEST_MACHINES } from './stand-ins';
 
@@ -58,7 +56,6 @@ const standIns = auth
           host,
         }),
       ),
-      startShareMock({ port: E2E_SHARE_PORT, host }),
       startLmStudioMock({ port: E2E_LMSTUDIO_PORT, host, token: null }),
     ]);
 

@@ -20,7 +20,6 @@ import type {
   SessionRequest,
   SessionSummary,
   SessionView,
-  ShareOptions,
   ShareRecord,
   Statistic,
   ImageModelView,
@@ -68,10 +67,8 @@ export interface SentShare {
 
 /** Sharing settings as the server shows them: never the token or the signing key. */
 export interface ShareSettingsView {
-  /** Where records go: the chosen service, or the built-in one. */
+  /** Where records go: LLM Bench. */
   endpoint: string;
-  /** Whether that is the built-in service, LLM Bench. */
-  isDefault: boolean;
   hasToken: boolean;
   tokenMasked: string | null;
   publicKey: string;
@@ -164,20 +161,17 @@ export const api = {
   lmUnload: (id: string, instanceId: string) =>
     call<{ unloaded: string }>('POST', `${machineUrl(id)}/lmstudio/unload`, { instanceId }),
   shareSettings: () => call<ShareSettingsView>('GET', '/api/share/settings'),
-  updateShareSettings: (input: { endpoint: string | null; token?: string | null }) =>
-    call<ShareSettingsView>('PUT', '/api/share/settings', input),
-  sharePreview: (input: { sessionId: string; machineId: string; options: ShareOptions }) =>
+  /** LLM Bench's token, or null to remove it. */
+  setShareToken: (token: string | null) =>
+    call<ShareSettingsView>('PUT', '/api/share/settings', { token }),
+  sharePreview: (input: { sessionId: string; machineId: string }) =>
     call<{ record: ShareRecord; sha256: string; endpoint: string }>(
       'POST',
       '/api/share/preview',
       input,
     ),
-  shareSend: (input: {
-    sessionId: string;
-    machineId: string;
-    options: ShareOptions;
-    sha256: string;
-  }) => call<SentShare>('POST', '/api/share/send', input),
+  shareSend: (input: { sessionId: string; machineId: string; sha256: string }) =>
+    call<SentShare>('POST', '/api/share/send', input),
   setStatistic: (id: string, statistic: Statistic) =>
     call<SessionView>('POST', `/api/sessions/${encodeURIComponent(id)}/statistic`, { statistic }),
   createMachine: (input: MachineCreateInput) => call<MachineView>('POST', '/api/machines', input),

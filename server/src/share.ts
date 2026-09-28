@@ -9,7 +9,7 @@ import { chmod, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   checkShareEndpoint,
-  DEFAULT_SHARE_ENDPOINT,
+  SHARE_SERVICE_ENDPOINT,
   maskApiKey,
   shareSigningText,
   type ShareEnvelope,
@@ -33,10 +33,8 @@ export interface SentRecord {
 
 /** What the page may see: never the token or the private key. */
 export interface ShareSettingsView {
-  /** Where records go: the chosen service, or the built-in one. */
+  /** Where records go: LLM Bench. */
   endpoint: string;
-  /** Whether that is the built-in service, which follows DEFAULT_SHARE_ENDPOINT. */
-  isDefault: boolean;
   hasToken: boolean;
   tokenMasked: string | null;
   /** The sender's public key, base64url, and a short fingerprint of it to show. */
@@ -48,8 +46,8 @@ export interface ShareSettingsView {
 
 interface ShareFile {
   schemaVersion: 1;
-  /** Another service's address; null sends to the built-in one. */
-  endpoint: string | null;
+  /** Always null: records go to LLM Bench only. Earlier versions kept another service here. */
+  endpoint: null;
   token: string | null;
   /** PKCS #8 PEM. Stays in this file. */
   privateKey: string;
@@ -60,15 +58,19 @@ interface ShareFile {
 const MAX_SENT = 5000;
 
 /**
- * Sharing: the results service's address and optional token, the Ed25519 key that signs every
- * record this installation sends, and which records went where. Kept in `<dataDir>/share.json`,
- * readable by this user only.
+ * Sharing with LLM Bench: the token from its account page, the Ed25519 key that signs every record
+ * this installation sends, and which records went where. Kept in `<dataDir>/share.json`, readable
+ * by this user only.
  */
 export class ShareStore {
   private data: ShareFile | null = null;
   private key: KeyObject | null = null;
 
-  constructor(readonly dataDir: string) {}
+  constructor(
+    readonly dataDir: string,
+    /** LLM Bench's address; tests point it at a stand-in service. */
+    readonly endpoint: string = SHARE_SERVICE_ENDPOINT,
+  ) {}
 
   get file(): string {
     return path.join(this.dataDir, 'share.json');
@@ -90,15 +92,20 @@ export class ShareStore {
     if (saved?.privateKey && saved.publicKey) {
       // It holds the signing key and the service token: this user only, even if copied in wider.
       await chmod(this.file, 0o600);
+      // A token saved for another service, from before records went to LLM Bench only, belongs to
+      // that service: it is dropped, never sent to LLM Bench.
+      const elsewhere =
+        typeof saved.endpoint === 'string' && saved.endpoint !== SHARE_SERVICE_ENDPOINT;
       this.data = {
         schemaVersion: 1,
-        endpoint: typeof saved.endpoint === 'string' ? saved.endpoint : null,
-        token: typeof saved.token === 'string' ? saved.token : null,
+        endpoint: null,
+        token: typeof saved.token === 'string' && !elsewhere ? saved.token : null,
         privateKey: saved.privateKey,
         publicKey: saved.publicKey,
         sent: saved.sent && typeof saved.sent === 'object' ? saved.sent : {},
       };
       this.key = createPrivateKey(saved.privateKey);
+      if (elsewhere || saved.endpoint !== null) await this.save();
       return;
     }
     // A new sender: one key pair for this installation, never shown or sent.
@@ -129,15 +136,6 @@ export class ShareStore {
     return this.state.publicKey;
   }
 
-  /** Where records go: the chosen service, or the built-in one. */
-  get endpoint(): string {
-    return this.state.endpoint ?? DEFAULT_SHARE_ENDPOINT;
-  }
-
-  get isDefault(): boolean {
-    return this.state.endpoint === null;
-  }
-
   get token(): string | null {
     return this.state.token;
   }
@@ -146,7 +144,6 @@ export class ShareStore {
     const s = this.state;
     return {
       endpoint: this.endpoint,
-      isDefault: s.endpoint === null,
       hasToken: s.token !== null,
       tokenMasked: maskApiKey(s.token),
       publicKey: s.publicKey,
@@ -155,14 +152,9 @@ export class ShareStore {
     };
   }
 
-  /** `endpoint` null means the built-in service; `token` undefined keeps it, null removes it. */
-  async update(patch: {
-    endpoint: string | null;
-    token?: string | null;
-  }): Promise<ShareSettingsView> {
-    const s = this.state;
-    s.endpoint = patch.endpoint === DEFAULT_SHARE_ENDPOINT ? null : patch.endpoint;
-    if (patch.token !== undefined) s.token = patch.token;
+  /** Saves LLM Bench's token, or removes it with null. */
+  async setToken(token: string | null): Promise<ShareSettingsView> {
+    this.state.token = token;
     await this.save();
     return this.view();
   }

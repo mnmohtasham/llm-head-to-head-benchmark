@@ -44,6 +44,8 @@ export interface AppOptions {
   allowedHosts?: readonly string[];
   /** How long to wait for the results service; tests shorten it. */
   shareTimeouts?: { connectMs: number; totalMs: number };
+  /** Where records go: LLM Bench, unless a test points it at a stand-in service. */
+  shareEndpoint?: string;
   /** A password for the whole app; null or missing leaves it open. */
   password?: string | null;
   /** The clock sessions expire by; tests move it. */
@@ -256,7 +258,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     store,
     loadTimeoutMs: options.loadTimings?.loadTimeoutMs ?? 20 * 60_000,
   });
-  const share = new ShareStore(options.dataDir);
+  const share = new ShareStore(options.dataDir, options.shareEndpoint);
   await share.init();
   registerShareRoutes(app, {
     share,

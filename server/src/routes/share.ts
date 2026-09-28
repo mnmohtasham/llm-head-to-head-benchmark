@@ -1,11 +1,8 @@
 import {
   buildShareRecord,
-  checkShareEndpoint,
-  DEFAULT_SHARE_ACCOUNT,
-  DEFAULT_SHARE_ENDPOINT,
-  DEFAULT_SHARE_NAME,
   SHARE_MAX_BYTES,
-  shareOptionsSchema,
+  SHARE_SERVICE_ACCOUNT,
+  SHARE_SERVICE_NAME,
   shareSigningText,
   type ApiErrorBody,
   type ShareRecord,
@@ -24,9 +21,11 @@ const recordRequest = z
   .object({
     sessionId: z.string().uuid(),
     machineId: z.string().min(1).max(100),
-    options: shareOptionsSchema.prefault({}),
   })
   .strict();
+
+/** LLM Bench shows runs without names or prompts, so records carry neither. */
+const NO_NAME_OR_PROMPT = { displayName: '', includePrompt: false };
 
 const sendRequest = recordRequest.extend({
   /** The preview's checksum: what is sent must be exactly what was shown. */
@@ -35,10 +34,8 @@ const sendRequest = recordRequest.extend({
 
 const settingsRequest = z
   .object({
-    /** "" or null removes the address, and the token with it. */
-    endpoint: z.string().max(300).nullable(),
-    /** Leave out or "" to keep, null to remove. */
-    token: z.string().trim().max(500).nullable().optional(),
+    /** LLM Bench's token, or null to remove it. */
+    token: z.string().trim().min(1).max(500).nullable(),
   })
   .strict();
 
@@ -59,29 +56,8 @@ export function registerShareRoutes(
 
   app.put('/api/share/settings', async (request, reply) => {
     const parsed = settingsRequest.safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'validation', 'Check the address and token.');
-    const { endpoint, token } = parsed.data;
-    let url: string | null = null;
-    if (endpoint !== null && endpoint.trim() !== '') {
-      const checked = checkShareEndpoint(endpoint);
-      if (!checked.ok) {
-        return reply.code(400).send({
-          error: 'validation',
-          message: checked.error,
-          fields: { endpoint: checked.error },
-        });
-      }
-      url = checked.url;
-    }
-    // A saved token stays with the service it was given for: another one never gets it.
-    const moved =
-      (url ?? DEFAULT_SHARE_ENDPOINT) !== share.endpoint &&
-      share.token !== null &&
-      token === undefined;
-    return share.update({
-      endpoint: url,
-      token: token === null ? null : token ? token : moved ? null : undefined,
-    });
+    if (!parsed.success) return fail(reply, 400, 'validation', 'Paste the token, or remove it.');
+    return share.setToken(parsed.data.token);
   });
 
   /** Builds a record from the saved race, or says why there is none. */
@@ -101,7 +77,7 @@ export function registerShareRoutes(
     const built = buildShareRecord(
       stored,
       body.machineId,
-      body.options,
+      NO_NAME_OR_PROMPT,
       { publicKey: share.publicKey, version: options.version, build: options.build },
       sha256Hex,
     );
@@ -140,12 +116,12 @@ export function registerShareRoutes(
     if (!parsed.success) return fail(reply, 400, 'validation', 'That is not a run to send.');
     const endpoint = share.endpoint;
     // LLM Bench takes runs only with a token: without one nothing is sent that it would refuse.
-    if (share.isDefault && !share.token) {
+    if (!share.token) {
       return fail(
         reply,
         409,
         'no_token',
-        `Add your ${DEFAULT_SHARE_NAME} token first: sign in at ${DEFAULT_SHARE_ACCOUNT} with Google and make one.`,
+        `Add your ${SHARE_SERVICE_NAME} token first: sign in at ${SHARE_SERVICE_ACCOUNT} with Google and make one.`,
       );
     }
     const key = `${parsed.data.sessionId}/${parsed.data.machineId}`;
