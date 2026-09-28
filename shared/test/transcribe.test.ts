@@ -226,3 +226,31 @@ describe('wordErrorRateWithin', () => {
     expect(wordErrorRateWithin(reference, flood)).toBeNull();
   });
 });
+
+describe('normalizeForWer on hostile transcripts', () => {
+  it('takes time in proportion to the text, however it repeats', () => {
+    const started = performance.now();
+    expect(normalizeForWer('9'.repeat(100_000)).length).toBeGreaterThan(0);
+    expect(normalizeForWer(`1.${'9'.repeat(100_000)}x`).length).toBeGreaterThan(0);
+    expect(normalizeForWer(`${"'".repeat(100_000)}x${"'".repeat(100_000)}`)).toEqual(['x']);
+    expect(normalizeForWer(`a${"'".repeat(100_000)}b`)).toEqual([`a${"'".repeat(100_000)}b`]);
+    // The old patterns backtracked over each run from every position in it: minutes here.
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
+  it('still reads numbers and apostrophes as before', () => {
+    expect(normalizeForWer("It's 3.14, 'quoted' and 1.2.3")).toEqual([
+      "it's",
+      'three',
+      'point',
+      'one',
+      'four',
+      'quoted',
+      'and',
+      'one',
+      'point',
+      'two',
+      'three',
+    ]);
+  });
+});

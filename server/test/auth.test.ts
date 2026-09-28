@@ -188,6 +188,18 @@ describe('with a password', () => {
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
   });
 
+  it('holds a burst of wrong passwords sent at once to the same limit', async () => {
+    const { app: built } = await app({ password: PASSWORD });
+    const answers = await Promise.all(
+      Array.from({ length: 15 }, (_, i) =>
+        built.inject({ method: 'POST', url: '/api/login', payload: { password: `guess ${i}` } }),
+      ),
+    );
+    const codes = answers.map((a) => a.statusCode);
+    expect(codes.filter((c) => c === 401)).toHaveLength(10);
+    expect(codes.filter((c) => c === 429)).toHaveLength(5);
+  });
+
   it('cannot be skipped with an unusual spelling of a path', async () => {
     const { app: built } = await app({ password: PASSWORD, client: true });
     await built.listen({ port: 0, host: '127.0.0.1' });

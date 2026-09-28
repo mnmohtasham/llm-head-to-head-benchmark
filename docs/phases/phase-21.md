@@ -12,8 +12,10 @@
       `npm audit` finding, passes every check below and builds. Its Docker image is 262 MB, runs
       Node 22.23.3 as the `node` user, and has no npm, npx, corepack or Yarn.
 - [x] No-GPU tests: every feature works against the stand-ins in `test-servers/`.
-- [x] Typecheck, lint, unit, integration and end-to-end tests pass: 401 unit and integration
+- [x] Typecheck, lint, unit, integration and end-to-end tests pass: 404 unit and integration
       tests, 58 browser tests (one new: signing in to a copy of the app with a password).
+- [x] CodeQL: its first run, on this pull request, found three problems in new code, all fixed
+      (below).
 - [x] Smoke tests pass: `npm run smoke` and `npm run smoke:browser` against a production build,
       without and with a password, and `npm run smoke:docker -- --browser`, both ways.
 - [x] Real machines: nothing in this phase changes a measurement (below).
@@ -38,7 +40,9 @@ characters. With one set, the page shows a sign-in form and every `/api` route b
 answers 401 without the session cookie. The cookie is HttpOnly and SameSite=Strict and lasts 30
 days. It holds only an expiry, signed with a key made from a secret in `data/auth.json` (mode 600)
 and the password, so a restart keeps people signed in and a new password signs everyone out. The
-password is compared in constant time, and ten wrong ones from an address make it wait 15 minutes.
+key comes from the password through scrypt, so the secret and a cookie together do not let anyone
+try passwords quickly offline. Sign-ins are checked one at a time, in constant time, and ten wrong
+passwords from an address make it wait 15 minutes, even when they arrive all at once.
 The check goes by the route Fastify matched, not the raw URL, so no spelling of a path gets past it.
 Without a password nothing changes, and the startup message says to set one before opening the app
 to the network. In Docker the compose file reads the password from a `.env` file next to it, which
@@ -120,6 +124,11 @@ Compose then uses the copied volume. The old one stays until `docker volume rm
 model-duel_model-duel-data`.
 
 ## Findings
+
+- **CodeQL's first run found three problems the reviews missed.** The password went through
+  SHA-256 and HMAC, which are fast enough to guess against offline; the key now comes from scrypt.
+  And the word error rate's text normaliser backtracked over long runs of digits or apostrophes in a
+  transcript, taking time in the square of their length; it now has no pattern that can backtrack.
 
 - **Zod probes for `new Function`**, which a strict Content-Security-Policy reports as a violation
   even though zod catches the error. The page sets `z.config({ jitless: true })` first.
