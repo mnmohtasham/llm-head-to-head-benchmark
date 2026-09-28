@@ -1,7 +1,7 @@
 import { copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import {
   computeClientMetrics,
   expandEvents,
@@ -382,6 +382,21 @@ describe('a race between two machines', () => {
     });
     expect(second.statusCode).toBe(409);
     await ctx.app.inject({ method: 'POST', url: `/api/sessions/${id}/cancel` });
+  });
+
+  it('starts one of two races asked for at the same moment', async () => {
+    await control(linux, { stream: { tokenMs: 30, answerTokens: 100 } });
+    const payload = {
+      workload: 'text',
+      machineIds: [linuxId],
+      config: { prompt: 'Hi', maxTokens: 10, thinking: true, reasoningEffort: null },
+      plan: ONE_ROUND,
+    };
+    // Both arrive while pre-flight is still asking the machine, before either race runs.
+    const answers = await Promise.all([post(payload), post(payload)]);
+    expect(answers.map((a) => a.statusCode).sort()).toEqual([201, 409]);
+    const started = answers.find((a) => a.statusCode === 201)?.json<SessionView>();
+    await ctx.app.inject({ method: 'POST', url: `/api/sessions/${started?.id}/cancel` });
   });
 
   it('needs racing anyway when pre-flight warns, and then races', async () => {

@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS, E2E_SHARE_PORT } from '../ports';
 
-// Phase 15 demo script: after a race, find each machine's run in the Results tab, filter and sort
+// Phase 15 scenario: after a race, find each machine's run in the Results tab, filter and sort
 // the table, pick columns, and download what it shows.
-const [MAC, LINUX] = DEMO_MACHINES;
+const [MAC, LINUX] = TEST_MACHINES;
 const MOCKS = [`http://127.0.0.1:${E2E_MOCK_PORTS[0]}`, `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`];
 const MARKER = 'results-spec: why do GPUs have more memory bandwidth than CPUs?';
 const SERVICE = `http://127.0.0.1:${E2E_SHARE_PORT}`;
@@ -39,7 +39,7 @@ test.beforeAll(async ({ request }) => {
     name: string;
   }>;
   const ids: string[] = [];
-  for (const [index, machine] of DEMO_MACHINES.entries()) {
+  for (const [index, machine] of TEST_MACHINES.entries()) {
     let id = existing.find((m) => m.name === machine.name)?.id;
     if (!id) {
       const created = await request.post('/api/machines', {

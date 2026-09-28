@@ -1,0 +1,10 @@
+# Used by npm run smoke:docker: the real docker-compose.yml, on a spare port, under its own image
+# tag, container and volume, so an llm-h2h you run yourself is not touched.
+services:
+  llm-h2h:
+    image: llm-h2h:smoke
+    container_name: llm-h2h-smoke
+    ports: !override
+      - '127.0.0.1:${SMOKE_PORT:-3390}:3000'
+    environment:
+      DUEL_PASSWORD: '${SMOKE_PASSWORD:-}'

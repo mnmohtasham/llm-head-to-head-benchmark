@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Twenty phases in six milestones. Each phase ends with a complete app that can be installed, run and
+- Twenty-one phases in six milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -22,10 +22,11 @@ A phase is finished only when all of these hold. "Completely testable" means exa
    http://localhost:3000 with every feature of the phase working. `npm run build` then `npm start` serves
    the production build, which is the build used for real measurements. From phase 20,
    `docker compose up -d --build` serves the same build in a container.
-2. **No-GPU demo.** `npm run demo` starts two mock Unsloth backends with different speed profiles plus the
-   app, with both machines already added, so every feature of the phase works on any laptop.
+2. **No-GPU tests.** Every feature of the phase works against the stand-in servers in `test-servers/`, so
+   the tests run on any laptop and in CI. Until phase 21 this was `npm run demo`, which phase 21 removed.
 3. **Automated checks.** `npm run typecheck`, `npm run lint`, `npm test` (unit and integration against the
-   mock) and `npm run test:e2e` (Playwright, running the phase's demo script against `npm run demo`) pass.
+   stand-ins) and `npm run test:e2e` (Playwright, running the phase's scenario against the production build
+   and the stand-ins) pass. From phase 21, `npm run smoke:docker -- --browser` passes too.
 4. **Real machines.** The phase's real-machine script has run once against the Mac and the Linux machine,
    and the results are written to `docs/phases/phase-NN.md` using the template at the end of this file.
 5. **No dead UI.** Nothing on screen is unfinished. Tabs and options from later phases are hidden, not
@@ -35,7 +36,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
 8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 19 are `v1.1` to `v1.9`,
-   and phase 20 is `v2.0`.
+   phases 20 and 21 are `v2.0` and `v2.1`.
 
 ## Running a phase
 
@@ -68,6 +69,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 18 | LM Studio machines | Race LM Studio next to Unsloth on the Text tab, and load its models | 4 | M | v1.8 |
 | 19 | Remove video encodes | The Command tab and its agent are gone, as Mani asked | 12 | S | v1.9 |
 | 20 | Docker | Run Model Duel on Linux, macOS or Windows with one `docker compose` command | 19 | S | v2.0 |
+| 21 | Production and security | An optional password, security headers and limits, no demo or stand-in servers in the app, smoke tests, MIT license | 20 | M | v2.1 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -82,8 +84,8 @@ Milestones:
   cloud models as reference points, one table of every run, long races summed up either way, and
   sending runs to a public results service. Added on 2026-09-25 at Mani's
   request, after phase 12.
-- **M6 Open source** (phase 20, v2.0): anyone clones the repository and runs it in Docker on any
-  platform. Added on 2026-09-27 at Mani's request.
+- **M6 Open source** (phases 20 and 21, v2.1): anyone clones the repository and runs it in Docker on
+  any platform, safely, under the MIT license. Added on 2026-09-27 and 2026-09-28 at Mani's request.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
 concurrency adds noise (phase 4). Statistics, pre-flight, telemetry and the report (phases 5 to 8) are
@@ -796,14 +798,48 @@ Exit checklist
 - [ ] Phase gate passes.
 - [ ] Native and Docker numbers compared and recorded.
 
+## Phase 21: Production and security
+
+**You can** run Model Duel on your network with a password, with no demo, fake data or stand-in
+servers anywhere in the app, and check any install with the smoke tests. The repository is MIT
+licensed, and the Docker names are `llm-h2h`.
+Needs: 20. Size: M.
+
+Scope
+- Docker: the compose project, service, container, image and volume are `llm-h2h`.
+- An optional password (`DUEL_PASSWORD` or `DUEL_PASSWORD_FILE`): a sign-in page, an HttpOnly,
+  SameSite=Strict session cookie for 30 days, ten wrong passwords per address per 15 minutes.
+- Security from two reviews: a saved key goes only to the address it was saved with; a strict
+  Content-Security-Policy and framing, sniffing and referrer headers; size limits on every answer and
+  stream; a linear stream parser; one audio upload at a time and a request timeout; one race start at
+  a time; CSV and Markdown exports that cannot carry formulas or HTML; host names and Windows paths
+  out of result files; keys out of run errors; more log redaction.
+- The demo and the stand-in servers' command line are gone; the stand-ins move to `test-servers/`,
+  which only the tests start. The production build compiles only the page and the controller.
+- Smoke tests for a running install (HTTP and browser) and for the Docker setup; CI runs them, with a
+  read-only token, pinned actions, `npm audit`, CodeQL and Dependabot.
+- The Docker image moves to Node 22.23.3, drops npm and the other package managers, and gets a process
+  limit and rotated logs. The MIT license, SECURITY.md and version 2.1.0.
+
+Automated tests
+- Sign-in, cookies, forgery, expiry, lockout and odd request paths; security headers; keys that never
+  follow a new address; the size limits and the stream parser; one race start; clean upload names;
+  export escaping; result redaction. A browser test signs in to a second copy of the app that has a
+  password.
+
+Exit checklist
+- [ ] Phase gate passes.
+- [ ] `npm run smoke:docker -- --browser` passes.
+
 ## Testing across phases
 
-- **Mock.** The mock Unsloth backend grows phase by phase, as each phase lists. Its profiles copy the
-  verified behaviour in PLAN.md section 2, including the differences between the Mac and Linux profiles.
+- **Test servers.** The stand-in Unsloth (the "mock" of earlier phases, in `test-servers/` since phase 21)
+  grows phase by phase, as each phase lists. Its profiles copy the verified behaviour in PLAN.md
+  section 2, including the differences between the Mac and Linux profiles. Only the tests start it.
 - **Recordings.** Every phase that touches a new real route records at least one real response or stream
   from each machine and adds a test that replays it. The mock can replay recordings with their original
   timing.
-- **Golden sessions.** From phase 4 on, a fixed-seed demo session whose metrics must stay within
+- **Golden sessions.** From phase 4 on, a fixed-seed session whose metrics must stay within
   tolerance in every later phase. This catches measurement regressions.
 - **Unsloth updates.** After updating Unsloth on either machine, rerun the probe and record a fresh stream
   before benchmarking. A changed route should fail the probe rather than produce wrong numbers.
@@ -827,6 +863,7 @@ Exit checklist
 | 18 | LM Studio 0.4 or newer on the LM Studio machine, serving on the network |
 | 19 | nothing |
 | 20 | Docker on the controller computer |
+| 21 | nothing new; the smoke tests run against any install |
 
 ## Open questions and when they block
 
@@ -855,6 +892,8 @@ Exit checklist
 | A shared record leaks something private | 17 | a strict schema of allowed fields, redaction, the prompt opt-in, a full preview before sending |
 | A web page makes the app act for it | 17 | cross-site requests that change anything are refused |
 | Docker's network adds time to the numbers | 20 | the same races compared through `npm start` and the container |
+| Someone on the network uses the app, its keys or its machines | 21 | optional password, keys bound to their addresses, cross-site and host checks, strict headers |
+| A machine or service answers with endless or huge data | 21 | size limits on every answer and stream, bounded parsing, word error rate skipped past a size |
 
 ## Phase record template
 

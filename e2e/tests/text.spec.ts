@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
-// Phase 4 demo script: race two machines side by side, see the faster one win, lose one machine
+// Phase 4 scenario: race two machines side by side, see the faster one win, lose one machine
 // mid-race, cancel, reload mid-race, reopen and delete past races. The phase 3 single-machine
 // checks still hold when one machine is picked.
-const [MAC, LINUX] = DEMO_MACHINES;
+const [MAC, LINUX] = TEST_MACHINES;
 const MAC_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[0]}`;
 const LINUX_MOCK = `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`;
 const MOCKS = [MAC_MOCK, LINUX_MOCK] as const;
@@ -15,7 +15,7 @@ test.describe.configure({ mode: 'serial' });
 
 async function ensureMachines(request: APIRequestContext) {
   const existing = (await (await request.get('/api/machines')).json()) as Array<{ name: string }>;
-  for (const [index, machine] of DEMO_MACHINES.entries()) {
+  for (const [index, machine] of TEST_MACHINES.entries()) {
     if (existing.some((m) => m.name === machine.name)) continue;
     await request.post('/api/machines', {
       data: {
@@ -50,7 +50,7 @@ interface SetUp {
  */
 async function setUp(page: Page, names: string[], options: SetUp = {}) {
   await page.goto('/#/text');
-  for (const machine of DEMO_MACHINES) {
+  for (const machine of TEST_MACHINES) {
     const box = page.getByRole('checkbox', { name: new RegExp(machine.name) });
     await expect(box).toBeEnabled();
     await box.setChecked(names.includes(machine.name));

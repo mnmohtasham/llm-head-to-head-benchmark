@@ -11,6 +11,7 @@ import {
 import { Agent, request } from 'undici';
 import { streamSse, type StreamOptions, type StreamOutcome } from './chat-stream';
 import { toNetworkError } from './unsloth';
+import { readText } from './limits';
 
 async function getJson(
   url: string,
@@ -23,7 +24,7 @@ async function getJson(
       dispatcher: agent,
       signal: AbortSignal.timeout(30_000),
     });
-    const text = await response.body.text();
+    const text = await readText(response.body);
     let body: unknown = text;
     try {
       body = JSON.parse(text) as unknown;

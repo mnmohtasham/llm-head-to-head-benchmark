@@ -8,7 +8,7 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /**
- * A fake results service for tests and the demo, doing what docs/share-api.md asks of a real one:
+ * A stand-in results service for the tests, doing what docs/share-api.md asks of a real one:
  * a size limit, the exact schema, the checksum and the signature checked, and one record per
  * sender and submission id, which only that sender can replace.
  */

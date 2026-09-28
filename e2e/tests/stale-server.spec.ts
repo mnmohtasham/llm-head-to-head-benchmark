@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
 // A server left running through a rebuild serves the new page but still has the old routes. The
@@ -7,7 +7,7 @@ import { E2E_MOCK_PORTS } from '../ports';
 
 async function ensureMachines(request: APIRequestContext) {
   const existing = (await (await request.get('/api/machines')).json()) as Array<{ name: string }>;
-  for (const [index, machine] of DEMO_MACHINES.entries()) {
+  for (const [index, machine] of TEST_MACHINES.entries()) {
     if (existing.some((m) => m.name === machine.name)) continue;
     await request.post('/api/machines', {
       data: {

@@ -20,7 +20,7 @@ import {
   summarizeSession,
   tokenTimeline,
   withNonce,
-  wordErrorRate,
+  wordErrorRateWithin,
   audioLabel,
   imagePrompt,
   imageRequestBody,
@@ -60,6 +60,7 @@ import {
   type TimedEvent,
   type Timings,
   type Vote,
+  redactSecrets,
 } from '@duel/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { streamChatCompletion, type StreamOutcome } from './chat-stream';
@@ -1415,7 +1416,7 @@ export class SessionManager {
     if (!warmup) {
       for (const run of view.runs) {
         if (run.transcription && audio.reference) {
-          run.transcription.wer = wordErrorRate(audio.reference, run.transcription.text);
+          run.transcription.wer = wordErrorRateWithin(audio.reference, run.transcription.text);
         }
       }
       const names = new Map(session.machines.map((m) => [m.id, m.name]));
@@ -1813,11 +1814,20 @@ export class SessionManager {
     outcome: StreamOutcome,
     client: ClientMetrics,
   ): { state: RunView['state']; error: string | null } {
-    const failed = (error: string) => ({ state: 'failed' as const, error });
+    // A server may echo the key it was sent in its error; the session keeps the error, never the key.
+    const failed = (error: string) => ({
+      state: 'failed' as const,
+      error: redactSecrets(error, [machine.apiKey]),
+    });
     if (outcome.failure === 'cancelled') return { state: 'cancelled', error: null };
     if (outcome.failure === 'idle-timeout') {
       return failed(
         `${machine.name} sent nothing for ${secondsText(this.deps.timings.idleTimeoutMs)}, so the run was stopped.`,
+      );
+    }
+    if (outcome.failure === 'too-large') {
+      return failed(
+        `${machine.name} sent far more than any real answer holds, so the run was stopped.`,
       );
     }
     if (outcome.failure === 'total-timeout') {

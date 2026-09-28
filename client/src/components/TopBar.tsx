@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useAuth } from '../auth';
 
 export type Page = 'machines' | 'models' | 'text' | 'transcribe' | 'image' | 'results';
 
@@ -20,6 +21,7 @@ export function TopBar({
   current: Page;
   actions?: ReactNode;
 }) {
+  const auth = useAuth();
   return (
     <header className="topbar">
       <div className="brand">
@@ -40,6 +42,11 @@ export function TopBar({
           ))}
         </nav>
         {actions ? <div className="topbar-actions">{actions}</div> : null}
+        {auth.required ? (
+          <button type="button" className="btn btn-quiet btn-small" onClick={auth.signOut}>
+            Sign out
+          </button>
+        ) : null}
       </div>
     </header>
   );

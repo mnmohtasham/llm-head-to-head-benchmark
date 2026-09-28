@@ -12,6 +12,7 @@ import {
   transcribePreflightIssues,
   wavFile,
   wordErrorRate,
+  wordErrorRateWithin,
   type SttPreflightMachine,
 } from '../src';
 
@@ -214,5 +215,14 @@ describe('a model loaded with another engine', () => {
     expect(
       transcribePreflightIssues(machines, { model: 'large-v3-turbo', engine: 'transformers' }),
     ).toEqual([]);
+  });
+});
+
+describe('wordErrorRateWithin', () => {
+  it('aligns ordinary transcripts and skips one far too long to be a transcription', () => {
+    expect(wordErrorRateWithin('one two three', 'one two three')?.wer).toBe(0);
+    const reference = Array.from({ length: 5000 }, (_, i) => `word${i % 50}`).join(' ');
+    const flood = 'spam '.repeat(10_000);
+    expect(wordErrorRateWithin(reference, flood)).toBeNull();
   });
 });

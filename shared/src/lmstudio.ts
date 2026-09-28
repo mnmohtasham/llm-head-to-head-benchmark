@@ -361,6 +361,11 @@ const LM_NETWORK: Record<string, { title: (a: string) => string; hint: string; s
       hint: 'A firewall may be refusing LM Studio, or something else uses this port.',
       summary: 'Cut off',
     },
+    'too-large': {
+      title: (a) => `${a} sent an answer larger than any real one.`,
+      hint: 'Check that the address is LM Studio. Model Duel stops reading answers this large.',
+      summary: 'Answer too large',
+    },
   };
 
 /** A probe of an LM Studio server, from the routes it recorded, in the same report shape. */

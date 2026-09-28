@@ -12,6 +12,7 @@ import {
 import { Agent, request } from 'undici';
 import type { StoredMachine } from './store';
 import { toNetworkError, UnslothClient } from './unsloth';
+import { MAX_IMAGE_BYTES, readBytes, readText } from './limits';
 
 const IMAGES = '/api/inference/images';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -252,7 +253,7 @@ export async function generateImage(
       headersTimeout: options.timeoutMs,
       bodyTimeout: options.timeoutMs,
     });
-    const text = await response.body.text();
+    const text = await readText(response.body, MAX_IMAGE_BYTES);
     const endAt = performance.now();
     let parsed: unknown = text;
     try {
@@ -297,6 +298,8 @@ export async function cancelImage(machine: StoredMachine): Promise<void> {
   await once(machine, (c) => c.postJson(`${IMAGES}/generate/cancel`, {}, { timeoutMs: 5000 }));
 }
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 /** The PNG of a gallery image. */
 export async function fetchGalleryImage(
   machine: StoredMachine,
@@ -312,8 +315,13 @@ export async function fetchGalleryImage(
         signal: AbortSignal.timeout(60_000),
       },
     );
-    const bytes = new Uint8Array(await response.body.arrayBuffer());
-    return response.statusCode === 200 ? bytes : null;
+    if (response.statusCode !== 200) {
+      await response.body.dump();
+      return null;
+    }
+    const bytes = await readBytes(response.body, MAX_IMAGE_BYTES);
+    // Kept and served as a PNG, so it must be one.
+    return bytes.subarray(0, 8).equals(PNG_SIGNATURE) ? new Uint8Array(bytes) : null;
   } catch {
     return null;
   } finally {

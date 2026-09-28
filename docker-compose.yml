@@ -6,12 +6,13 @@
 #   Stop:    docker compose down        (your machines and results stay in the volume)
 #
 # Every setting is below. Change one, then run docker compose up -d again.
-name: model-duel
+name: llm-h2h
 
 services:
-  model-duel:
+  llm-h2h:
     build: .
-    image: model-duel:local
+    image: llm-h2h:local
+    container_name: llm-h2h
     restart: unless-stopped
     init: true
     ports:
@@ -33,10 +34,16 @@ services:
       # can open the page is decided by the ports line, not by this.
       HOST: '0.0.0.0'
       # Where machines, API keys, probes, races, results and the signing key are kept. It is the
-      # model-duel-data volume below, so it survives rebuilds and docker compose down.
+      # llm-h2h-data volume below, so it survives rebuilds and docker compose down.
       DUEL_DATA_DIR: '/app/data'
       # The built page the app serves. Part of the image; change it only for a page of your own.
       DUEL_CLIENT_DIR: '/app/client/dist'
+      # A password asked for before anything else, at least 8 characters. Set one before opening
+      # the page to your network in the ports line; empty leaves the app open to whoever reaches it.
+      DUEL_PASSWORD: ''
+      # Or a file in the container that holds the password, for example a Docker secret mounted at
+      # /run/secrets/llm-h2h-password. It wins over DUEL_PASSWORD.
+      DUEL_PASSWORD_FILE: ''
       # Host names, besides localhost and IP addresses, that the page may be opened at, comma
       # separated, for example "my-pc.local,duel.home.arpa". Other names are refused, which
       # protects the app from DNS rebinding.
@@ -50,11 +57,18 @@ services:
       DUEL_IN_CONTAINER: '1'
       NODE_ENV: 'production'
     volumes:
-      - model-duel-data:/app/data
-    # Hardening: the app needs no Linux capabilities and writes only to its data volume.
+      - llm-h2h-data:/app/data
+    # Hardening: the app needs no Linux capabilities, writes only to its data volume, and never
+    # needs more than a few hundred processes and threads. Logs are rotated.
     read_only: true
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
+    pids_limit: 512
+    logging:
+      driver: local
+      options:
+        max-size: '10m'
+        max-file: '3'
 
 volumes:
-  model-duel-data:
+  llm-h2h-data:

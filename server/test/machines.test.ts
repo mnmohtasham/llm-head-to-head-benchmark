@@ -97,6 +97,34 @@ describe('machine registry', () => {
     expect(removed.json()).toMatchObject({ name: 'Renamed', hasApiKey: false, apiKeyMasked: null });
   });
 
+  it('asks for the key again when a machine moves to another address', async () => {
+    const { id } = (await add({ name: 'A', baseUrl: '10.0.0.1', apiKey: KEY })).json<MachineView>();
+    const edit = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: `/api/machines/${id}`,
+        payload: { name: 'A', ...payload },
+      });
+
+    for (const baseUrl of ['10.0.0.2', '10.0.0.1:9999', 'https://10.0.0.1:8888']) {
+      const moved = await edit({ baseUrl });
+      expect(moved.statusCode, baseUrl).toBe(400);
+      expect(moved.json<{ fields: Record<string, string> }>().fields.apiKey).toMatch(/saved with/);
+    }
+    // The same server spelled another way keeps its key.
+    expect((await edit({ baseUrl: 'http://10.0.0.1:8888/' })).statusCode).toBe(200);
+    const retyped = await edit({
+      baseUrl: '10.0.0.2',
+      apiKey: 'sk-unsloth-registry-test-0000000000000002',
+    });
+    expect(retyped.json()).toMatchObject({
+      baseUrl: 'http://10.0.0.2:8888',
+      apiKeyMasked: 'sk-unsloth-…0002',
+    });
+    const keyless = await edit({ baseUrl: '10.0.0.3', apiKey: null });
+    expect(keyless.json()).toMatchObject({ baseUrl: 'http://10.0.0.3:8888', hasApiKey: false });
+  });
+
   it('deletes a machine', async () => {
     const { id } = (await add({ name: 'A', baseUrl: '10.0.0.1' })).json<MachineView>();
     expect(

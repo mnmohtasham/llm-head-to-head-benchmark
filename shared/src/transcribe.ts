@@ -173,10 +173,25 @@ export function normalizeForWer(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The most reference words × transcript words aligned: a half-hour transcript fits, and a machine
+ * that answers with far more text than was spoken cannot make the controller allocate gigabytes.
+ */
+export const MAX_WER_CELLS = 25_000_000;
+
 /** Word error rate by word-level Levenshtein alignment of the normalised texts. */
 export function wordErrorRate(reference: string, hypothesis: string): WerResult {
+  return alignWords(normalizeForWer(reference), normalizeForWer(hypothesis));
+}
+
+/** The word error rate, or null when the texts are too long to align within MAX_WER_CELLS. */
+export function wordErrorRateWithin(reference: string, hypothesis: string): WerResult | null {
   const ref = normalizeForWer(reference);
   const hyp = normalizeForWer(hypothesis);
+  return (ref.length + 1) * (hyp.length + 1) > MAX_WER_CELLS ? null : alignWords(ref, hyp);
+}
+
+function alignWords(ref: string[], hyp: string[]): WerResult {
   const rows = ref.length + 1;
   const cols = hyp.length + 1;
   // Costs never exceed the longer text, so half-hour transcripts fit 16 bits and half the memory.

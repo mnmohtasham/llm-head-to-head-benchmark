@@ -1,6 +1,6 @@
 import { readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { startMockServer, type RunningMock } from '@duel/mock';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
 import { resultSchema, type MachineView, type ResultFile, type SessionView } from '@duel/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { verifyResult } from '../src/results';

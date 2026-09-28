@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
-import { startMockServer, type RunningMock } from '@duel/mock';
-import { startLmStudioMock, type RunningLmMock } from '@duel/mock/lmstudio';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
+import { startLmStudioMock, type RunningLmMock } from '@duel/test-servers/lmstudio';
 import type {
   DeviceRun,
   MachineStatusView,

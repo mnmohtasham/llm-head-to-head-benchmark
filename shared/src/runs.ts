@@ -1,3 +1,4 @@
+import { csvCell } from './csv';
 import { CLOUD_INFO, type CloudProvider } from './cloud';
 import { metricKind, metricsFor, type Better, type MetricKind, type MetricUnit } from './compare';
 import { formatValue } from './format';
@@ -821,11 +822,7 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
 
 /** The rows as CSV, with the columns' raw values: numbers stay numbers. */
 export function runsCsv(runs: readonly DeviceRun[], columns: readonly RunColumn[]): string {
-  const cell = (v: string | number | null) => {
-    if (v === null) return '';
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const cell = csvCell;
   const header = columns.map((c) =>
     cell(c.unit && c.unit !== 'text' ? `${c.label} (${c.unit})` : c.label),
   );

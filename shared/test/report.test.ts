@@ -128,6 +128,27 @@ describe('exports match the tables on the page', () => {
     expect(markdown.split('\n')[0]).toBe('# Model Duel: Linux Box against Mac Studio');
     expect(markdown).toContain('## How to read this');
   });
+
+  it('Markdown and CSV: names and text from machines cannot become HTML, links or formulas', () => {
+    const session = race();
+    const hostile = '<img src=x onerror=alert(1)> [click](https://evil.example) =1+1';
+    session.machines = session.machines.map((m, i) => (i === 0 ? { ...m, name: hostile } : m));
+    const markdown = toMarkdown(session);
+    expect(markdown).not.toContain('<img');
+    expect(markdown).not.toContain('[click](');
+    expect(markdown).toContain(
+      '&lt;img src=x onerror=alert(1)&gt; \\[click\\](https://evil.example)',
+    );
+    // The report's own markup still works.
+    expect(markdown).toMatch(/\*\*[^*]+\*\*/);
+
+    session.machines = session.machines.map((m, i) =>
+      i === 0 ? { ...m, name: '=HYPERLINK("https://evil.example","x")' } : m,
+    );
+    const csv = toCsv([comparisonTable(session)]);
+    expect(csv).not.toMatch(/(^|,)=HYPERLINK/m);
+    expect(csv).toContain(`"'=HYPERLINK(""https://evil.example"",""x"")"`);
+  });
 });
 
 describe('the scoreboard', () => {

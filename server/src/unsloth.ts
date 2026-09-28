@@ -1,5 +1,6 @@
 import type { NetworkError, RouteResult } from '@duel/shared';
 import { Agent, request } from 'undici';
+import { readText } from './limits';
 
 const MAX_TEXT_BODY = 2000;
 
@@ -66,7 +67,7 @@ export class UnslothClient {
         headersTimeout: options.headersTimeoutMs ?? options.timeoutMs,
         bodyTimeout: options.bodyTimeoutMs ?? options.timeoutMs,
       });
-      const text = await response.body.text();
+      const text = await readText(response.body);
       const ms = performance.now() - started;
       const header = response.headers['content-type'];
       const contentType = (Array.isArray(header) ? header[0] : header) ?? null;

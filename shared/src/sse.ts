@@ -10,10 +10,31 @@ export type SseMessage =
   | { kind: 'data'; data: string; t: number; read: number }
   | { kind: 'comment'; text: string; t: number; read: number };
 
+/** Longer than any line a model server sends; a line that grows past it stops the stream. */
+export const SSE_MAX_LINE = 4 * 1024 * 1024;
+/** The most data one event may gather over its lines. */
+export const SSE_MAX_EVENT = 8 * 1024 * 1024;
+
+/** A stream whose line or event outgrew the limits above; the reader stops instead of buffering. */
+export class SseTooLargeError extends Error {
+  readonly code = 'E_TOO_LARGE';
+
+  constructor(what: 'line' | 'event') {
+    super(`The stream sent a${what === 'event' ? 'n event' : ' line'} larger than any real one.`);
+    this.name = 'SseTooLargeError';
+  }
+}
+
 export class SseParser {
   private readonly decoder = new TextDecoder('utf-8');
   private pending = '';
+  /** How much of `pending` holds no line end, so the next read scans only what is new. */
+  private scanned = 0;
+  /** Reads that ended no line, joined onto `pending` only once a line ends. */
+  private tail: string[] = [];
+  private tailLength = 0;
   private dataLines: string[] = [];
+  private dataLength = 0;
   private reads = 0;
 
   /** Feeds one network read, stamped with its arrival time, and returns the events it completed. */
@@ -34,10 +55,25 @@ export class SseParser {
   }
 
   private consume(text: string, t: number, read: number, final: boolean): SseMessage[] {
+    // A read that ends no line is only kept: touching the growing line on every read would make
+    // a long line cost time in proportion to its square.
+    if (!final && !/[\r\n]/.test(text) && !this.pending.endsWith('\r')) {
+      this.tail.push(text);
+      this.tailLength += text.length;
+      if (this.pending.length + this.tailLength > SSE_MAX_LINE) throw new SseTooLargeError('line');
+      return [];
+    }
+    if (this.tail.length > 0) {
+      this.pending += this.tail.join('');
+      this.scanned = this.pending.length;
+      this.tail = [];
+      this.tailLength = 0;
+    }
     this.pending += text;
     const out: SseMessage[] = [];
     let start = 0;
-    for (let i = 0; i < this.pending.length; i += 1) {
+    let i = this.scanned;
+    for (; i < this.pending.length; i += 1) {
       const ch = this.pending[i];
       if (ch !== '\n' && ch !== '\r') continue;
       if (ch === '\r' && i === this.pending.length - 1 && !final) break; // a LF may follow in the next read
@@ -48,6 +84,9 @@ export class SseParser {
       if (message) out.push(message);
     }
     this.pending = this.pending.slice(start);
+    // Scanning stopped at the end or at a CR still waiting for its LF, which is scanned again.
+    this.scanned = Math.max(0, i - start);
+    if (this.pending.length > SSE_MAX_LINE) throw new SseTooLargeError('line');
     return out;
   }
 
@@ -56,6 +95,7 @@ export class SseParser {
       const dispatch = this.dataLines.length > 0;
       const data = this.dataLines.join('\n');
       this.dataLines = [];
+      this.dataLength = 0;
       return dispatch ? { kind: 'data', data, t, read } : null;
     }
     if (line.startsWith(':')) return { kind: 'comment', text: line.slice(1).trim(), t, read };
@@ -63,7 +103,11 @@ export class SseParser {
     const field = colon === -1 ? line : line.slice(0, colon);
     let value = colon === -1 ? '' : line.slice(colon + 1);
     if (value.startsWith(' ')) value = value.slice(1);
-    if (field === 'data') this.dataLines.push(value);
+    if (field === 'data') {
+      this.dataLength += value.length + 1;
+      if (this.dataLength > SSE_MAX_EVENT) throw new SseTooLargeError('event');
+      this.dataLines.push(value);
+    }
     return null;
   }
 }

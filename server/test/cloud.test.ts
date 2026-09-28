@@ -1,7 +1,13 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { startMockServer, type RunningMock } from '@duel/mock';
-import { startCloudMock, type CloudMockProvider, type RunningCloudMock } from '@duel/mock/cloud';
+import { startMockServer, type RunningMock } from '@duel/test-servers';
+import {
+  startCloudMock,
+  type CloudMockProvider,
+  type RunningCloudMock,
+} from '@duel/test-servers/cloud';
 import {
   type CloudModel,
   type MachineView,
@@ -196,6 +202,70 @@ describe('cloud participants', () => {
       hosts: Record<string, string>;
     }>().hosts;
     expect(Object.keys(hosts)).not.toContain(view.id);
+  });
+
+  it('never send a saved key to an address it was not saved with', async () => {
+    const anthropic = await addCloud('anthropic');
+    const seen: string[] = [];
+    const elsewhere = http.createServer((request, response) => {
+      seen.push(JSON.stringify(request.headers));
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"data":[]}');
+    });
+    await new Promise<void>((resolve) => elsewhere.listen(0, '127.0.0.1', resolve));
+    const other = `http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}`;
+    try {
+      const listed = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/cloud/models',
+        payload: { provider: 'anthropic', machineId: anthropic.id, baseUrl: other },
+      });
+      expect(listed.statusCode).toBe(400);
+      expect(listed.json<{ fields: Record<string, string> }>().fields.apiKey).toMatch(/saved with/);
+      const moved = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/machines/${anthropic.id}`,
+        payload: { name: 'anthropic', baseUrl: other, cloud: anthropic.cloud },
+      });
+      expect(moved.statusCode).toBe(400);
+      await ctx.app.inject({ method: 'POST', url: `/api/machines/${anthropic.id}/probe` });
+      expect(seen).toEqual([]);
+      // At its own address the saved key still lists the models.
+      const own = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/cloud/models',
+        payload: { provider: 'anthropic', machineId: anthropic.id },
+      });
+      expect(own.statusCode).toBe(200);
+    } finally {
+      await new Promise((resolve) => elsewhere.close(resolve));
+    }
+  });
+
+  it('use https for a typed address without a scheme when listing models', async () => {
+    const seen: string[] = [];
+    const plain = http.createServer((request, response) => {
+      seen.push(JSON.stringify(request.headers));
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"data":[]}');
+    });
+    await new Promise<void>((resolve) => plain.listen(0, '127.0.0.1', resolve));
+    try {
+      const listed = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/cloud/models',
+        payload: {
+          provider: 'openai',
+          apiKey: KEYS.openai,
+          baseUrl: `127.0.0.1:${(plain.address() as AddressInfo).port}`,
+        },
+      });
+      // A TLS handshake is not HTTP, so a plain server reads no request and no key.
+      expect(listed.statusCode).toBe(502);
+      expect(seen).toEqual([]);
+    } finally {
+      await new Promise((resolve) => plain.close(resolve));
+    }
   });
 
   it('take https when the address has no scheme', async () => {

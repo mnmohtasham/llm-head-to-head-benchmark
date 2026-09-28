@@ -2,7 +2,7 @@ import type { ServerResponse } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 /**
- * A fake LM Studio 0.4 server for tests and the demo: its greeting, model list, load and unload,
+ * A stand-in LM Studio 0.4 server for the tests: its greeting, model list, load and unload,
  * and the native chat stream with its named events and closing stats, as documented at
  * lmstudio.ai/docs/developer/rest and read from a real LM Studio 0.4.25.
  */

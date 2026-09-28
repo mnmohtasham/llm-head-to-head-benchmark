@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { DEMO_MACHINES } from '../../scripts/demo-config';
+import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
-// Phase 10 demo script: race two machines on one prompt and seed, watch the steps, see both
+// Phase 10 scenario: race two machines on one prompt and seed, watch the steps, see both
 // images side by side, and get the chat models back afterwards.
-const [MAC, LINUX] = DEMO_MACHINES;
+const [MAC, LINUX] = TEST_MACHINES;
 const MOCKS = [`http://127.0.0.1:${E2E_MOCK_PORTS[0]}`, `http://127.0.0.1:${E2E_MOCK_PORTS[1]}`];
 
 test.describe.configure({ mode: 'serial' });
@@ -14,7 +14,7 @@ const added: string[] = [];
 
 async function ensureMachines(request: APIRequestContext) {
   const existing = (await (await request.get('/api/machines')).json()) as Array<{ name: string }>;
-  for (const [index, machine] of DEMO_MACHINES.entries()) {
+  for (const [index, machine] of TEST_MACHINES.entries()) {
     if (existing.some((m) => m.name === machine.name)) continue;
     const created = await request.post('/api/machines', {
       data: {
@@ -44,7 +44,7 @@ const choose = (page: Page, group: string, option: string) =>
 
 async function setUp(page: Page) {
   await page.goto('/#/image');
-  for (const machine of DEMO_MACHINES) {
+  for (const machine of TEST_MACHINES) {
     const box = page.getByRole('checkbox', { name: new RegExp(machine.name) });
     await expect(box).toBeEnabled();
     await box.setChecked(true);

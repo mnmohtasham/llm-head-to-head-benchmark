@@ -7,8 +7,8 @@ between Model Duel and such a service, and a checklist for building the service 
 - Format: `model-duel-run`, version 1, defined with zod in `shared/src/share.ts`.
 - JSON Schema: [share-format.schema.json](share-format.schema.json) (draft 2020-12), regenerated
   with `npm run result-schema`.
-- A working reference: `mock/src/share.ts`, the fake service the tests and `npm run demo` use.
-  `npm run mock -- --share --port 18888` starts it on its own.
+- A working reference: `test-servers/src/share.ts`, the stand-in service the tests send records
+  to.
 
 ## The request
 
