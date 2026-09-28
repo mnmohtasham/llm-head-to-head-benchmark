@@ -1,7 +1,7 @@
 # Phase 21 record
 
 - Date: 2026-09-28
-- Commit and tag: branch `phase-21`, for Mani to try before it is merged and tagged `v2.1`.
+- Commit and tag: branch `phase-21`, merged into `main` by pull request #4, tagged `v2.1`.
 - Asked by Mani: "Change the name of the docker from model-duel to llm-h2h. Work on the security of
   the app. Remove all mock or fake data and procedures and make it ready for production. Add an MIT
   license to the repo." Then: "Create smoke test files."
