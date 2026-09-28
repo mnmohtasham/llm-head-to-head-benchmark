@@ -40,7 +40,9 @@ services:
       DUEL_CLIENT_DIR: '/app/client/dist'
       # A password asked for before anything else, at least 8 characters. Set one before opening
       # the page to your network in the ports line; empty leaves the app open to whoever reaches it.
-      DUEL_PASSWORD: ''
+      # Do not type it here, where a commit would publish it: put a line DUEL_PASSWORD='your
+      # password' in a file named .env next to this one. Git and the image build leave .env out.
+      DUEL_PASSWORD: '${DUEL_PASSWORD:-}'
       # Or a file in the container that holds the password, for example a Docker secret mounted at
       # /run/secrets/llm-h2h-password. It wins over DUEL_PASSWORD.
       DUEL_PASSWORD_FILE: ''

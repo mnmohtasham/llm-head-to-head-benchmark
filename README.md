@@ -77,7 +77,11 @@ again.
   container itself. The server must listen on the network, not only on this computer: turn on
   Unsloth's LAN access, or LM Studio's **Serve on Local Network**. On Linux with a firewall such as
   ufw, its port must also be open to Docker's network, as it already is for other computers.
-- **Opening the page from another device**: set `DUEL_PASSWORD` first, then in the `ports` line
+- **A password**: put `DUEL_PASSWORD='your password'` in a file named `.env` next to
+  `docker-compose.yml`, then run `docker compose up -d`. The single quotes keep `$` and spaces as
+  typed. Git and the image build leave `.env` out, so the password never reaches the repository,
+  as it could if typed into `docker-compose.yml`.
+- **Opening the page from another device**: set a password first, then in the `ports` line
   change `127.0.0.1:3000:3000` to `3000:3000`. To open it by a name such as `my-pc.local`, add the
   name to `DUEL_ALLOW_HOSTS`. See [Security](#security).
 - **Using the `data` folder of a native install instead of the volume**: replace
@@ -541,7 +545,8 @@ the full picture and how to report a vulnerability.
   `--host` opens it wider and prints a warning. In Docker, the `ports` line of
   `docker-compose.yml` decides the same, and it starts as this computer only.
 - **Password.** Set `DUEL_PASSWORD` (8 characters or more), or `DUEL_PASSWORD_FILE` for a Docker
-  secret, and the app asks for it before anything else. Set one before opening the app to your
+  secret, and the app asks for it before anything else. In Docker, keep it in `.env`, not in
+  `docker-compose.yml`. Set one before opening the app to your
   network. Sessions last 30 days in an HttpOnly, SameSite=Strict cookie; a restart keeps them and a
   new password ends them all. Ten wrong passwords from one address make it wait 15 minutes. The
   password travels over plain HTTP on your network, like everything else, so for access from

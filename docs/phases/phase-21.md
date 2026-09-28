@@ -41,7 +41,9 @@ and the password, so a restart keeps people signed in and a new password signs e
 password is compared in constant time, and ten wrong ones from an address make it wait 15 minutes.
 The check goes by the route Fastify matched, not the raw URL, so no spelling of a path gets past it.
 Without a password nothing changes, and the startup message says to set one before opening the app
-to the network.
+to the network. In Docker the compose file reads the password from a `.env` file next to it, which
+git and the image build leave out: typed into `docker-compose.yml`, a tracked file of a public
+repository, a password is one careless commit away from being published.
 
 **Security review.** Two reviews read the code, one of the server and one of the client and
 deployment. Everything they found is fixed except where noted:
