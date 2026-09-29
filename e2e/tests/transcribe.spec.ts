@@ -111,7 +111,11 @@ test('races the LibriSpeech clip: real-time factor, word errors marked, and a wi
 
   await expect(page.getByTestId('phase-bars')).toContainText('processing');
   const stats = page.getByTestId('compare');
-  await expect(stats.getByRole('row', { name: /Real-time factor/ })).toContainText(LINUX.name);
+  // Unsloth's own route leaves no processing time in its monitor, so the headline uses Model Duel's.
+  await expect(stats.locator('tr[data-key="rtf"]')).toContainText(LINUX.name);
+  await expect(stats.locator('tr[data-key="rtfServer"]')).toHaveAttribute('data-verdict', 'none');
+  const board = page.getByTestId('scoreboard');
+  await expect(board).toContainText(`${LINUX.name} transcribes`);
   const row = page.getByTestId('session-row').first();
   await expect(row).toContainText('Transcribe LibriSpeech clip, 70 s with large-v3-turbo');
   await expect(row).toContainText('real time, WER 1.6%');

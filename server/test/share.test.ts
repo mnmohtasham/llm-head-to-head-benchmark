@@ -5,6 +5,7 @@ import { startMockServer, type RunningMock } from '@duel/test-servers';
 import { startShareMock, verifyEnvelope, type RunningShareMock } from '@duel/test-servers/share';
 import {
   SHARE_SERVICE_ENDPOINT,
+  SHORT_PROMPT,
   type MachineView,
   type SessionView,
   type ShareRecord,
@@ -20,26 +21,49 @@ let linux: RunningMock;
 let service: RunningShareMock;
 let ctx: Awaited<ReturnType<typeof testApp>>;
 let linuxId: string;
+/** A race with the sender's own prompt, which never leaves, and one with a standard prompt. */
 let session: SessionView;
+let standard: SessionView;
 
 const settings = async () =>
   (await ctx.app.inject({ method: 'GET', url: '/api/share/settings' })).json<ShareSettingsView>();
 const setToken = (token: unknown) =>
   ctx.app.inject({ method: 'PUT', url: '/api/share/settings', payload: { token } });
-const preview = () =>
+const preview = (race: SessionView = session) =>
   ctx.app.inject({
     method: 'POST',
     url: '/api/share/preview',
-    payload: { sessionId: session.id, machineId: linuxId },
+    payload: { sessionId: race.id, machineId: linuxId },
   });
-async function send() {
-  const shown = (await preview()).json<{ sha256: string }>();
+async function send(race: SessionView = standard) {
+  const shown = (await preview(race)).json<{ sha256: string }>();
   return ctx.app.inject({
     method: 'POST',
     url: '/api/share/send',
-    payload: { sessionId: session.id, machineId: linuxId, sha256: shown.sha256 },
+    payload: { sessionId: race.id, machineId: linuxId, sha256: shown.sha256 },
   });
 }
+async function raceWith(config: Record<string, unknown>): Promise<SessionView> {
+  const started = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/sessions',
+    payload: {
+      workload: 'text',
+      machineIds: [linuxId],
+      config: { maxTokens: 256, thinking: false, reasoningEffort: null, ...config },
+      plan: { rounds: 2, warmup: false, settleMs: 0, sequencing: 'concurrent' },
+    },
+  });
+  const id = started.json<SessionView>().id;
+  let race = started.json<SessionView>();
+  for (let i = 0; i < 400; i += 1) {
+    race = (await ctx.app.inject({ method: 'GET', url: `/api/sessions/${id}` })).json();
+    if (race.finishedAt) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return race;
+}
+
 const control = (body: unknown) =>
   fetch(`${service.url}/__mock/config`, {
     method: 'POST',
@@ -78,27 +102,8 @@ beforeEach(async () => {
   });
   linuxId = created.json<MachineView>().id;
   await ctx.app.inject({ method: 'POST', url: `/api/machines/${linuxId}/probe`, payload: {} });
-  const started = await ctx.app.inject({
-    method: 'POST',
-    url: '/api/sessions',
-    payload: {
-      workload: 'text',
-      machineIds: [linuxId],
-      config: {
-        prompt: 'My private medical question about /home/mani/notes.txt',
-        maxTokens: 256,
-        thinking: false,
-        reasoningEffort: null,
-      },
-      plan: { rounds: 2, warmup: false, settleMs: 0, sequencing: 'concurrent' },
-    },
-  });
-  const id = started.json<SessionView>().id;
-  for (let i = 0; i < 400; i += 1) {
-    session = (await ctx.app.inject({ method: 'GET', url: `/api/sessions/${id}` })).json();
-    if (session.finishedAt) break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  session = await raceWith({ prompt: 'My private medical question about /home/mani/notes.txt' });
+  standard = await raceWith({ preset: 'short' });
 });
 afterEach(async () => {
   await ctx.app.close();
@@ -190,6 +195,16 @@ describe('the record', () => {
     expect(text).not.toContain(answerText);
   });
 
+  it('names a standard prompt with its text, and the sender’s own as not standard', async () => {
+    type Preview = { record: ShareRecord; notStandard: string | null };
+    const own = (await preview()).json<Preview>();
+    expect(own.record.settings).toMatchObject({ prompt: 'custom', promptText: null });
+    expect(own.notStandard).toMatch(/standard prompt only/);
+    const shared = (await preview(standard)).json<Preview>();
+    expect(shared.notStandard).toBeNull();
+    expect(shared.record.settings).toMatchObject({ prompt: 'short', promptText: SHORT_PROMPT });
+  });
+
   it('never carries a name or the prompt, however it is asked', async () => {
     const asked = await ctx.app.inject({
       method: 'POST',
@@ -230,11 +245,19 @@ describe('sending', () => {
     expect(envelope?.signature.publicKey).toBe((await settings()).publicKey);
     expect(sent.json<{ url: string }>().url).toMatch(new RegExp(`^${service.url}/runs/`));
 
-    const key = `${session.id}/${linuxId}`;
+    const key = `${standard.id}/${linuxId}`;
     expect((await settings()).sent[key]?.host).toBe(new URL(service.url).host);
     // Sending again replaces the same record.
     expect((await send()).json()).toMatchObject({ status: 200 });
     expect(service.received()).toHaveLength(1);
+  });
+
+  it('refuses a race with the sender’s own prompt', async () => {
+    await setToken(TOKEN);
+    const refused = await send(session);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json<{ error: string }>().error).toBe('not_standard');
+    expect(service.received()).toHaveLength(0);
   });
 
   it('sends only what was previewed', async () => {
@@ -242,7 +265,7 @@ describe('sending', () => {
     const changed = await ctx.app.inject({
       method: 'POST',
       url: '/api/share/send',
-      payload: { sessionId: session.id, machineId: linuxId, sha256: 'f'.repeat(64) },
+      payload: { sessionId: standard.id, machineId: linuxId, sha256: 'f'.repeat(64) },
     });
     expect(changed.statusCode).toBe(409);
     expect(service.received()).toHaveLength(0);

@@ -1,5 +1,6 @@
 import {
   buildShareRecord,
+  notStandardReason,
   SHARE_MAX_BYTES,
   SHARE_SERVICE_ACCOUNT,
   SHARE_SERVICE_NAME,
@@ -24,8 +25,8 @@ const recordRequest = z
   })
   .strict();
 
-/** LLM Bench shows runs without names or prompts, so records carry neither. */
-const NO_NAME_OR_PROMPT = { displayName: '', includePrompt: false };
+/** LLM Bench shows runs without names, so records carry none. */
+const NO_NAME = { displayName: '' };
 
 const sendRequest = recordRequest.extend({
   /** The preview's checksum: what is sent must be exactly what was shown. */
@@ -64,7 +65,7 @@ export function registerShareRoutes(
   async function record(
     body: z.infer<typeof recordRequest>,
     reply: FastifyReply,
-  ): Promise<ShareRecord | null> {
+  ): Promise<{ built: ShareRecord; notStandard: string | null } | null> {
     const stored = await sessions.getStored(body.sessionId);
     if (!stored) {
       await fail(reply, 404, 'not_found', 'There is no race with that id.');
@@ -77,7 +78,7 @@ export function registerShareRoutes(
     const built = buildShareRecord(
       stored,
       body.machineId,
-      NO_NAME_OR_PROMPT,
+      NO_NAME,
       { publicKey: share.publicKey, version: options.version, build: options.build },
       sha256Hex,
     );
@@ -95,19 +96,20 @@ export function registerShareRoutes(
       await fail(reply, 400, 'too_large', 'This record is too large to send.');
       return null;
     }
-    return built;
+    return { built, notStandard: notStandardReason(stored) };
   }
 
   /** The record exactly as it would be sent, for the sender to read first. */
   app.post('/api/share/preview', async (request, reply) => {
     const parsed = recordRequest.safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'That is not a run to send.');
-    const built = await record(parsed.data, reply);
-    if (!built) return reply;
+    const made = await record(parsed.data, reply);
+    if (!made) return reply;
     return {
-      record: built,
-      sha256: sha256Hex(shareSigningText(built)),
+      record: made.built,
+      sha256: sha256Hex(shareSigningText(made.built)),
       endpoint: share.endpoint,
+      notStandard: made.notStandard,
     };
   });
 
@@ -128,9 +130,11 @@ export function registerShareRoutes(
     if (sending.has(key)) return fail(reply, 409, 'sending', 'This run is being sent already.');
     sending.add(key);
     try {
-      const built = await record(parsed.data, reply);
-      if (!built) return reply;
-      const envelope = share.envelope(built);
+      const made = await record(parsed.data, reply);
+      if (!made) return reply;
+      // Only standard prompts compare like for like, so LLM Bench takes nothing else.
+      if (made.notStandard) return fail(reply, 409, 'not_standard', made.notStandard);
+      const envelope = share.envelope(made.built);
       if (envelope.sha256 !== parsed.data.sha256) {
         return fail(
           reply,

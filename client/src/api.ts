@@ -165,7 +165,7 @@ export const api = {
   setShareToken: (token: string | null) =>
     call<ShareSettingsView>('PUT', '/api/share/settings', { token }),
   sharePreview: (input: { sessionId: string; machineId: string }) =>
-    call<{ record: ShareRecord; sha256: string; endpoint: string }>(
+    call<{ record: ShareRecord; sha256: string; endpoint: string; notStandard: string | null }>(
       'POST',
       '/api/share/preview',
       input,

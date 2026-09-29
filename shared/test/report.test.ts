@@ -154,7 +154,8 @@ describe('exports match the tables on the page', () => {
 describe('the scoreboard', () => {
   it('states ratios on length-independent metrics only, subject to the gate', () => {
     const lines = scoreboard(race());
-    expect(lines.map((l) => l.key)).toEqual(['ttft', 'decode', 'chars']);
+    // Characters per second is Model Duel's own count, with no server number: no headline.
+    expect(lines.map((l) => l.key)).toEqual(['ttft', 'decode']);
     expect(lines.find((l) => l.key === 'decode')).toEqual({
       key: 'decode',
       kind: 'win',
@@ -162,6 +163,26 @@ describe('the scoreboard', () => {
       winnerId: 'fast',
     });
     expect(lines.every((l) => !/total|output|first answer/i.test(l.text))).toBe(true);
+  });
+
+  it('uses the servers’ own numbers when every machine reports them', () => {
+    const session = race();
+    const served: Record<string, number[]> = { fast: [50, 51, 52], slow: [20, 21, 22] };
+    for (const round of session.rounds) {
+      for (const run of round.runs) {
+        const speed = served[run.machineId]?.[round.index] ?? 0;
+        run.server = { timings: { predictedPerSecond: speed } } as unknown as typeof run.server;
+      }
+    }
+    const decode = scoreboard(session).find((l) => l.text.includes('decodes'));
+    expect(decode).toMatchObject({ key: 'decodeServer', winnerId: 'fast' });
+    expect(decode?.text).toContain('51.0 tok/s against 21.0 tok/s');
+
+    // One machine without its server's number: Model Duel's measurement for both.
+    for (const round of session.rounds) {
+      for (const run of round.runs) if (run.machineId === 'slow') run.server = null;
+    }
+    expect(scoreboard(session).find((l) => l.text.includes('decodes'))?.key).toBe('decode');
   });
 
   it('calls a close race a tie, and has nothing to say about one machine', () => {

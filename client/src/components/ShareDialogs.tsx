@@ -90,7 +90,8 @@ export function ShareSettingsDialog({
           <p className="field-hint">
             <b>Send</b> on a row sends that run to <b>{SHARE_SERVICE_NAME}</b> ({host}), the public
             results site for Model Duel, after showing you exactly what goes. It shows runs without
-            names. Only runs you send leave this computer.
+            names. Only races with a standard prompt can be sent, so every result there compares
+            like for like, and only runs you send leave this computer.
           </p>
           <div className="field">
             <label htmlFor={`${id}-token`}>Token</label>
@@ -159,7 +160,7 @@ const NEVER_SENT = [
   'API keys and tokens',
   'machine names, addresses and notes',
   'your name',
-  'your prompt',
+  'your own prompts and audio: only standard ones can be sent',
   'answers and thinking',
   'file names and paths',
 ];
@@ -178,7 +179,11 @@ export function ShareDialog({
   onSettings: () => void;
   onClose: () => void;
 }) {
-  const [preview, setPreview] = useState<{ record: ShareRecord; sha256: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    record: ShareRecord;
+    sha256: string;
+    notStandard: string | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<SentShare | null>(null);
@@ -193,7 +198,11 @@ export function ShareDialog({
     api.sharePreview({ sessionId: run.sessionId, machineId: run.machineId }).then(
       (shown) => {
         if (!cancelled) {
-          setPreview({ record: shown.record, sha256: shown.sha256 });
+          setPreview({
+            record: shown.record,
+            sha256: shown.sha256,
+            notStandard: shown.notStandard,
+          });
           setError(null);
         }
       },
@@ -262,6 +271,11 @@ export function ShareDialog({
                 {needsToken ? 'Add your token' : 'Change your token'}
               </button>
             </p>
+            {preview?.notStandard ? (
+              <p className="form-error" data-testid="share-not-standard">
+                {preview.notStandard}
+              </p>
+            ) : null}
             {needsToken ? (
               <p className="field-hint" data-testid="share-needs-token">
                 {SHARE_SERVICE_NAME} takes runs only with your token. Sign in at{' '}
@@ -296,9 +310,15 @@ export function ShareDialog({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void send()}
-                disabled={!preview || needsToken || sending}
+                disabled={!preview || Boolean(preview.notStandard) || needsToken || sending}
               >
-                {sending ? 'Sending…' : needsToken ? 'Add your token first' : `Send to ${host}`}
+                {sending
+                  ? 'Sending…'
+                  : preview?.notStandard
+                    ? 'Not a standard prompt'
+                    : needsToken
+                      ? 'Add your token first'
+                      : `Send to ${host}`}
               </button>
             </div>
           </>

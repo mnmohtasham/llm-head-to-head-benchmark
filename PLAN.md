@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.21, 2026-09-28. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.22, 2026-09-29. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -20,7 +20,7 @@ median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public 
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
 sections 3 and 8, and records how far output length moves between rounds, in section 5. v2.20
 makes it ready for production and open source (phase 21): an optional password and the security
-measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 makes LLM Bench the only results service, in section 7.3.
+measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 makes LLM Bench the only results service, in section 7.3. v2.22 makes headlines use the servers' own numbers and sends only runs with a standard prompt, in sections 5 and 7.3.
 
 ## 0. Decisions so far
 
@@ -543,7 +543,12 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
    cached tokens, so a chat template (about 30 tokens) never triggers the flag. The nonce line is the same
    in every round (only the nonce changes), and all machines in a round get the same nonce and the same
    `cancel_id`, so their bodies differ only in `model`.
-7. Output-length confound: ratio headlines only on TTFT, tok/s, characters per second and processing time.
+7. Output-length confound: ratio headlines only on TTFT, tok/s, prompt processing and energy per token
+   (characters per second left the headlines in v2.22: it measures the tokenizer as much as the machine).
+   Since v2.22 a headline uses the machine's server's number (`SERVER_METRICS` in `shared/src/compare.ts`:
+   `ttftServer`, `decodeServer`, `rtfServer`, `processingServer`) when every machine compared reports it,
+   and Model Duel's measurement for all of them otherwise, so the network and the controller stay out
+   of the headline and no machine's server number is set against another's measurement.
    Totals are shown next to token counts. Optional fixed-length mode: `max_tokens = N` with a prompt that
    always overruns it; `stop_reason` must be `length` on both sides or the round is flagged. As built it is
    a preset: a request for an essay of at least 3,000 words. Endless-counting prompts do not work: the model
@@ -614,8 +619,9 @@ to 4 percent of mean power times duration, about 0.14 tokens per joule at 164 W.
 - `POST /api/sessions/:id/statistic {statistic: median | mean}` switches a finished race and rewrites
   its result file (phase 16). Session summaries carry `statistic`.
 - Sharing (phase 17): `GET /api/share/settings` (address, masked token, public key, fingerprint,
-  what was sent), `PUT /api/share/settings {endpoint, token?}`, `POST /api/share/preview
-  {sessionId, machineId, options}` answering `{record, sha256}`, and `POST /api/share/send` with the
+  what was sent), `PUT /api/share/settings {token}` (since v2.21), `POST /api/share/preview
+  {sessionId, machineId, options}` answering `{record, sha256, endpoint, notStandard}` (since v2.22),
+  and `POST /api/share/send` with the
   same and the preview's `sha256`. Every non-GET request is refused with 403 when `Origin` names
   another host or `Sec-Fetch-Site` says `cross-site` or `same-site`.
 - Results (phase 15): `GET /api/runs` answers `{runs}`, one row per machine per finished race,
@@ -715,8 +721,12 @@ After phase 21 the service became LLM Bench, a separate project at
 `https://llm-bench.selfhostapps.com`, and at Mani's request the only one: records go to
 `SHARE_SERVICE_ENDPOINT` and nowhere else, the settings hold just its token, and a token an earlier
 version saved for another service is dropped. LLM Bench needs the token, so Model Duel refuses to
-send without one, and it shows runs without names, so records always carry a null display name and
-prompt.
+send without one, and it shows runs without names, so records always carry a null display name.
+Since v2.22 only runs with a standard prompt can be sent (`standardPrompt` in `shared/src/share.ts`):
+a text preset, an image preset with no negative prompt, or the bundled LibriSpeech clip, alone or
+repeated. `settings.prompt` names it and `settings.promptText` carries its public text (null for the
+8K and 32K presets and audio); `POST /api/share/send` answers 409 `not_standard` for anything else,
+and the preview says why. The "include my prompt" option is gone.
 
 ## 8. Timing discipline
 

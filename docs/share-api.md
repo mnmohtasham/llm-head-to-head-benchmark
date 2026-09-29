@@ -11,8 +11,9 @@ between Model Duel and such a service, and a checklist for building the service 
   to.
 - The service: Model Duel sends to LLM Bench, `https://llm-bench.selfhostapps.com/api/runs`
   (`SHARE_SERVICE_ENDPOINT`), and to no other. LLM Bench needs a token from its account page, so
-  Model Duel sends nothing without one, and it publishes runs without names or prompts, so every
-  record has `displayName` and `settings.promptText` null.
+  Model Duel sends nothing without one. It publishes runs without names, so every record has
+  `displayName` null, and it sends only runs with a standard prompt (below), so every result on
+  LLM Bench answered the same request.
 
 ## The request
 
@@ -48,13 +49,46 @@ Authorization: Bearer <token>        (from the user's LLM Bench account page)
 | `race` | `workload`, `kind` (the metric set), `state` (`done` or `partial`), `rounds`, `roundsDone`, `warmup`, `sequencing`, `statistic` (`median` or `mean`), `machines` (how many raced; they are not named). |
 | `machine` | `kind` (`local` or `cloud`), `provider` (for cloud), `gpus` (name and memory in GB), `gpuMemoryGb`, `platform` (CUDA, ROCm, MLX…), `memoryGb`, `os` (family and version only), `studio`, `llamaCpp`. |
 | `model` | `id`, `quant`, `engine`, `contextLength`, `kvCache` (type, not size), `gpuLayers` (−1 is automatic), `totalLayers`, `slots`, `speculative`, `gpuMemoryMode`. |
-| `settings` | `prompt` (a preset id or `custom`), `promptText` (always `null`: prompts are never sent), `promptTokens`, `prefill`, `thinking`, `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
-| `metrics` | Per metric: `key`, `label`, `unit`, `better` (`lower`, `higher` or `null`), `n`, `median`, `mean`, `min`, `max`, `stdev`, and `values`, one per counted round (`null` where the round failed). |
+| `settings` | `prompt` (the standard prompt's id, below), `promptText` (that prompt's text, or `null` where it is too long to carry), `promptTokens`, `prefill`, `thinking` (`off`, `on`, `on, high` with the reasoning effort, or `model default` on LM Studio), `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
+| `metrics` | Per metric: `key`, `label`, `unit`, `better` (`lower`, `higher` or `null`), `n`, `median`, `mean`, `min`, `max`, `stdev`, and `values`, one per counted round (`null` where the round failed). Both the machine's server's numbers and Model Duel's own are sent, each under its own key (below). |
 | `finish` | Text runs: how the counted rounds ended, such as `{"stop": 3}`. |
 
 Never in a record: API keys and tokens, machine names, addresses and notes, answers and thinking,
-file names and paths, uploaded audio names, and a custom prompt the sender did not opt in to.
-Strings that look like keys, addresses or paths are redacted before anything is built.
+file names and paths, uploaded audio names, and the sender's own prompts. Strings that look like
+keys, addresses or paths are redacted before anything is built.
+
+### Standard prompts
+
+Model Duel sends a run only when it answered a standard prompt, one every sender has, so runs
+compare like for like. A race with the sender's own prompt, image prompt or audio is refused before
+anything is sent (`409 not_standard` from Model Duel's own API).
+
+| Workload | `settings.prompt` | `settings.promptText` |
+| --- | --- | --- |
+| Text and throughput | `short`, `puzzle`, `code`, `fixed-length` | The preset's text, from `shared/src/presets.ts`. |
+| Text and throughput | `long-8k`, `long-32k` | `null`: the opening of Mill's *On Liberty*, about 7,600 or 30,400 tokens, then a request for a five-point summary. |
+| Image | `lighthouse`, `market`, `portrait` (`IMAGE_PRESETS` in `shared/src/images.ts`), with no negative prompt | The preset's prompt. |
+| Transcription | `librispeech` (the bundled 70-second clip) or `librispeech-long` (the clip repeated; `summary` gives the length) | `null`. |
+
+A service should keep its own copy of these texts and refuse a record whose `promptText` differs,
+so no one can publish other text under a preset's name.
+
+### Server numbers and Model Duel's numbers
+
+Where the machine's server measures something itself, the record carries that number under its own
+key next to Model Duel's measurement, which includes the network and Model Duel's handling:
+
+| Model Duel's measurement | The server's own number | Source |
+| --- | --- | --- |
+| `ttft` | `ttftServer` | Unsloth's monitor, or LM Studio's stats |
+| `decode` | `decodeServer` | llama.cpp's timings via Unsloth, Unsloth's monitor, or LM Studio's stats |
+| (none) | `prompt` | llama.cpp's prompt processing speed via Unsloth |
+| `rtf` | `rtfServer` | the audio's length over Unsloth's processing time, from its monitor |
+| `processing` | `processingServer` | Unsloth's monitor, which has it only for its OpenAI-shaped route, so it is often missing |
+
+Headlines should use the server's number when every run compared has it, and Model Duel's
+measurement for all of them otherwise, never one against the other. Cloud models report no server
+numbers.
 
 ## Verifying a record
 
@@ -140,8 +174,9 @@ The service is public and anyone can send it anything, including records Model D
 **Abuse**
 - [ ] Rate-limit per IP address and per public key, and cap records per key per day.
 - [ ] Keep a way to hide records and to block a key.
-- [ ] Moderate `displayName` and `promptText`, the only free text people choose. Keep
-      `promptText` hidden or reviewed if you do not want to host arbitrary text.
+- [ ] Check `settings.prompt` and `settings.promptText` against your copy of the standard prompts,
+      so no free text can be published under a preset's name. `displayName` is always `null` from
+      Model Duel; moderate it if you accept it from anything else.
 
 **Transport and privacy**
 - [ ] Serve https only, with HSTS. Do not send CORS headers: browsers never call this endpoint.
@@ -157,8 +192,8 @@ The service is public and anyone can send it anything, including records Model D
   shows the whole record exactly as it will go. The server builds the record; the browser sends only
   which run, plus the checksum of the preview. If the record changed since the preview, nothing is
   sent.
-- Leaves out everything listed under "Never in a record", and always the display name and the
-  prompt.
+- Leaves out everything listed under "Never in a record", and always the display name, and sends
+  only runs with a standard prompt.
 - Sends only to LLM Bench, and only with a token; a token an earlier version saved for another
   service is dropped, never sent to LLM Bench.
 - Keeps the signing key and the token in `data/share.json`, readable by the user only. The private

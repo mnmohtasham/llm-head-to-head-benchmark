@@ -167,6 +167,13 @@ export const TRANSCRIBE_METRICS: readonly MetricSpec[] = [
     pick: (r) => r.transcription?.rtf,
   },
   {
+    key: 'rtfServer',
+    label: 'Real-time factor, Unsloth',
+    unit: '×',
+    better: 'higher',
+    pick: (r) => r.transcription?.serverRtf,
+  },
+  {
     key: 'processing',
     label: 'Processing time',
     unit: 'ms',
@@ -378,6 +385,18 @@ export const THROUGHPUT_METRICS: readonly MetricSpec[] = [
     pick: (r) => r.telemetry?.energy.peakVramGb ?? r.telemetry?.energy.peakRamGb,
   },
 ];
+
+/**
+ * Metrics Model Duel measures itself, from the moment a request leaves it, mapped to the same
+ * measurement as the machine's own server reports it. The server's number leaves out the network
+ * and the request's handling, so headlines and shared results use it wherever the server gives it.
+ */
+export const SERVER_METRICS: Readonly<Record<string, string>> = {
+  ttft: 'ttftServer',
+  decode: 'decodeServer',
+  rtf: 'rtfServer',
+  processing: 'processingServer',
+};
 
 /** Which set of metrics and round cells a session uses. */
 export type MetricKind = 'text' | 'throughput' | 'transcribe' | 'image';

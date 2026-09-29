@@ -5,11 +5,14 @@ import {
   buildShareRecord,
   checkShareEndpoint,
   cleanDisplayName,
+  notStandardReason,
   osFamily,
   shareJsonSchema,
   shareRecordSchema,
+  standardPrompt,
 } from '../src/share';
-import type { MachineProvenance } from '../src/session';
+import { SHORT_PROMPT } from '../src/presets';
+import type { MachineProvenance, SessionView } from '../src/session';
 import { makeRun, makeSession, makeStatus } from './make';
 
 const digest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
@@ -59,13 +62,7 @@ function race() {
 
 describe('share records', () => {
   it('follow the strict schema, with the rounds’ values and nothing identifying', () => {
-    const record = buildShareRecord(
-      race(),
-      'rtx',
-      { displayName: '', includePrompt: false },
-      SENDER,
-      digest,
-    );
+    const record = buildShareRecord(race(), 'rtx', { displayName: '' }, SENDER, digest);
     expect(shareRecordSchema.safeParse(record).success).toBe(true);
     expect(record).toMatchObject({
       raceId: '055d9daf-e177-4abc-ad5f-601db07b75cd',
@@ -87,24 +84,12 @@ describe('share records', () => {
   });
 
   it('keep a stable id per sender, race and machine', () => {
-    const a = buildShareRecord(
-      race(),
-      'rtx',
-      { displayName: '', includePrompt: false },
-      SENDER,
-      digest,
-    );
-    const b = buildShareRecord(
-      race(),
-      'rtx',
-      { displayName: 'x', includePrompt: true },
-      SENDER,
-      digest,
-    );
+    const a = buildShareRecord(race(), 'rtx', { displayName: '' }, SENDER, digest);
+    const b = buildShareRecord(race(), 'rtx', { displayName: 'x' }, SENDER, digest);
     const other = buildShareRecord(
       race(),
       'rtx',
-      { displayName: '', includePrompt: false },
+      { displayName: '' },
       { ...SENDER, publicKey: 'B'.repeat(43) },
       digest,
     );
@@ -113,13 +98,7 @@ describe('share records', () => {
   });
 
   it('mark a machine with failed rounds as partial, with null for those rounds', () => {
-    const record = buildShareRecord(
-      race(),
-      'amd',
-      { displayName: '', includePrompt: false },
-      SENDER,
-      digest,
-    );
+    const record = buildShareRecord(race(), 'amd', { displayName: '' }, SENDER, digest);
     expect(record?.race).toMatchObject({ state: 'partial', roundsDone: 1 });
     expect(record?.metrics.find((m) => m.key === 'decode')?.values).toEqual([18, null]);
   });
@@ -132,18 +111,44 @@ describe('share records', () => {
         run.machineId === 'amd' ? { ...run, state: 'failed' as const } : run,
       ),
     }));
+    expect(buildShareRecord(session, 'amd', { displayName: '' }, SENDER, digest)).toBeNull();
+    expect(buildShareRecord(session, 'nobody', { displayName: '' }, SENDER, digest)).toBeNull();
+  });
+
+  it('carry the standard prompt’s name and text, and a sender’s own prompt never', () => {
+    const session = race();
+    if (session.workload !== 'text') throw new Error('a text race');
+    expect(standardPrompt(session)).toBeNull();
+    expect(notStandardReason(session)).toMatch(/your own prompt/);
+    session.config = { ...session.config, preset: 'short', prompt: SHORT_PROMPT };
+    expect(notStandardReason(session)).toBeNull();
+    const record = buildShareRecord(session, 'rtx', { displayName: '' }, SENDER, digest);
+    expect(record?.settings).toMatchObject({ prompt: 'short', promptText: SHORT_PROMPT });
+    // The long presets are too long for a record and go by name.
+    session.config = { ...session.config, preset: 'long-8k', prompt: 'word '.repeat(6300) };
+    expect(standardPrompt(session)).toEqual({ id: 'long-8k', text: null });
+  });
+
+  it('count the bundled speech clip and image presets as standard, own audio and images not', () => {
+    const transcribe = (audio: unknown) =>
+      standardPrompt({ workload: 'transcribe', config: { audio } } as unknown as SessionView);
+    expect(transcribe({ kind: 'clip' })).toEqual({ id: 'librispeech', text: null });
+    expect(transcribe({ kind: 'long', minutes: 5 })).toEqual({
+      id: 'librispeech-long',
+      text: null,
+    });
     expect(
-      buildShareRecord(session, 'amd', { displayName: '', includePrompt: false }, SENDER, digest),
+      transcribe({ kind: 'upload', audioId: 'a'.repeat(64), name: 'x', reference: null }),
     ).toBeNull();
-    expect(
-      buildShareRecord(
-        session,
-        'nobody',
-        { displayName: '', includePrompt: false },
-        SENDER,
-        digest,
-      ),
-    ).toBeNull();
+    const image = (config: Record<string, unknown>) =>
+      standardPrompt({
+        workload: 'image',
+        config: { preset: 'lighthouse', prompt: '', negativePrompt: '', ...config },
+      } as unknown as SessionView);
+    expect(image({})?.id).toBe('lighthouse');
+    expect(image({})?.text).toMatch(/lighthouse/);
+    expect(image({ negativePrompt: 'blurry' })).toBeNull();
+    expect(image({ preset: 'custom', prompt: 'my cat' })).toBeNull();
   });
 
   it('match the JSON Schema in docs, which npm run result-schema writes', async () => {

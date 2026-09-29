@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { SHORT_PROMPT } from '@duel/shared';
 import { TEST_MACHINES } from '../stand-ins';
 import { E2E_MOCK_PORTS } from '../ports';
 
@@ -200,7 +201,10 @@ test('downloads the rows shown as CSV, and fits a phone screen', async ({ page }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
-test('readies one run for LLM Bench, after showing exactly what goes', async ({ page }) => {
+test('sends only standard-prompt runs to LLM Bench, after showing exactly what goes', async ({
+  page,
+  request,
+}) => {
   await page.goto('/#/results');
   await page.getByLabel('Search').fill('results-spec');
   // Runs go to LLM Bench only; it takes them with a token from its account page.
@@ -214,21 +218,61 @@ test('readies one run for LLM Bench, after showing exactly what goes', async ({ 
   await expect(settings.getByTestId('share-fingerprint')).toHaveText(/^[0-9a-f]{16}$/);
   await settings.getByRole('button', { name: 'Cancel' }).click();
 
-  // Without a token nothing can be sent.
+  // This race used its own prompt: it shows what would go, but it cannot be sent.
   await row(page, LINUX.name).getByTestId('row-send').click();
   const dialog = page.getByTestId('share-dialog');
+  await expect(dialog.getByTestId('share-not-standard')).toContainText('your own prompt');
   await expect(dialog.getByTestId('share-needs-token')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Add your token first' })).toBeDisabled();
-  // The record holds no name and no prompt, and none is offered.
+  await expect(dialog.getByRole('button', { name: 'Not a standard prompt' })).toBeDisabled();
+  // The record holds no name and not the prompt, and neither is offered.
   const shown = dialog.getByTestId('share-record');
   await expect(shown).toContainText('"format": "model-duel-run"');
   await expect(shown).toContainText('NVIDIA GeForce RTX 5090');
   await expect(shown).toContainText('"displayName": null');
+  await expect(shown).toContainText('"prompt": "custom"');
   await expect(shown).toContainText('"promptText": null');
   await expect(shown).not.toContainText(LINUX.name);
   await expect(shown).not.toContainText('memory bandwidth than CPUs');
   await expect(dialog.getByLabel('Name shown publicly (optional)')).toHaveCount(0);
   await expect(dialog.getByLabel('Include my prompt')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  // A race with a preset prompt carries that public prompt, so every result compares like for like.
+  const machines = (await (await request.get('/api/machines')).json()) as Array<{
+    id: string;
+    name: string;
+  }>;
+  const started = await request.post('/api/sessions', {
+    data: {
+      workload: 'text',
+      machineIds: TEST_MACHINES.map((m) => machines.find((x) => x.name === m.name)?.id),
+      config: { preset: 'short', maxTokens: 512, thinking: false, reasoningEffort: null },
+      plan: { rounds: 1, warmup: false, settleMs: 0, sequencing: 'concurrent' },
+      acknowledgeWarnings: true,
+    },
+  });
+  expect(started.status(), await started.text()).toBe(201);
+  const standardId = ((await started.json()) as { id: string }).id;
+  await expect
+    .poll(
+      async () =>
+        (
+          (await (await request.get(`/api/sessions/${standardId}`)).json()) as {
+            finishedAt: unknown;
+          }
+        ).finishedAt,
+      { timeout: 20_000 },
+    )
+    .not.toBeNull();
+  await page.reload();
+  await page.getByLabel('Search').fill('latency and throughput');
+  await expect(rows(page)).toHaveCount(2);
+
+  await row(page, LINUX.name).getByTestId('row-send').click();
+  await expect(dialog.getByTestId('share-not-standard')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Add your token first' })).toBeDisabled();
+  await expect(shown).toContainText('"prompt": "short"');
+  await expect(shown).toContainText(`"promptText": "${SHORT_PROMPT}"`);
   await dialog.getByRole('button', { name: 'Add your token', exact: true }).click();
 
   await settings.getByLabel('Token').fill('llmb_e2e-token-not-real-0000000000000');

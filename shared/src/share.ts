@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CLOUD_PROVIDERS } from './cloud';
 import { metricKind, metricsFor } from './compare';
-import { IMAGE_PRESETS } from './images';
+import { IMAGE_PRESETS, imagePrompt } from './images';
 import { PRESETS } from './presets';
 import { canonicalJson, redactText } from './result';
 import { deviceRuns, type DeviceRun } from './runs';
@@ -103,9 +103,9 @@ export const shareRecordSchema = z
       .strict(),
     settings: z
       .object({
-        /** A preset id, or "custom". */
+        /** A standard prompt's id: a text or image preset, or the bundled clip. */
         prompt: maybe(40),
-        /** The custom prompt, only when the sender chose to include it. */
+        /** The standard prompt's text; null where it is too long to carry (8K, 32K, audio). */
         promptText: maybe(4000),
         promptTokens: count,
         prefill: z.enum(['cold', 'warm']).nullable(),
@@ -157,7 +157,6 @@ export type ShareEnvelope = z.infer<typeof shareEnvelopeSchema>;
 export const shareOptionsSchema = z
   .object({
     displayName: z.string().max(200).default(''),
-    includePrompt: z.boolean().default(false),
   })
   .strict();
 export type ShareOptions = z.infer<typeof shareOptionsSchema>;
@@ -240,6 +239,45 @@ function finishCounts(values: string[]): Record<string, number> | null {
   return counts;
 }
 
+/** Standard text prompts short enough to travel in a record; the long ones go by name alone. */
+const LONG_PRESETS: readonly string[] = ['long-8k', 'long-32k'];
+
+/**
+ * The standard prompt a race used: a text preset, an image preset, or the bundled speech clip,
+ * with its text where a record can hold it. Null when the race used the sender's own prompt,
+ * negative prompt or audio, which make results that compare with nothing else.
+ */
+export function standardPrompt(
+  view: SessionView | StoredSession,
+): { id: string; text: string | null } | null {
+  if (view.workload === 'text') {
+    const c = view.config;
+    if (c.preset === 'custom') return null;
+    const text = LONG_PRESETS.includes(c.preset) || c.prompt.length > 4000 ? null : c.prompt;
+    return { id: c.preset, text };
+  }
+  if (view.workload === 'image') {
+    const c = view.config;
+    if (c.preset === 'custom' || c.negativePrompt.trim() !== '') return null;
+    return { id: c.preset, text: imagePrompt(c) };
+  }
+  const audio = view.config.audio;
+  if (audio.kind === 'upload') return null;
+  return { id: audio.kind === 'clip' ? 'librispeech' : 'librispeech-long', text: null };
+}
+
+/** Why a race cannot go to LLM Bench, or null when it can: only standard prompts compare. */
+export function notStandardReason(view: SessionView | StoredSession): string | null {
+  if (standardPrompt(view)) return null;
+  const own =
+    view.workload === 'text'
+      ? 'your own prompt'
+      : view.workload === 'image'
+        ? 'your own image prompt or negative prompt'
+        : 'your own audio';
+  return `This race used ${own}. LLM Bench takes runs with a standard prompt only, so every result there compares like for like. Race again with one of the presets to send it.`;
+}
+
 /** The settings of non-text races in a few words, leaving out file names. */
 function summaryOf(view: SessionView): string | null {
   if (view.workload === 'transcribe') {
@@ -318,7 +356,7 @@ export function buildShareRecord(
     })
     .filter((metric) => metric.n > 0);
 
-  const custom = textConfig?.preset === 'custom';
+  const standard = standardPrompt(view);
   const record: ShareRecord = {
     format: SHARE_FORMAT,
     formatVersion: SHARE_FORMAT_VERSION,
@@ -370,8 +408,9 @@ export function buildShareRecord(
       gpuMemoryMode: clean(row.gpuMemoryMode, 40),
     },
     settings: {
-      prompt: textConfig ? textConfig.preset : null,
-      promptText: custom && options.includePrompt ? clean(textConfig?.prompt, 4000) : null,
+      // The standard prompt's name and public text; a sender's own prompt never leaves.
+      prompt: standard?.id ?? 'custom',
+      promptText: standard?.text ? clean(standard.text, 4000) : null,
       promptTokens: row.promptTokens === null ? null : Math.round(row.promptTokens),
       prefill: row.prefill,
       thinking: clean(row.thinking, 40),

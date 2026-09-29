@@ -287,12 +287,51 @@ When the race ends:
 - **Setup** lists what each machine ran: model, quant, backend, context, speculative decoding,
   KV cache, thinking, versions and GPU. Differences that change the comparison are marked.
 
+### Which numbers count
+
+Model Duel keeps two kinds of numbers for each run, and every table says which is which.
+
+- **Reported by the machine's server.** Numbers Unsloth or LM Studio measured themselves and sent
+  back: llama.cpp's decode and prompt processing speeds, Unsloth's time to first token and
+  transcription time from its monitor, and LM Studio's own stats. The network and this computer
+  are not in them. Their rows end in "server" or "Unsloth".
+- **Measured by Model Duel.** Times taken on this computer, from the moment the request leaves to
+  the moment each part of the answer arrives. They include the network and Model Duel's own
+  handling, usually a few milliseconds.
+
+The headlines use the servers' numbers. The scoreboard, the **All** view in Results, and LLM
+Bench's dashboard compare time to first token, decode speed and transcription speed as the
+machines' servers reported them. When one machine in the comparison has no such number, every
+machine is compared on Model Duel's measurement instead, so no headline sets one machine's server
+number against another's measurement. Cloud models report none. Unsloth reports its transcription
+time only for its OpenAI-shaped route, which Model Duel uses only when Unsloth's own route is
+missing, so transcription usually falls back to Model Duel's processing time: from the last byte of
+the upload to the answer, which leaves the upload out and adds one trip across the network. The measured numbers stay in the tables next to the servers', and a record sent to
+LLM Bench carries both, each under its own key.
+
+Some numbers have no server counterpart and are always measured: the first answer word, total
+time, throughput mode's aggregate speed (over a whole batch, where the network adds well under a
+millisecond per request to seconds of work), and image timing, which Model Duel reads from
+Unsloth's progress about ten times a second.
+
+Nothing else is in the timed part of a round. Model loading, the telemetry baseline, the warm-up,
+the round-trip check before each round and the pause between rounds all happen before the request
+leaves, and none of them counts. While a race runs, Model Duel watches its own event loop and flags
+a round when this computer was too busy to time it well.
+
+What still changes the numbers is what the machines were asked to do: the prompt, thinking and its
+effort, Max tokens and prefill. Thinking in particular moves the first answer word and the total
+time by seconds. A comparison is fair only when these match, so every table shows them, and LLM
+Bench takes runs with a standard prompt only (see
+[Send a run to a results service](#send-a-run-to-a-results-service)).
+
 ### The report
 
 - The **Scoreboard** puts the race into sentences, such as "Linux decodes 1.85× faster". It
   covers only what does not depend on how much each model wrote: time to first token, decode
-  speed, characters per second, prompt processing and tokens per joule. The winner gate applies,
-  so a close result reads as a tie.
+  speed, prompt processing and tokens per joule, with the servers' own numbers where every machine
+  reports them ([Which numbers count](#which-numbers-count)). The winner gate applies, so a close
+  result reads as a tie.
 - **Charts** show the round in the panes: tokens against time for each machine, with the
   thinking lighter and filled, and GPU power against token rate when telemetry was on.
 - **Setup** lists everything the result depends on, with differences marked, and under it the
@@ -441,7 +480,9 @@ Each pane shows:
   measurements.
 
 Rounds, statistics, telemetry, the scoreboard, charts and exports work as for text. The scoreboard
-compares real-time factor, word error rate and energy per audio minute. The Transcribe tab's
+compares real-time factor (from Unsloth's own processing time when every machine reports it, which
+is rare; see [Which numbers count](#which-numbers-count)), word error rate and energy per audio
+minute. The Transcribe tab's
 results log lists only transcription races.
 
 The clip is utterances 6930-75918-0000 to 0005 of LibriSpeech test-clean: V. Panayotov, G. Chen,
@@ -497,7 +538,8 @@ races can be compared: which GPU runs a model fastest, what a quant or a context
   its counted rounds, the same numbers as the race's report. **Rounds summed up by** shows every
   row's medians or averages, whatever each race was set to.
 - **Workload** picks the kind of race, since each has its own measurements: Text, Throughput,
-  Transcribe or Image. **All** shows every kind with one headline number each.
+  Transcribe or Image. **All** shows every kind with one headline number each, the server's where
+  the run has it.
 - **Filter** by typing in **Search**, which matches the cells shown and the full prompt, or with the
   lists: machine, GPU, model, quant, engine, context, KV cache, slots, prompt and thinking, and more
   under **More filters**. Each list shows how many rows each value has with the other filters set.
@@ -527,9 +569,17 @@ time, and to no other service.
 4. Press **Send to llm-bench.selfhostapps.com**. The row's button then reads **Sent ✓**; sending
    again replaces the record there.
 
-A record holds the hardware, the model and how it was loaded, the race's settings and every
-measurement with its per-round values. It never holds API keys or tokens, your name, machine names,
-addresses or notes, your prompt, answers or thinking, or file names or paths. Every record is signed
+LLM Bench takes runs with a **standard prompt** only, so every result there answered the same
+request: a text preset (Short, Puzzle, Code, Fixed length, 8K or 32K), an image preset with no
+negative prompt, or the bundled LibriSpeech clip, alone or as **Long audio**. A race with your own
+prompt, image prompt or audio shows what would go, but its **Send** button reads **Not a standard
+prompt**. The record names the preset and carries its text, so anyone can read what was asked;
+the 8K and 32K texts and the audio are too long to carry and go by name.
+
+A record holds the hardware, the model and how it was loaded, the race's settings (prompt,
+thinking and effort, Max tokens, prefill, sampling) and every measurement with its per-round
+values, both the servers' and Model Duel's. It never holds API keys or tokens, your name, machine
+names, addresses or notes, your own prompts, answers or thinking, or file names or paths. Every record is signed
 with a key made on this computer, so LLM Bench can tell it was not changed on the way and let only
 you replace your records; the private key never leaves `data/share.json`.
 [docs/share-api.md](docs/share-api.md) describes what LLM Bench receives and how it checks it.
@@ -563,7 +613,7 @@ the full picture and how to report a vulnerability.
   cannot carry spreadsheet formulas, and Markdown exports carry no HTML or links from machines.
 - **Sending a record** needs your click and a confirmation showing the record. The server builds
   it, so the page cannot slip anything else in. It goes to LLM Bench only, over https, with no name
-  or prompt; redirects are not followed, and only a short message, an id and a link on LLM Bench's
+  and none of your own prompts; redirects are not followed, and only a short message, an id and a link on LLM Bench's
   own host are read back. The signing key and your LLM Bench token stay in `data/share.json` (mode
   600).
 - **Docker.** The image holds no data and no keys, and no npm or other package manager. The

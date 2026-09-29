@@ -347,18 +347,27 @@ export const KIND_LABELS: Record<MetricKind, string> = {
 };
 
 /** The one number that sums up a run of each kind, for the table of every kind. */
-const HEADLINE: Record<MetricKind, string> = {
-  text: 'decode',
-  throughput: 'aggregate',
-  transcribe: 'rtf',
-  image: 'stepsPerSec',
+/** The one metric the All view shows per run: the server's own number where it reported one. */
+const HEADLINE: Record<MetricKind, readonly string[]> = {
+  text: ['decodeServer', 'decode'],
+  throughput: ['aggregate'],
+  transcribe: ['rtfServer', 'rtf'],
+  image: ['stepsPerSec'],
 };
+
+function headlineOf(r: DeviceRun, statistic: Statistic): { key: string; value: number } | null {
+  for (const key of HEADLINE[r.kind]) {
+    const v = runMetric(r, key, statistic);
+    if (typeof v === 'number') return { key, value: v };
+  }
+  return null;
+}
 
 /** Metrics shown until the user picks columns. */
 const INITIAL_METRICS: Record<MetricKind, readonly string[]> = {
-  text: ['firstAnswer', 'ttft', 'decode', 'decodeServer', 'prompt', 'endToEnd', 'tokensPerJoule'],
+  text: ['firstAnswer', 'ttftServer', 'ttft', 'decodeServer', 'decode', 'prompt', 'tokensPerJoule'],
   throughput: ['aggregate', 'perRequest', 'ttftMedian', 'ttftP95', 'batchTime', 'tokensPerJoule'],
-  transcribe: ['rtf', 'processing', 'wer', 'load', 'joulesPerMinute'],
+  transcribe: ['rtfServer', 'rtf', 'processingServer', 'wer', 'load', 'joulesPerMinute'],
   image: ['imageTime', 'stepsPerSec', 'firstStep', 'load', 'energyPerImage'],
 };
 
@@ -758,21 +767,18 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
       id: 'headline',
       label: 'Headline',
       group: 'Result',
-      value: (r) => {
-        const v = runMetric(r, HEADLINE[r.kind], statistic);
-        return typeof v === 'number' ? v : null;
-      },
+      value: (r) => headlineOf(r, statistic)?.value ?? null,
       text: (r) => {
-        const spec = metricsFor(r.kind).find((m) => m.key === HEADLINE[r.kind]);
-        const v = runMetric(r, HEADLINE[r.kind], statistic);
-        return spec && typeof v === 'number'
-          ? `${formatValue(v, spec.unit)} ${spec.label.toLowerCase()}`
+        const found = headlineOf(r, statistic);
+        const spec = found && metricsFor(r.kind).find((m) => m.key === found.key);
+        return spec && found
+          ? `${formatValue(found.value, spec.unit)} ${spec.label.toLowerCase()}`
           : EMPTY;
       },
       numeric: true,
       filter: false,
       initial: true,
-      hint: 'Decode speed for text, aggregate speed for throughput, real-time factor for transcription and denoising speed for images',
+      hint: 'Decode speed for text and real-time factor for transcription, as the machine’s server reported them where it did; aggregate speed for throughput and denoising speed for images',
     });
   } else {
     const initial = INITIAL_METRICS[view];

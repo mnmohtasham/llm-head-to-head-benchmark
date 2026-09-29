@@ -1,5 +1,5 @@
 import { csvCell } from './csv';
-import { metricKind, type MetricUnit } from './compare';
+import { metricKind, SERVER_METRICS, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { CLOUD_INFO } from './cloud';
 import { imagePrompt } from './images';
@@ -549,7 +549,10 @@ export interface ScoreLine {
   winnerId: string | null;
 }
 
-/** Only metrics that do not depend on how much each model chose to write get a headline. */
+/**
+ * Only metrics that do not depend on how much each model chose to write get a headline, and only
+ * ones a machine's server reports where it reports them (see headlineRows).
+ */
 const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: string) => string }> =
   {
     ttft: {
@@ -557,10 +560,6 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
       win: (w, r) => `${w} reaches its first token ${r}× sooner`,
     },
     decode: { noun: 'Decode speed', win: (w, r) => `${w} decodes ${r}× faster` },
-    chars: {
-      noun: 'Characters per second',
-      win: (w, r) => `${w} writes ${r}× more characters per second`,
-    },
     prompt: { noun: 'Prompt processing', win: (w, r) => `${w} processes the prompt ${r}× faster` },
     tokensPerJoule: {
       noun: 'Energy efficiency',
@@ -591,12 +590,30 @@ const HEADLINES: Record<string, { noun: string; win: (winner: string, ratio: str
     },
   };
 
+/**
+ * The rows headlines are made from. Where the machines' servers report a measurement themselves
+ * (SERVER_METRICS), their number is used, since it leaves out the network and Model Duel's own
+ * handling. It is used only when every machine reported it, so no headline compares one machine's
+ * server with another machine's network; otherwise Model Duel's measurement stands for all.
+ */
+export function headlineRows(rows: readonly StatRow[]): Array<{ row: StatRow; headline: string }> {
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const out: Array<{ row: StatRow; headline: string }> = [];
+  for (const row of rows) {
+    if (!HEADLINES[row.key]) continue;
+    const server = SERVER_METRICS[row.key] ? byKey.get(SERVER_METRICS[row.key] ?? '') : undefined;
+    const everyone = server?.summaries.every((summary) => summary.n > 0) ?? false;
+    out.push({ row: server && everyone ? server : row, headline: row.key });
+  }
+  return out;
+}
+
 /** Sentences for the scoreboard: a winner only where the gate names one, otherwise a tie. */
 export function scoreboard(session: SessionView): ScoreLine[] {
   if (session.machines.length < 2) return [];
   const lines: ScoreLine[] = [];
-  for (const row of sessionStats(session)) {
-    const headline = HEADLINES[row.key];
+  for (const { row, headline: key } of headlineRows(sessionStats(session))) {
+    const headline = HEADLINES[key];
     const { verdict } = row;
     if (
       !headline ||
@@ -774,15 +791,15 @@ export function toMarkdown(session: SessionView): string {
     '',
     '## How to read this',
     '',
-    '- Times are measured by Model Duel from the moment a request left it, so they include the network. "Unsloth" rows are what Unsloth measured on the machine itself.',
+    '- Rows marked "server" or "Unsloth" are what the machine\'s own server measured, without the network. The other times are measured by Model Duel from the moment a request left it, so they include the network and the request\'s handling.',
     `- A machine wins a row only when its ${statisticWord(statisticOf(plan))} is more than ${Math.round((GATE_RATIO - 1) * 100)} percent better than the runner-up's, or its round-to-round range does not overlap the runner-up's. Otherwise the row is a tie. Failed rounds and the warm-up never count.`,
     metricKind(session) === 'throughput'
       ? '- Ratio headlines cover aggregate output speed, time to first token under load and tokens per joule, for the same number of requests at once on every machine.'
       : session.workload === 'image'
         ? '- Ratio headlines cover time per image, denoising speed and energy per image, all for the same prompt, size, steps and seed.'
         : session.workload === 'transcribe'
-          ? '- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is.'
-          : '- Ratio headlines cover only time to first token, speeds, prompt processing and tokens per joule, which do not depend on how much each model chose to write.',
+          ? "- Ratio headlines cover real-time factor, word error rate and energy per audio minute, which do not depend on how long the audio is. The real-time factor is Unsloth's own when every machine reports it."
+          : "- Ratio headlines cover only time to first token, decode speed, prompt processing and tokens per joule, which do not depend on how much each model chose to write. Time to first token and decode speed are the servers' own numbers when every machine reports them, and Model Duel's measurement otherwise.",
     '- Energy is approximate: GPU board power on NVIDIA and the GPU rail on Apple, read twice a second and added up over the run.',
     '',
     'Made with Model Duel.',
