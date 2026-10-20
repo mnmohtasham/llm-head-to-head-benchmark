@@ -1,16 +1,22 @@
 import {
+  cannotCompare,
   KIND_LABELS,
+  parseResultsLink,
+  resultsLink,
   runColumns,
   runsCsv,
   shortDate,
   type DeviceRun,
   type MetricKind,
+  type ResultsLink,
   type RunColumn,
   type RunsView,
   type Statistic,
 } from '@duel/shared';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { api, messageOf, type ShareSettingsView } from '../api';
+import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { api, messageOf, type SentShare, type ShareSettingsView } from '../api';
+import { RunComparison } from '../components/RunComparison';
+import { RunHistory } from '../components/RunHistory';
 import { ShareDialog, ShareSettingsDialog } from '../components/ShareDialogs';
 import { TopBar } from '../components/TopBar';
 
@@ -87,6 +93,30 @@ function matches(run: DeviceRun, columns: readonly RunColumn[], terms: string[])
   return terms.every((term) => haystack.includes(term));
 }
 
+/** The comparison and history the address asks for. Going through it keeps Back working. */
+function useResultsLink(): ResultsLink {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+  return useMemo(() => parseResultsLink(hash), [hash]);
+}
+
+/**
+ * Opens or closes a comparison or a history, keeping the other. Asked again for what is already
+ * open, it brings the panel with the heading `focus` into view instead.
+ */
+function follow(change: Partial<ResultsLink>, focus?: string) {
+  const next = resultsLink({ ...parseResultsLink(window.location.hash), ...change });
+  if (next === window.location.hash) {
+    if (focus) document.getElementById(focus)?.focus();
+  } else window.location.hash = next;
+}
+
+const openHistory = (key: string) => follow({ history: key }, 'run-history-title');
+
 export function ResultsPage() {
   const [runs, setRuns] = useState<DeviceRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -100,6 +130,8 @@ export function ResultsPage() {
   const [share, setShare] = useState<ShareSettingsView | null>(null);
   const [sharing, setSharing] = useState<DeviceRun | null>(null);
   const [shareSettingsOpen, setShareSettingsOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const link = useResultsLink();
   const setStatistic = (next: Statistic) => {
     setStatisticState(next);
     try {
@@ -157,9 +189,16 @@ export function ResultsPage() {
       : fallback;
 
   const allColumns = useMemo(() => runColumns(view, statistic), [view, statistic]);
-  const chosenIds = picked[view] !== undefined ? picked[view] : savedColumns(view);
-  const visible = allColumns.filter((c) =>
-    c.id === 'machine' ? true : chosenIds ? chosenIds.includes(c.id) : c.initial,
+  const chosenIds = useMemo(
+    () => (picked[view] !== undefined ? picked[view] : savedColumns(view)),
+    [picked, view],
+  );
+  const visible = useMemo(
+    () =>
+      allColumns.filter((c) =>
+        c.id === 'machine' ? true : chosenIds ? chosenIds.includes(c.id) : c.initial,
+      ),
+    [allColumns, chosenIds],
   );
 
   const base = useMemo(
@@ -170,56 +209,97 @@ export function ResultsPage() {
       ),
     [runs, view, unfinished],
   );
-  const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
-  const active = Object.entries(filters).filter(
-    ([id, value]) => value !== '' && allColumns.some((c) => c.id === id),
+  const terms = useMemo(() => search.toLowerCase().split(/\s+/).filter(Boolean), [search]);
+  const active = useMemo(
+    () =>
+      Object.entries(filters).filter(
+        ([id, value]) => value !== '' && allColumns.some((c) => c.id === id),
+      ),
+    [filters, allColumns],
   );
-  const pass = (run: DeviceRun, except: string | null) =>
-    active.every(([id, value]) => {
-      if (id === except) return true;
-      const column = allColumns.find((c) => c.id === id);
-      return !column || column.text(run) === value;
-    }) && matches(run, visible, terms);
 
-  const rows = base.filter((run) => pass(run, null));
-  const sortColumn = allColumns.find((c) => c.id === sort.id) ?? allColumns[1];
-  const sorted = [...rows].sort((a, b) => {
-    const order = compare(sortColumn?.value(a) ?? null, sortColumn?.value(b) ?? null);
-    // Rows without a value stay last in both directions.
-    const aNull = sortColumn?.value(a) === null;
-    const bNull = sortColumn?.value(b) === null;
-    if (aNull !== bNull) return aNull ? 1 : -1;
-    return sort.dir === 'asc' ? order : -order;
-  });
+  // Memoized, so ticking a run for a comparison does not filter and sort hundreds of rows again.
+  const { rows, sorted, facets } = useMemo(() => {
+    const pass = (run: DeviceRun, except: string | null) =>
+      active.every(([id, value]) => {
+        if (id === except) return true;
+        const column = allColumns.find((c) => c.id === id);
+        return !column || column.text(run) === value;
+      }) && matches(run, visible, terms);
 
-  // Filters for the columns whose values differ, each listing what the other filters leave.
-  const facets = allColumns
-    .filter((c) => c.filter)
-    .map((column) => {
-      const all = new Set(base.map((run) => column.text(run)));
-      const options = new Map<string, number>();
-      for (const run of base) {
-        if (!pass(run, column.id)) continue;
-        const text = column.text(run);
-        options.set(text, (options.get(text) ?? 0) + 1);
-      }
-      return { column, differs: all.size > 1, options };
-    })
-    .filter((facet) => facet.differs || filters[facet.column.id]);
+    const rows = base.filter((run) => pass(run, null));
+    const sortColumn = allColumns.find((c) => c.id === sort.id) ?? allColumns[1];
+    const sorted = [...rows].sort((a, b) => {
+      const order = compare(sortColumn?.value(a) ?? null, sortColumn?.value(b) ?? null);
+      // Rows without a value stay last in both directions.
+      const aNull = sortColumn?.value(a) === null;
+      const bNull = sortColumn?.value(b) === null;
+      if (aNull !== bNull) return aNull ? 1 : -1;
+      return sort.dir === 'asc' ? order : -order;
+    });
+
+    // Filters for the columns whose values differ, each listing what the other filters leave.
+    const facets = allColumns
+      .filter((c) => c.filter)
+      .map((column) => {
+        const all = new Set(base.map((run) => column.text(run)));
+        const options = new Map<string, number>();
+        for (const run of base) {
+          if (!pass(run, column.id)) continue;
+          const text = column.text(run);
+          options.set(text, (options.get(text) ?? 0) + 1);
+        }
+        return { column, differs: all.size > 1, options };
+      })
+      .filter((facet) => facet.differs || filters[facet.column.id]);
+    return { rows, sorted, facets };
+  }, [active, allColumns, visible, terms, base, sort, filters]);
   const mainFacets = facets.filter((facet) => MAIN_FILTERS.has(facet.column.id));
   const moreFacets = facets.filter((facet) => !MAIN_FILTERS.has(facet.column.id));
   const moreActive = moreFacets.filter((facet) => filters[facet.column.id]).length;
 
   // The best value of each metric among the rows shown.
-  const best = new Map<string, number>();
-  for (const column of visible) {
-    if (!column.better) continue;
-    const values = rows
-      .map((run) => column.value(run))
-      .filter((v): v is number => typeof v === 'number');
-    if (values.length < 2) continue;
-    best.set(column.id, column.better === 'lower' ? Math.min(...values) : Math.max(...values));
-  }
+  const best = useMemo(() => {
+    const found = new Map<string, number>();
+    for (const column of visible) {
+      if (!column.better) continue;
+      const values = rows
+        .map((run) => column.value(run))
+        .filter((v): v is number => typeof v === 'number');
+      if (values.length < 2) continue;
+      found.set(column.id, column.better === 'lower' ? Math.min(...values) : Math.max(...values));
+    }
+    return found;
+  }, [visible, rows]);
+
+  // Runs ticked for a comparison, in the order they were ticked: the first is the baseline.
+  const byKey = useMemo(() => new Map((runs ?? []).map((run) => [run.key, run])), [runs]);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const selectedRuns = useMemo(
+    () => selected.map((key) => byKey.get(key)).filter((run): run is DeviceRun => !!run),
+    [selected, byKey],
+  );
+  const selectionProblem = cannotCompare(selectedRuns);
+  const toggleRun = useCallback(
+    (key: string, on: boolean) =>
+      setSelected((current) => [...current.filter((k) => k !== key), ...(on ? [key] : [])]),
+    [],
+  );
+  const openSend = useCallback((run: DeviceRun) => setSharing(run), []);
+
+  // What the address asks to compare, by value, so opening a history keeps the selection.
+  const linkedKeys = link.compare.join('\n');
+  const compareKeys = useMemo(() => (linkedKeys ? linkedKeys.split('\n') : []), [linkedKeys]);
+  const compared = useMemo(
+    () => compareKeys.map((key) => byKey.get(key)).filter((run): run is DeviceRun => !!run),
+    [compareKeys, byKey],
+  );
+  // A comparison opened from a link ticks its runs, so the selection can grow from there.
+  useEffect(() => {
+    if (runs === null || compareKeys.length === 0) return;
+    setSelected(compareKeys.filter((key) => byKey.has(key)));
+  }, [compareKeys, byKey, runs]);
+  const historyRun = link.history ? (byKey.get(link.history) ?? null) : null;
 
   const setColumns = (ids: string[] | null) => {
     setPicked((current) => ({ ...current, [view]: ids }));
@@ -243,10 +323,10 @@ export function ResultsPage() {
   const download = () => {
     const blob = new Blob([runsCsv(sorted, visible)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `model-duel-results-${view}-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `model-duel-results-${view}-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
@@ -283,7 +363,8 @@ export function ResultsPage() {
         <p className="subbar">
           One row per machine per finished race, with the median or average of its counted rounds.
           Filter to compare GPUs, models and settings across races; the best value of each
-          measurement among the rows shown is marked. The date opens the race.
+          measurement among the rows shown is marked. The date opens the race. Tick 2 to 6 runs to
+          compare them side by side, or press History to follow a machine over its races.
         </p>
         {loadError ? (
           <div className="banner banner-error" role="alert">
@@ -299,6 +380,44 @@ export function ResultsPage() {
               race shows up here when it ends.
             </p>
           </section>
+        ) : null}
+
+        {runs !== null && compareKeys.length > 0 ? (
+          <RunComparison
+            runs={compared}
+            missing={compareKeys.length - compared.length}
+            statistic={statistic}
+            onBaseline={(key) =>
+              follow({ compare: [key, ...compareKeys.filter((k) => k !== key)] })
+            }
+            onHistory={openHistory}
+            onClose={() => follow({ compare: [] })}
+          />
+        ) : null}
+        {runs !== null && link.history ? (
+          historyRun ? (
+            <RunHistory
+              key={historyRun.key}
+              anchor={historyRun}
+              runs={runs}
+              statistic={statistic}
+              onClose={() => follow({ history: null })}
+            />
+          ) : (
+            <section className="panel run-history" data-testid="run-history">
+              <div className="compare-head">
+                <h2 className="section-title">History</h2>
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-small"
+                  onClick={() => follow({ history: null })}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="muted">The run in this link no longer exists.</p>
+            </section>
+          )
         ) : null}
 
         {runs !== null && runs.length > 0 ? (
@@ -462,6 +581,40 @@ export function ResultsPage() {
                 : `${sorted.length} of ${base.length} runs`}
             </p>
 
+            {selected.length > 0 ? (
+              <div
+                className="selection-bar"
+                role="region"
+                aria-label="Runs to compare"
+                data-testid="selection-bar"
+              >
+                <span className="selection-count" role="status">
+                  {selected.length} {selected.length === 1 ? 'run' : 'runs'} selected
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-small"
+                  onClick={() => follow({ compare: selected }, 'run-comparison-title')}
+                  disabled={selectionProblem !== null}
+                  aria-describedby={selectionProblem ? 'selection-problem' : undefined}
+                >
+                  Compare
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-small"
+                  onClick={() => setSelected([])}
+                >
+                  Clear
+                </button>
+                {selectionProblem ? (
+                  <span id="selection-problem" className="field-hint">
+                    {selectionProblem}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
             {sorted.length === 0 ? (
               <p className="muted">
                 No runs match these filters.{' '}
@@ -510,71 +663,18 @@ export function ResultsPage() {
                   </thead>
                   <tbody>
                     {sorted.map((run) => (
-                      <tr
+                      <ResultRow
                         key={run.key}
-                        data-testid="results-row"
-                        data-machine={run.machine}
-                        className={SHOWN_STATES.has(run.state) ? undefined : 'row-muted'}
-                        title={run.error ?? undefined}
-                        style={{ '--machine': run.color } as CSSProperties}
-                      >
-                        {visible.map((column) => {
-                          const value = column.value(run);
-                          const isBest =
-                            best.has(column.id) &&
-                            typeof value === 'number' &&
-                            best.get(column.id) === value;
-                          if (column.id === 'machine') {
-                            const sent = share?.sent[run.key];
-                            return (
-                              <th key={column.id} scope="row" className="results-machine">
-                                {SHOWN_STATES.has(run.state) && share ? (
-                                  <button
-                                    type="button"
-                                    className={`btn btn-outline btn-small row-send${sent ? ' row-sent' : ''}`}
-                                    onClick={() => setSharing(run)}
-                                    aria-label={`${sent ? 'Send again' : 'Send'} the run of ${run.machine} from ${shortDate(run.createdAt)}`}
-                                    title={
-                                      sent
-                                        ? `Sent to ${sent.host} on ${new Date(sent.at).toLocaleString()}`
-                                        : 'Send this run to the results service'
-                                    }
-                                    data-testid="row-send"
-                                  >
-                                    {sent ? 'Sent ✓' : 'Send'}
-                                  </button>
-                                ) : null}
-                                {run.machine}
-                              </th>
-                            );
-                          }
-                          return (
-                            <td
-                              key={column.id}
-                              data-column={column.id}
-                              className={
-                                [column.numeric ? 'num' : '', isBest ? 'best' : '']
-                                  .filter(Boolean)
-                                  .join(' ') || undefined
-                              }
-                            >
-                              {column.id === 'date' ? (
-                                <a href={`#/${run.workload}/${run.sessionId}`}>
-                                  {column.text(run)}
-                                </a>
-                              ) : (
-                                column.text(run)
-                              )}
-                              {isBest ? (
-                                <span className="best-mark" aria-label=", best shown">
-                                  {' '}
-                                  ★
-                                </span>
-                              ) : null}
-                            </td>
-                          );
-                        })}
-                      </tr>
+                        run={run}
+                        columns={visible}
+                        best={best}
+                        selected={selectedSet.has(run.key)}
+                        canSend={share !== null}
+                        sent={share?.sent[run.key]}
+                        onSelect={toggleRun}
+                        onHistory={openHistory}
+                        onSend={openSend}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -610,6 +710,116 @@ export function ResultsPage() {
     </>
   );
 }
+
+/**
+ * One run's row. Memoized, so ticking a run for a comparison draws that row again, not every row.
+ */
+const ResultRow = memo(function ResultRow({
+  run,
+  columns,
+  best,
+  selected,
+  canSend,
+  sent,
+  onSelect,
+  onHistory,
+  onSend,
+}: {
+  run: DeviceRun;
+  columns: readonly RunColumn[];
+  best: ReadonlyMap<string, number>;
+  selected: boolean;
+  canSend: boolean;
+  sent: SentShare | undefined;
+  onSelect: (key: string, on: boolean) => void;
+  onHistory: (key: string) => void;
+  onSend: (run: DeviceRun) => void;
+}) {
+  const date = shortDate(run.createdAt);
+  return (
+    <tr
+      data-testid="results-row"
+      data-machine={run.machine}
+      data-session={run.sessionId}
+      className={
+        [SHOWN_STATES.has(run.state) ? '' : 'row-muted', selected ? 'row-selected' : '']
+          .filter(Boolean)
+          .join(' ') || undefined
+      }
+      title={run.error ?? undefined}
+      style={{ '--machine': run.color } as CSSProperties}
+    >
+      {columns.map((column) => {
+        const value = column.value(run);
+        const isBest =
+          best.has(column.id) && typeof value === 'number' && best.get(column.id) === value;
+        if (column.id === 'machine') {
+          return (
+            <th key={column.id} scope="row" className="results-machine">
+              <input
+                type="checkbox"
+                className="row-select"
+                checked={selected}
+                onChange={(event) => onSelect(run.key, event.target.checked)}
+                aria-label={`Select the run of ${run.machine} from ${date} to compare`}
+                data-testid="row-select"
+              />
+              {SHOWN_STATES.has(run.state) && canSend ? (
+                <button
+                  type="button"
+                  className={`btn btn-outline btn-small row-send${sent ? ' row-sent' : ''}`}
+                  onClick={() => onSend(run)}
+                  aria-label={`${sent ? 'Send again' : 'Send'} the run of ${run.machine} from ${date}`}
+                  title={
+                    sent
+                      ? `Sent to ${sent.host} on ${new Date(sent.at).toLocaleString()}`
+                      : 'Send this run to the results service'
+                  }
+                  data-testid="row-send"
+                >
+                  {sent ? 'Sent ✓' : 'Send'}
+                </button>
+              ) : null}
+              {run.machine}
+              <button
+                type="button"
+                className="btn btn-quiet btn-small row-history"
+                onClick={() => onHistory(run.key)}
+                aria-label={`History of ${run.machine} with ${run.model ?? 'this model'}${run.quant ? ` ${run.quant}` : ''}`}
+                title="This machine’s runs of this model over time"
+                data-testid="row-history"
+              >
+                History
+              </button>
+            </th>
+          );
+        }
+        return (
+          <td
+            key={column.id}
+            data-column={column.id}
+            className={
+              [column.numeric ? 'num' : '', isBest ? 'best' : ''].filter(Boolean).join(' ') ||
+              undefined
+            }
+          >
+            {column.id === 'date' ? (
+              <a href={`#/${run.workload}/${run.sessionId}`}>{column.text(run)}</a>
+            ) : (
+              column.text(run)
+            )}
+            {isBest ? (
+              <span className="best-mark" aria-label=", best shown">
+                {' '}
+                ★
+              </span>
+            ) : null}
+          </td>
+        );
+      })}
+    </tr>
+  );
+});
 
 /** One filter: the values the other filters leave, with how many rows have each. */
 function Facet({

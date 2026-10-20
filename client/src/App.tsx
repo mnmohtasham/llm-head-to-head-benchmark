@@ -20,7 +20,9 @@ function pageFromHash(): Page {
     return 'transcribe';
   if (window.location.hash === '#/image' || window.location.hash.startsWith('#/image/'))
     return 'image';
-  if (window.location.hash === '#/results') return 'results';
+  // #/results?compare=… and #/results?history=… open a comparison or a history there.
+  if (window.location.hash === '#/results' || window.location.hash.startsWith('#/results?'))
+    return 'results';
   return 'machines';
 }
 
