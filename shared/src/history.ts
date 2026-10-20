@@ -100,12 +100,36 @@ export interface HistoryChange {
   text: string;
 }
 
+/** How a headline number moved from the run before a change to the run with it. */
+export interface HistoryEffect {
+  key: string;
+  label: string;
+  before: number;
+  after: number;
+  /** Which numbers were compared: the servers' when both runs have them. */
+  basis: HistorySource;
+  /** The size of the move in percent of the number before. */
+  percent: number;
+  better: boolean;
+  /** "Decode speed 57.0 tok/s → 31.0 tok/s, 46% slower". */
+  text: string;
+}
+
+/** The changes one run came with, numbered in order as the chart marks them. */
+export interface HistoryMark {
+  number: number;
+  index: number;
+  changes: HistoryChange[];
+  effects: HistoryEffect[];
+}
+
 export interface RunHistory {
   anchor: DeviceRun;
   /** Finished runs, oldest first. */
   runs: DeviceRun[];
   series: HistorySeries[];
   changes: HistoryChange[];
+  marks: HistoryMark[];
 }
 
 /**
@@ -162,6 +186,37 @@ export function runChanges(
 }
 
 const percentText = (p: number) => (p < 10 ? p.toFixed(1) : String(Math.round(p)));
+
+/** One series from the run before a change to the run with it, on numbers both runs have. */
+function effectOf(series: HistorySeries, index: number): HistoryEffect | null {
+  const before = series.points[index - 1];
+  const after = series.points[index];
+  if (!before || !after || series.better === null) return null;
+  const basis: HistorySource | null =
+    before.server !== null && after.server !== null
+      ? 'server'
+      : before.measured !== null && after.measured !== null
+        ? 'measured'
+        : null;
+  if (basis === null) return null;
+  const a = (basis === 'server' ? before.server : before.measured) ?? 0;
+  const b = (basis === 'server' ? after.server : after.measured) ?? 0;
+  if (a <= 0) return null;
+  const percent = (Math.abs(b - a) / a) * 100;
+  const better = series.better === 'higher' ? b >= a : b <= a;
+  const [up, down] = ratioWords(series.unit);
+  const move = percent < 0.5 ? 'about the same' : `${percentText(percent)}% ${better ? up : down}`;
+  return {
+    key: series.key,
+    label: series.label,
+    before: a,
+    after: b,
+    basis,
+    percent,
+    better,
+    text: `${series.label} ${formatValue(a, series.unit)} → ${formatValue(b, series.unit)}, ${move}`,
+  };
+}
 
 function summarize(
   points: readonly HistoryPoint[],
@@ -262,5 +317,18 @@ export function runHistory(
     }
   });
 
-  return { anchor, runs, series, changes };
+  const marks: HistoryMark[] = [];
+  for (const change of changes) {
+    const last = marks[marks.length - 1];
+    if (last?.index === change.index) {
+      last.changes.push(change);
+      continue;
+    }
+    const effects = series
+      .map((one) => effectOf(one, change.index))
+      .filter((e): e is HistoryEffect => e !== null);
+    marks.push({ number: marks.length + 1, index: change.index, changes: [change], effects });
+  }
+
+  return { anchor, runs, series, changes, marks };
 }

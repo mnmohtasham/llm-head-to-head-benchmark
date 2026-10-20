@@ -233,6 +233,35 @@ describe('what changed between runs', () => {
     ]);
   });
 
+  it('numbers each run that came with changes, and says how the numbers moved', () => {
+    const update = { llamaCpp: 'b9650', studio: '0.1.820' };
+    const runs = [
+      on(1),
+      on(2, update, 31),
+      on(3, update, 30),
+      on(4, {
+        ...update,
+        kvCache: 'q8_0',
+        metrics: { decode: 40, decodeServer: null, ttft: 100, ttftServer: null },
+      }),
+    ];
+    const { marks } = runHistory(runs, runs[0]!);
+    expect(marks.map((m) => [m.number, m.index, m.changes.map((c) => c.field)])).toEqual([
+      [1, 1, ['studio', 'llamaCpp']],
+      [2, 3, ['kvCache']],
+    ]);
+    expect(marks[0]?.effects.map((e) => e.text)).toEqual([
+      'Decode speed 57.0 tok/s → 31.0 tok/s, 46% slower',
+      'Time to first token 150 ms → 150 ms, about the same',
+    ]);
+    expect(marks[0]?.effects[0]).toMatchObject({ basis: 'server', better: false });
+    // The run with the second change has no server numbers, so both runs' measurements count.
+    expect(marks[1]?.effects.map((e) => [e.basis, e.better, e.text])).toEqual([
+      ['measured', true, 'Decode speed 28.0 tok/s → 40.0 tok/s, 43% faster'],
+      ['measured', true, 'Time to first token 160 ms → 100 ms, 38% faster'],
+    ]);
+  });
+
   it('lists what the runs were asked differently once the history takes any prompt', () => {
     const runs = [on(1), on(2, { prompt: '8K', promptText: 'On Liberty…', maxTokens: 2048 })];
     const any = { samePrompt: false, sameThinking: false, sameConcurrency: false };
