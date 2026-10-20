@@ -1,5 +1,12 @@
 import { csvCell } from './csv';
-import { metricKind, SERVER_METRICS, type MetricUnit } from './compare';
+import {
+  metricKind,
+  metricsFor,
+  SERVER_METRICS,
+  type MetricKind,
+  type MetricSpec,
+  type MetricUnit,
+} from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { CLOUD_INFO } from './cloud';
 import { imagePrompt } from './images';
@@ -606,6 +613,11 @@ export function headlineRows(rows: readonly StatRow[]): Array<{ row: StatRow; he
     out.push({ row: server && everyone ? server : row, headline: row.key });
   }
   return out;
+}
+
+/** The metrics a race of this kind is headlined by, in the comparison's order. */
+export function headlineMetrics(kind: MetricKind): MetricSpec[] {
+  return metricsFor(kind).filter((metric) => HEADLINES[metric.key]);
 }
 
 /** Sentences for the scoreboard: a winner only where the gate names one, otherwise a tie. */
