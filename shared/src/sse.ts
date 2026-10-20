@@ -27,7 +27,7 @@ export class SseTooLargeError extends Error {
 
 export class SseParser {
   private readonly decoder = new TextDecoder('utf-8');
-  private pending = '';
+  protected pending = '';
   /** How much of `pending` holds no line end, so the next read scans only what is new. */
   private scanned = 0;
   /** Reads that ended no line, joined onto `pending` only once a line ends. */
@@ -90,7 +90,7 @@ export class SseParser {
     return out;
   }
 
-  private line(line: string, t: number, read: number): SseMessage | null {
+  protected line(line: string, t: number, read: number): SseMessage | null {
     if (line === '') {
       const dispatch = this.dataLines.length > 0;
       const data = this.dataLines.join('\n');
@@ -109,5 +109,24 @@ export class SseParser {
       this.dataLines.push(value);
     }
     return null;
+  }
+}
+
+/**
+ * The same byte-level reading for streams of one JSON object per line, as Ollama sends: every
+ * non-empty line is a message, stamped with the read that completed it. A last line without a
+ * line end still counts, since such a stream ends at its last object.
+ */
+export class NdjsonParser extends SseParser {
+  protected override line(line: string, t: number, read: number): SseMessage | null {
+    return line.trim() === '' ? null : { kind: 'data', data: line, t, read };
+  }
+
+  override end(t: number): SseMessage[] {
+    const out = super.end(t);
+    const last = this.pending;
+    this.pending = '';
+    if (last.trim() !== '') out.push({ kind: 'data', data: last, t, read: this.readCount });
+    return out;
   }
 }

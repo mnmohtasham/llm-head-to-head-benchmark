@@ -12,14 +12,15 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LoadDialog } from '../components/LoadDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import { LmModelPane } from '../components/LmModelPane';
+import { CompatModelPane, OllamaModelPane } from '../components/EngineModelPane';
 import { ModelPane } from '../components/ModelPane';
 import { TopBar } from '../components/TopBar';
 import { formatDuration } from '../format';
 
 interface Props {
   machines: MachineView[] | null;
-  /** LM Studio machines, which load models through LM Studio's own API. */
-  lmstudio?: MachineView[];
+  /** Machines running another server, which load models through that server's own API. */
+  others?: MachineView[];
   loadError: string | null;
   log: LogEntry[];
   addLog: (entry: NewLogEntry) => void;
@@ -41,7 +42,7 @@ function describeJob(job: LoadJob): { tone: NewLogEntry['tone']; text: string } 
   return { tone: 'error', text: `Load of ${name} failed: ${job.error ?? 'unknown error'}` };
 }
 
-export function ModelsPage({ machines, lmstudio = [], loadError, log, addLog }: Props) {
+export function ModelsPage({ machines, others = [], loadError, log, addLog }: Props) {
   const [statuses, setStatuses] = useState<Record<string, MachineStatusView>>({});
   const [models, setModels] = useState<Record<string, MachineModelsView>>({});
   const [jobs, setJobs] = useState<Record<string, LoadJob>>({});
@@ -239,7 +240,7 @@ export function ModelsPage({ machines, lmstudio = [], loadError, log, addLog }: 
           </div>
         ) : null}
         {machines === null && !loadError ? <p className="loading">Loading machines…</p> : null}
-        {machines && machines.length === 0 && lmstudio.length === 0 ? (
+        {machines && machines.length === 0 && others.length === 0 ? (
           <section className="empty" aria-labelledby="models-empty-title">
             <h2 id="models-empty-title" className="section-title">
               No machines yet
@@ -249,11 +250,17 @@ export function ModelsPage({ machines, lmstudio = [], loadError, log, addLog }: 
             </p>
           </section>
         ) : null}
-        {machines && machines.length + lmstudio.length > 0 ? (
+        {machines && machines.length + others.length > 0 ? (
           <div className="machine-grid">
-            {lmstudio.map((machine) => (
-              <LmModelPane key={machine.id} machine={machine} addLog={addLog} />
-            ))}
+            {others.map((machine) =>
+              machine.server === 'lmstudio' ? (
+                <LmModelPane key={machine.id} machine={machine} addLog={addLog} />
+              ) : machine.server === 'ollama' ? (
+                <OllamaModelPane key={machine.id} machine={machine} addLog={addLog} />
+              ) : (
+                <CompatModelPane key={machine.id} machine={machine} addLog={addLog} />
+              ),
+            )}
             {machines.map((machine) => (
               <ModelPane
                 key={machine.id}

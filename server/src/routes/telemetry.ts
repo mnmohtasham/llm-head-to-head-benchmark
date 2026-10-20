@@ -1,4 +1,4 @@
-import type { TelemetryStreamMessage } from '@duel/shared';
+import { textOnlyServer, type TelemetryStreamMessage } from '@duel/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { MachineStore } from '../store';
@@ -37,8 +37,8 @@ export function registerTelemetryRoutes(
       const known = new Set(
         store
           .list()
-          // Cloud models and LM Studio have no hardware routes to read.
-          .filter((m) => !m.cloud && m.server !== 'lmstudio')
+          // Cloud models and every server but Unsloth have no hardware routes to read.
+          .filter((m) => !m.cloud && !textOnlyServer(m.server))
           .map((m) => m.id),
       );
       const wanted = request.query.machines?.split(',').filter((id) => known.has(id)) ?? [...known];

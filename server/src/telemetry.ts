@@ -1,5 +1,6 @@
 import {
   parseTelemetry,
+  textOnlyServer,
   type TelemetrySample,
   type TelemetryStatus,
   type TelemetryStreamMessage,
@@ -160,7 +161,7 @@ export class TelemetryHub {
     for (const id of new Set(machineIds)) {
       // Cloud models have no hardware to read.
       const known = this.machines.get(id);
-      if (known?.cloud || known?.server === 'lmstudio') continue;
+      if (known?.cloud || textOnlyServer(known?.server)) continue;
       let poller = this.pollers.get(id);
       if (!poller) {
         poller = new Poller(id, this);

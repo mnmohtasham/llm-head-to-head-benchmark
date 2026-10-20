@@ -10,3 +10,5 @@ coverage/
 .DS_Store
 .env
 test-results/
+# Git worktrees made by coding agents
+.claude/worktrees/

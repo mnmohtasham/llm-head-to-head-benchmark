@@ -1,4 +1,5 @@
 import type { CloudProvider } from './cloud';
+import type { OllamaStats } from './engines';
 import type { LmStats } from './lmstudio';
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
@@ -358,9 +359,13 @@ export function findMonitorRow(body: unknown, prompt: string, withinSec = 60): M
 export interface ServerMetrics {
   timings: Timings | null;
   monitor: MonitorRow | null;
+  /** Which server reported these, when it is not Unsloth: LM Studio, Ollama, llama.cpp, vLLM… */
+  source?: string;
   /** A cloud provider's own account of the run: its usage, request id and processing time. */
   /** LM Studio's own timings and token counts, from the end of its stream. */
   lmstudio?: LmStats | null;
+  /** Ollama's own timings, from its stream's last object; `timings` holds them as llama.cpp's. */
+  ollama?: OllamaStats | null;
   cloud?: {
     provider: CloudProvider;
     requestId: string | null;

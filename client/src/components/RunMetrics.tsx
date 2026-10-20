@@ -35,7 +35,9 @@ export function RunMetrics({ run }: { run: RunView }) {
   const usage = cloud ? cloudUsage(cloud.provider, cloud.usage) : null;
   // LM Studio's own stats, from the end of its stream.
   const lm = run.server?.lmstudio ?? null;
-  const reporter = cloud ? CLOUD_INFO[cloud.provider].label : lm ? 'LM Studio' : 'Unsloth';
+  const reporter = cloud
+    ? CLOUD_INFO[cloud.provider].label
+    : (run.server?.source ?? (lm ? 'LM Studio' : 'Unsloth'));
   const serverDecode = t?.predictedPerSecond ?? m?.tokPerSec ?? lm?.tokPerSec ?? null;
   const serverTtft = m?.ttftMs ?? lm?.ttftMs ?? null;
   const tokens = (value: number | null | undefined) =>
@@ -167,8 +169,8 @@ export function RunMetrics({ run }: { run: RunView }) {
           </li>
         ) : (
           <li>
-            {lm
-              ? 'LM Studio did not report its time to first token for this run.'
+            {run.server?.source
+              ? `${reporter} did not report its time to first token for this run, so the network’s share is unknown.`
               : 'Unsloth’s monitor row for this run was not found, so its time to first token is missing.'}
           </li>
         )}
@@ -212,8 +214,8 @@ export function RunMetrics({ run }: { run: RunView }) {
         {cached > 0 ? (
           <li data-testid="prompt-cache">
             {tokens(cached)} of {tokens(c.promptTokens ?? serverPrompt)} prompt tokens came from
-            {cloud ? `${reporter}’s` : 'Unsloth’s'} prompt cache, so the first token came sooner
-            than it would for a new prompt.
+            {`${reporter}’s`} prompt cache, so the first token came sooner than it would for a new
+            prompt.
           </li>
         ) : null}
         {thinkingMissing(run.thinking, c) ? (

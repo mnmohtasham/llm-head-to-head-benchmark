@@ -40,8 +40,8 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const now = useNow();
   const local = (machines ?? []).filter((m) => !m.cloud);
-  // LM Studio reports no hardware readings, so only Unsloth machines are polled.
-  const telemetry = useTelemetry(local.filter((m) => m.server !== 'lmstudio').map((m) => m.id));
+  // The other servers report no hardware readings, so only Unsloth machines are polled.
+  const telemetry = useTelemetry(local.filter((m) => m.server === 'unsloth').map((m) => m.id));
 
   const probe = useCallback(
     async (machine: MachineView) => {
@@ -202,7 +202,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
                   onEdit={() => setDialog({ mode: 'edit', machine })}
                   onDelete={() => setDeleting(machine)}
                   telemetry={
-                    machine.server === 'lmstudio'
+                    machine.server !== 'unsloth'
                       ? undefined
                       : {
                           enabled: telemetry.enabled,

@@ -2,6 +2,7 @@ import { csvCell } from './csv';
 import { metricKind, SERVER_METRICS, type MetricUnit } from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { CLOUD_INFO } from './cloud';
+import { serverName } from './engines';
 import { imagePrompt } from './images';
 import { PRESETS } from './presets';
 import { LIBRISPEECH_CLIP } from './transcribe';
@@ -258,8 +259,9 @@ interface SetupSpec {
   pick: (p: MachineProvenance, session: SessionView, index: number) => string;
 }
 
-/** LM Studio does not report these settings, so they are not compared or guessed. */
+/** The servers other than Unsloth do not report these settings, so they are not compared or guessed. */
 const lm = (p: MachineProvenance) => p.server === 'lmstudio';
+const other = (p: MachineProvenance) => p.server !== undefined;
 const NOT_REPORTED = 'not reported';
 
 const SETUP: readonly SetupSpec[] = [
@@ -283,7 +285,11 @@ const SETUP: readonly SetupSpec[] = [
       p.cloud
         ? `${CLOUD_INFO[p.cloud.provider].label} API, cloud`
         : p.statusBefore
-          ? `${lm(p) ? 'LM Studio ' : ''}${backendLabel(p.statusBefore.backend)}`
+          ? p.server
+            ? p.statusBefore.backend === 'other'
+              ? serverName(p.server, p.statusBefore)
+              : `${serverName(p.server, p.statusBefore)} ${backendLabel(p.statusBefore.backend)}`
+            : backendLabel(p.statusBefore.backend)
           : 'n/a',
   },
   {
@@ -308,7 +314,7 @@ const SETUP: readonly SetupSpec[] = [
     pick: (p) => {
       const s = p.statusBefore;
       if (!s) return 'n/a';
-      if (lm(p)) return NOT_REPORTED;
+      if (other(p)) return NOT_REPORTED;
       if (!speculativeOn(s)) return s.specFallbackReason ? `off (${s.specFallbackReason})` : 'off';
       return [s.speculativeType, s.specDrafterKind].filter(Boolean).join(' · ');
     },
@@ -319,7 +325,7 @@ const SETUP: readonly SetupSpec[] = [
     matters: true,
     pick: (p) =>
       p.statusBefore
-        ? lm(p)
+        ? other(p)
           ? NOT_REPORTED
           : (p.statusBefore.cacheTypeKv ?? 'Unsloth default')
         : 'n/a',
@@ -330,7 +336,7 @@ const SETUP: readonly SetupSpec[] = [
     matters: true,
     pick: (p) =>
       p.statusBefore
-        ? lm(p)
+        ? other(p)
           ? NOT_REPORTED
           : (p.statusBefore.gpuMemoryMode ?? 'Unsloth default')
         : 'n/a',
@@ -347,7 +353,17 @@ const SETUP: readonly SetupSpec[] = [
         const r = typeof body.reasoning === 'string' ? body.reasoning : null;
         return r === null ? 'model default' : r === 'off' ? 'off' : r === 'on' ? 'on' : `on, ${r}`;
       }
+      if (p.server === 'ollama') {
+        // Ollama takes true or false, or a level for models that think at one.
+        const think = body.think;
+        if (think === undefined) return p.statusBefore?.supportsReasoning ? 'model default' : 'off';
+        return think === false ? 'off' : think === true ? 'on' : `on, ${String(think)}`;
+      }
       const effort = typeof body.reasoning_effort === 'string' ? `, ${body.reasoning_effort}` : '';
+      if (p.server === 'openai-compatible') {
+        const kwargs = body.chat_template_kwargs as { enable_thinking?: unknown } | undefined;
+        return kwargs?.enable_thinking === false ? 'off' : `on${effort}`;
+      }
       return body.enable_thinking === false ? 'off' : `on${effort}`;
     },
   },
@@ -356,7 +372,19 @@ const SETUP: readonly SetupSpec[] = [
     label: 'Unsloth Studio',
     matters: false,
     pick: (p) => {
-      if (!lm(p)) return text(p.versions.studio ?? p.versions.unsloth);
+      if (!other(p)) return text(p.versions.studio ?? p.versions.unsloth);
+      if (p.server && p.server !== 'lmstudio') {
+        // Another server in place of Unsloth: which one, and how much of the model is on the GPU.
+        const e = p.statusBefore?.engine;
+        const name = serverName(p.server, p.statusBefore);
+        const vram =
+          e?.sizeBytes && e.sizeVramBytes !== null
+            ? `${Math.round((e.sizeVramBytes / e.sizeBytes) * 100)}% in GPU memory`
+            : null;
+        return [`${name}${e?.version ? ` ${e.version}` : ''} instead`, vram]
+          .filter(Boolean)
+          .join(' · ');
+      }
       // LM Studio in place of Unsloth: what it says about how the model was loaded.
       const d = p.statusBefore?.lmstudio;
       const flash =

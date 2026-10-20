@@ -4,6 +4,7 @@ import {
   MAX_CONCURRENCY,
   PRESETS,
   REASONING_EFFORTS,
+  serverName,
   sessionRequestSchema,
   textConfigSchema,
   type CloudModel,
@@ -258,8 +259,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   };
   const slotShortcut = (issue: PreflightIssue) => {
     if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
-    // LM Studio loads with its own settings; reloading with more slots is Unsloth's shortcut.
-    if (machines?.find((m) => m.id === issue.machineId)?.server === 'lmstudio') return null;
+    // The other servers load with their own settings; reloading with more slots is Unsloth's shortcut.
+    if (machines?.find((m) => m.id === issue.machineId)?.server !== 'unsloth') return null;
     const id = issue.machineId;
     const state = reloading[id];
     return state ? (
@@ -325,9 +326,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           ? (m.cloud.model?.id ?? null)
           : (statuses[m.id]?.status?.activeModel ?? null),
       }));
-  // Cloud models and LM Studio report no hardware readings.
+  // Cloud models and the servers other than Unsloth report no hardware readings.
   const cloudIds = new Set(
-    (machines ?? []).filter((m) => m.cloud || m.server === 'lmstudio').map((m) => m.id),
+    (machines ?? []).filter((m) => m.cloud || m.server !== 'unsloth').map((m) => m.id),
   );
   const telemetry = useTelemetry(panes.map((pane) => pane.key).filter((id) => !cloudIds.has(id)));
   const columns = Math.min(Math.max(panes.length, 1), 4);
@@ -421,7 +422,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                   ? s.error
                     ? 'unreachable'
                     : [
-                        m.server === 'lmstudio' ? 'LM Studio' : null,
+                        m.server === 'unsloth' ? null : serverName(m.server, s.status ?? null),
                         s.status?.activeModel ?? 'no model loaded',
                         s.status?.quant,
                       ]

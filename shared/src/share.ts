@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CLOUD_PROVIDERS } from './cloud';
+import { MACHINE_SERVERS } from './engines';
 import { metricKind, metricsFor } from './compare';
 import { IMAGE_PRESETS, imagePrompt } from './images';
 import { PRESETS } from './presets';
@@ -75,8 +76,8 @@ export const shareRecordSchema = z
       .object({
         kind: z.enum(['local', 'cloud']),
         provider: z.enum(CLOUD_PROVIDERS).nullable(),
-        /** The local server: Unsloth Studio or LM Studio; null for a cloud model. */
-        server: z.enum(['unsloth', 'lmstudio']).nullable().optional(),
+        /** The local server: Unsloth Studio, LM Studio, Ollama or an OpenAI-compatible one; null for a cloud model. */
+        server: z.enum(MACHINE_SERVERS).nullable().optional(),
         gpus: z.array(z.object({ name: text(120), memoryGb: num }).strict()).max(16),
         gpuMemoryGb: num,
         platform: maybe(20),

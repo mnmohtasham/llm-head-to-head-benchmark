@@ -87,7 +87,7 @@ export const METRICS: readonly MetricSpec[] = [
   },
   {
     key: 'prompt',
-    label: 'Prompt processing, Unsloth',
+    label: 'Prompt processing, server',
     unit: 'tok/s',
     better: 'higher',
     pick: (r) => r.server?.timings?.promptPerSecond,

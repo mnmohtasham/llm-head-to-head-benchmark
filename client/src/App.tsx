@@ -83,14 +83,14 @@ export function App() {
     };
   }, []);
 
-  // Cloud models race only on the Text tab, and LM Studio has text and its own Models pane; the
-  // other tabs need a machine running Unsloth.
+  // Cloud models race only on the Text tab, and the other local servers race text and have their
+  // own Models panes; the other tabs need a machine running Unsloth.
   const unsloth = useMemo(
-    () => machines?.filter((m) => !m.cloud && m.server !== 'lmstudio') ?? null,
+    () => machines?.filter((m) => !m.cloud && m.server === 'unsloth') ?? null,
     [machines],
   );
-  const lmstudio = useMemo(
-    () => machines?.filter((m) => !m.cloud && m.server === 'lmstudio') ?? [],
+  const others = useMemo(
+    () => machines?.filter((m) => !m.cloud && m.server !== 'unsloth') ?? [],
     [machines],
   );
 
@@ -114,7 +114,7 @@ export function App() {
       ) : page === 'models' ? (
         <ModelsPage
           machines={unsloth}
-          lmstudio={lmstudio}
+          others={others}
           loadError={loadError}
           log={log}
           addLog={addLog}

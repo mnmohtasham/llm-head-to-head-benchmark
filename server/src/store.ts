@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path';
 import {
   MACHINE_COLORS,
+  MACHINE_SERVERS,
   type CloudConfig,
   type MachineServer,
   type LoadJob,
@@ -165,7 +166,7 @@ export class MachineStore {
       ({ agentUrl: _agentUrl, agentToken: _agentToken, ...m }) => ({
         ...m,
         cloud: m.cloud ?? null,
-        server: m.server === 'lmstudio' ? 'lmstudio' : 'unsloth',
+        server: (MACHINE_SERVERS as readonly string[]).includes(m.server) ? m.server : 'unsloth',
       }),
     );
   }

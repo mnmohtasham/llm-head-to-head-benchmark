@@ -2,7 +2,7 @@ import {
   classifyProbe,
   CLOUD_INFO,
   CLOUD_PROVIDERS,
-  LMSTUDIO_PORT,
+  SERVER_PORT,
   machineCreateSchema,
   machineUpdateSchema,
   maskApiKey,
@@ -20,6 +20,12 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEFAULT_PROBE_TIMEOUTS, runProbe, sanitizeProbe, type ProbeTimeouts } from '../probe';
 import { classifyLmProbe, runLmProbe } from '../lmstudio';
+import {
+  classifyCompatProbe,
+  classifyOllamaProbe,
+  runCompatProbe,
+  runOllamaProbe,
+} from '../engines';
 import type { MachineStore, StoredMachine, StoredProbe } from '../store';
 import { listCloudModels } from '../cloud';
 import { hostKeys } from '../hosts';
@@ -50,13 +56,14 @@ function validationError(
 
 /**
  * A machine's address: a cloud provider's API is HTTPS unless the address says otherwise, and a
- * port left out is the server's own, 8888 for Unsloth and 1234 for LM Studio.
+ * port left out is the server's own: 8888 for Unsloth, 1234 for LM Studio, 11434 for Ollama and
+ * 8080 for an OpenAI-compatible server (llama-server's).
  */
 function machineAddress(input: string, cloud: boolean, server: MachineServer = 'unsloth') {
   const typed = input.trim();
   return normalizeBaseUrl(
     cloud && !/^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? `https://${typed}` : typed,
-    server === 'lmstudio' && !cloud ? LMSTUDIO_PORT : undefined,
+    cloud ? undefined : SERVER_PORT[server],
   );
 }
 
@@ -284,17 +291,24 @@ export function registerMachineRoutes(
         message: 'A cloud model has nothing to probe. Fetch its models to check the key.',
       });
     }
-    const lmstudio = machine.server === 'lmstudio';
     const timeouts = { ...DEFAULT_PROBE_TIMEOUTS, ...options.probeTimeouts };
-    const raw = sanitizeProbe(
-      lmstudio
-        ? await runLmProbe(machine.baseUrl, machine.apiKey, timeouts)
-        : await runProbe(machine.baseUrl, machine.apiKey, options.probeTimeouts),
-      machine.apiKey,
-    );
-    const report = lmstudio
-      ? await withSiblingHardware(classifyLmProbe(raw), machine)
-      : classifyProbe(raw);
+    const probes = {
+      unsloth: () => runProbe(machine.baseUrl, machine.apiKey, options.probeTimeouts),
+      lmstudio: () => runLmProbe(machine.baseUrl, machine.apiKey, timeouts),
+      ollama: () => runOllamaProbe(machine.baseUrl, machine.apiKey, timeouts),
+      'openai-compatible': () => runCompatProbe(machine.baseUrl, machine.apiKey, timeouts),
+    } as const;
+    const classify = {
+      unsloth: classifyProbe,
+      lmstudio: classifyLmProbe,
+      ollama: classifyOllamaProbe,
+      'openai-compatible': classifyCompatProbe,
+    } as const;
+    const raw = sanitizeProbe(await probes[machine.server](), machine.apiKey);
+    const classified = classify[machine.server](raw);
+    // The other servers report no hardware; a probed Unsloth on the same computer does.
+    const report =
+      machine.server === 'unsloth' ? classified : await withSiblingHardware(classified, machine);
     const probe: StoredProbe = {
       schemaVersion: PROBE_SCHEMA_VERSION,
       machineId: machine.id,

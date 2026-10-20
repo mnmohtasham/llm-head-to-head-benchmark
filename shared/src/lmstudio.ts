@@ -21,12 +21,6 @@ import { describeAddress, loopbackHint } from './url';
  * documented at lmstudio.ai/docs/developer/rest and read from LM Studio 0.4.25 on 2026-09-26.
  */
 export const LMSTUDIO_PORT = 1234;
-export const MACHINE_SERVERS = ['unsloth', 'lmstudio'] as const;
-export type MachineServer = (typeof MACHINE_SERVERS)[number];
-export const SERVER_LABEL: Record<MachineServer, string> = {
-  unsloth: 'Unsloth Studio',
-  lmstudio: 'LM Studio',
-};
 
 /** One loaded copy of a model, with the settings it was loaded with. */
 export interface LmInstance {

@@ -105,8 +105,8 @@ export async function runPreflight(
           tokenError: null,
         };
       }
-      // LM Studio cannot count tokens ahead; its slots are the loaded model's parallel setting.
-      if (machine.server === 'lmstudio') {
+      // The other servers cannot count tokens ahead; their slots are what the model was loaded with.
+      if (machine.server !== 'unsloth') {
         return {
           ...base,
           status: status.status,

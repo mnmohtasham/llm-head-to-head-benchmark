@@ -6,6 +6,8 @@ import type {
   CloudModel,
   DeviceRun,
   LmModel,
+  OllamaLoaded,
+  OllamaModel,
   CloudProvider,
   MachineCreateInput,
   MachineModelsView,
@@ -49,6 +51,15 @@ export interface PresetView {
 export interface LmModelsView {
   machineId: string;
   models: LmModel[];
+  loading: string | null;
+  error: string | null;
+  fetchedAt: string;
+}
+
+export interface OllamaModelsView {
+  machineId: string;
+  downloaded: OllamaModel[];
+  loaded: OllamaLoaded[];
   loading: string | null;
   error: string | null;
   fetchedAt: string;
@@ -160,6 +171,13 @@ export const api = {
     ),
   lmUnload: (id: string, instanceId: string) =>
     call<{ unloaded: string }>('POST', `${machineUrl(id)}/lmstudio/unload`, { instanceId }),
+  ollamaModels: (id: string) => call<OllamaModelsView>('GET', `${machineUrl(id)}/ollama/models`),
+  ollamaLoad: (id: string, model: string) =>
+    call<{ loaded: string; seconds: number | null }>('POST', `${machineUrl(id)}/ollama/load`, {
+      model,
+    }),
+  ollamaUnload: (id: string, model: string) =>
+    call<{ unloaded: string }>('POST', `${machineUrl(id)}/ollama/unload`, { model }),
   shareSettings: () => call<ShareSettingsView>('GET', '/api/share/settings'),
   /** LLM Bench's token, or null to remove it. */
   setShareToken: (token: string | null) =>

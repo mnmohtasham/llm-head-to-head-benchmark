@@ -1,7 +1,7 @@
 import type { PreflightIssue } from './preflight';
 import { z } from 'zod';
 import { CLOUD_PROVIDERS, type CloudConfig } from './cloud';
-import { MACHINE_SERVERS, type MachineServer } from './lmstudio';
+import { MACHINE_SERVERS, type MachineServer } from './engines';
 import type { ProbeReport } from './probe';
 
 /** Accent colours for machines, in the order new machines receive them. */
@@ -76,7 +76,7 @@ export const machineCreateSchema = z.object({
   color: color.optional(),
   /** Makes this a cloud reference model instead of a machine running Unsloth. */
   cloud: cloudSchema.optional(),
-  /** The local server the machine runs: Unsloth Studio (the default) or LM Studio. */
+  /** The local server the machine runs: Unsloth Studio (the default), LM Studio, Ollama or an OpenAI-compatible server. */
   server: z.enum(MACHINE_SERVERS).optional(),
 });
 export type MachineCreateInput = z.infer<typeof machineCreateSchema>;
@@ -110,7 +110,7 @@ export interface MachineView {
   apiKeyMasked: string | null;
   /** Set for a cloud reference model; null for a machine running Unsloth or LM Studio. */
   cloud: CloudConfig | null;
-  /** The local server: Unsloth Studio or LM Studio. Cloud models say unsloth and mean nothing by it. */
+  /** The local server the machine runs. Cloud models say unsloth and mean nothing by it. */
   server: MachineServer;
   createdAt: string;
   updatedAt: string;

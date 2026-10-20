@@ -144,7 +144,7 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "enum": ["unsloth", "lmstudio"]
+                  "enum": ["unsloth", "lmstudio", "ollama", "openai-compatible"]
                 },
                 {
                   "type": "null"

@@ -2,6 +2,7 @@ import {
   CAPABILITY_KEYS,
   CAPABILITY_LABELS,
   formatMs,
+  SERVER_LABEL,
   type Capability,
   type CapabilityKey,
   type MachineView,
@@ -70,9 +71,9 @@ export function MachineCard({
           <h2 id={nameId} className="machine-name">
             {machine.name}
           </h2>
-          {machine.server === 'lmstudio' ? (
+          {machine.server !== 'unsloth' && !machine.cloud ? (
             <p className="machine-notes" data-testid="server-label">
-              LM Studio
+              {SERVER_LABEL[machine.server]}
             </p>
           ) : null}
           {machine.notes ? <p className="machine-notes">{machine.notes}</p> : null}

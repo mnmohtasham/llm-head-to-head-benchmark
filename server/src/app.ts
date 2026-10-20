@@ -18,6 +18,7 @@ import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
 import { registerRunRoutes } from './routes/runs';
 import { registerLmStudioRoutes } from './routes/lmstudio';
+import { registerOllamaRoutes } from './routes/ollama';
 import { registerShareRoutes } from './routes/share';
 import { ShareStore } from './share';
 import { DeviceRunIndex } from './runs';
@@ -255,6 +256,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
   registerLmStudioRoutes(app, {
+    store,
+    loadTimeoutMs: options.loadTimings?.loadTimeoutMs ?? 20 * 60_000,
+  });
+  registerOllamaRoutes(app, {
     store,
     loadTimeoutMs: options.loadTimings?.loadTimeoutMs ?? 20 * 60_000,
   });

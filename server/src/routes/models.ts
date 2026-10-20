@@ -2,6 +2,7 @@ import {
   availabilityOf,
   interpretLoadResponse,
   loadRequestSchema,
+  SERVER_LABEL,
   type ApiErrorBody,
   type LoadStartResult,
   type MachineStatusView,
@@ -34,8 +35,10 @@ export function registerModelRoutes(
     fail(
       reply,
       400,
-      'lmstudio',
-      `${machine.name} runs LM Studio: load and unload its models with the LM Studio buttons on the Models tab, or in LM Studio.`,
+      machine.server,
+      machine.server === 'openai-compatible'
+        ? `${machine.name} runs an OpenAI-compatible server, which serves the model it was started with. Start it with another model to race that one.`
+        : `${machine.name} runs ${SERVER_LABEL[machine.server]}: load and unload its models with the ${SERVER_LABEL[machine.server]} buttons on the Models tab.`,
     );
 
   const statusView = async (machine: StoredMachine): Promise<MachineStatusView> => {
@@ -66,7 +69,7 @@ export function registerModelRoutes(
   app.post<IdParams>('/api/machines/:id/reload-slots', async (request, reply) => {
     const machine = store.get(request.params.id);
     if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
-    if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
+    if (machine.server !== 'unsloth') return lmstudioRefusal(reply, machine);
     const parsed = z.object({ slots: z.number().int().min(1).max(64) }).safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'Ask for 1 to 64 slots.');
     const { status, error } = await readModelStatus(machine);
@@ -85,7 +88,7 @@ export function registerModelRoutes(
     async (request, reply) => {
       const machine = store.get(request.params.id);
       if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
-      if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
+      if (machine.server !== 'unsloth') return lmstudioRefusal(reply, machine);
       return catalog.list(machine, { refresh: request.query.refresh === '1' });
     },
   );
@@ -121,8 +124,10 @@ export function registerModelRoutes(
         });
         const machine = store.get(machineId);
         if (!machine) return skip('There is no machine with that id.');
-        if (machine.server === 'lmstudio') {
-          return skip('This machine runs LM Studio; load its models with the LM Studio buttons.');
+        if (machine.server !== 'unsloth') {
+          return skip(
+            `This machine runs ${SERVER_LABEL[machine.server]}; Model Duel loads Unsloth Studio models only from here.`,
+          );
         }
         if (loads.isActive(machineId)) return skip('A load is already running on this machine.');
         const view = await catalog.list(machine);
@@ -153,7 +158,7 @@ export function registerModelRoutes(
   app.post<IdParams>('/api/machines/:id/unload', async (request, reply) => {
     const machine = store.get(request.params.id);
     if (!machine) return fail(reply, 404, 'not_found', 'There is no machine with that id.');
-    if (machine.server === 'lmstudio') return lmstudioRefusal(reply, machine);
+    if (machine.server !== 'unsloth') return lmstudioRefusal(reply, machine);
     if (loads.isActive(machine.id)) {
       return fail(
         reply,

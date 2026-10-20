@@ -9,3 +9,4 @@ fixtures
 package-lock.json
 *.md
 test-results
+.claude

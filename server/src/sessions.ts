@@ -27,9 +27,17 @@ import {
   stepMetrics,
   CLOUD_INFO,
   cloudRequest,
+  compatChatBody,
+  compatErrorMessage,
   lmChatBody,
   lmErrorMessage,
+  ollamaChatBody,
+  ollamaErrorMessage,
+  SERVER_LABEL,
+  serverName,
+  textOnlyServer,
   type LmStats,
+  type OllamaStats,
   type CloudProvider,
   observeQueue,
   summarizeThroughput,
@@ -77,6 +85,7 @@ import {
 } from './imagegen';
 import { cloudFailure, streamCloud } from './cloud';
 import { streamLmChat } from './lmstudio';
+import { streamCompatChat, streamOllamaChat } from './engines';
 import type { ImageStore } from './imagestore';
 import type { ResultStore } from './results';
 import { watchQueue } from './queue';
@@ -140,13 +149,14 @@ const PROMPT_KEPT = 300;
 type Listener = (message: SessionStreamMessage) => void;
 
 /**
- * What goes to a machine for one text run: Unsloth's chat body, LM Studio's native chat body, or a
- * cloud provider's request.
+ * What goes to a machine for one text run: Unsloth's chat body, another local server's (LM
+ * Studio's or Ollama's native chat, or an OpenAI-compatible one), or a cloud provider's request.
  */
 interface OutgoingRequest {
   body: Record<string, unknown>;
   cloud: { provider: CloudProvider; path: string } | null;
-  lmstudio?: boolean;
+  /** The local server when it is not Unsloth Studio. */
+  engine?: 'lmstudio' | 'ollama' | 'openai-compatible';
 }
 
 interface LiveRun {
@@ -460,8 +470,8 @@ export class SessionManager {
       inFlight.flatMap((run) =>
         session.workload === 'image'
           ? [cancelImage(run.machine)]
-          : run.machine.cloud || run.machine.server === 'lmstudio'
-            ? // Closing the connection is how a cloud or LM Studio request is cancelled.
+          : run.machine.cloud || textOnlyServer(run.machine.server)
+            ? // Closing the connection is how a request to anything but Unsloth is cancelled.
               []
             : batch > 0
               ? Array.from({ length: batch }, (_unused, k) =>
@@ -587,7 +597,7 @@ export class SessionManager {
       imageAfter: null,
       restore: null,
       cloud: machine.cloud,
-      ...(machine.server === 'lmstudio' && !machine.cloud ? { server: 'lmstudio' as const } : {}),
+      ...(machine.server !== 'unsloth' && !machine.cloud ? { server: machine.server } : {}),
     };
   }
 
@@ -696,8 +706,9 @@ export class SessionManager {
     const provenance = entry.session.provenance[index];
     if (!machine || !provenance) return;
     const { session } = entry;
-    if (machine.server === 'lmstudio' && !machine.cloud && session.workload !== 'text') {
-      entry.unready[index] = `${machine.name} runs LM Studio, which races text only.`;
+    if (textOnlyServer(machine.server) && !machine.cloud && session.workload !== 'text') {
+      entry.unready[index] =
+        `${machine.name} runs ${SERVER_LABEL[machine.server]}, which races text only.`;
       return;
     }
     if (session.workload === 'transcribe') {
@@ -788,7 +799,7 @@ export class SessionManager {
       const anyReady = entry.models.some((model) => model !== null) && entry.stopReason === null;
       if (session.telemetry.enabled && anyReady && !signal.aborted) {
         releaseTelemetry = this.deps.telemetry.acquire(
-          entry.machines.filter((m) => !m.cloud && m.server !== 'lmstudio').map((m) => m.id),
+          entry.machines.filter((m) => !m.cloud && !textOnlyServer(m.server)).map((m) => m.id),
         );
         this.setProgress(entry, 'baseline', null);
         await pause(baselineMs, signal);
@@ -980,11 +991,26 @@ export class SessionManager {
           );
           return { body: built.body, cloud: { provider: cloud.provider, path: built.path } };
         }
-        if (run.machine.server === 'lmstudio' && run.provenance.statusBefore) {
+        const before = run.provenance.statusBefore;
+        if (run.machine.server === 'lmstudio' && before) {
           return {
-            body: lmChatBody(config, run.provenance.statusBefore, view.nonce),
+            body: lmChatBody(config, before, view.nonce),
             cloud: null,
-            lmstudio: true,
+            engine: 'lmstudio',
+          };
+        }
+        if (run.machine.server === 'ollama' && before) {
+          return {
+            body: ollamaChatBody(config, before, view.nonce),
+            cloud: null,
+            engine: 'ollama',
+          };
+        }
+        if (run.machine.server === 'openai-compatible' && before) {
+          return {
+            body: compatChatBody(config, before, view.nonce),
+            cloud: null,
+            engine: 'openai-compatible',
           };
         }
         const model = entry.models[round.runs.indexOf(run)] ?? '';
@@ -1532,9 +1558,15 @@ export class SessionManager {
     body: Record<string, unknown>,
     options: Parameters<typeof streamChatCompletion>[3],
   ): Promise<
-    StreamOutcome & { usage?: Record<string, unknown> | null; lmstudio?: LmStats | null }
+    StreamOutcome & {
+      usage?: Record<string, unknown> | null;
+      lmstudio?: LmStats | null;
+      ollama?: OllamaStats | null;
+    }
   > {
-    if (outgoing.lmstudio) return streamLmChat(machine, body, options);
+    if (outgoing.engine === 'lmstudio') return streamLmChat(machine, body, options);
+    if (outgoing.engine === 'ollama') return streamOllamaChat(machine, body, options);
+    if (outgoing.engine === 'openai-compatible') return streamCompatChat(machine, body, options);
     return outgoing.cloud
       ? streamCloud(
           outgoing.cloud.provider,
@@ -1598,11 +1630,9 @@ export class SessionManager {
     entry.starts.set(run.view.id, run.view.requestedAtMs);
     run.view.live = { ...run.view.live, requests: { done: 0, total: count } };
     const signal = AbortSignal.any([entry.controller.signal, round.controller.signal]);
-    // A cloud provider and LM Studio have no admission queue to watch.
+    // Only Unsloth has an admission queue to watch.
     const queue =
-      machine.cloud || outgoing.lmstudio
-        ? null
-        : watchQueue(machine, this.deps.timings.queuePollMs);
+      machine.cloud || outgoing.engine ? null : watchQueue(machine, this.deps.timings.queuePollMs);
     const sentAt: number[] = [];
     let finished = 0;
     const outcomes = await Promise.all(
@@ -1611,7 +1641,7 @@ export class SessionManager {
         return this.open(
           machine,
           outgoing,
-          outgoing.cloud || outgoing.lmstudio
+          outgoing.cloud || outgoing.engine
             ? body
             : { ...body, cancel_id: `${String(body.cancel_id)}-${k + 1}` },
           {
@@ -1762,12 +1792,25 @@ export class SessionManager {
         },
       };
       run.view.modelAfter = machine.cloud.model?.id ?? null;
-    } else if (machine.server === 'lmstudio') {
-      run.view.server = {
-        timings: null,
-        monitor: null,
-        lmstudio: (outcome as { lmstudio?: LmStats | null }).lmstudio ?? null,
-      };
+    } else if (textOnlyServer(machine.server)) {
+      // LM Studio's stats come apart; Ollama's and llama-server's arrive as llama.cpp timings.
+      const source = serverName(machine.server, run.provenance.statusBefore);
+      run.view.server =
+        machine.server === 'lmstudio'
+          ? {
+              timings: null,
+              monitor: null,
+              source,
+              lmstudio: (outcome as { lmstudio?: LmStats | null }).lmstudio ?? null,
+            }
+          : machine.server === 'ollama'
+            ? {
+                timings,
+                monitor: null,
+                source,
+                ollama: (outcome as { ollama?: OllamaStats | null }).ollama ?? null,
+              }
+            : { timings, monitor: null, source };
       if (!round.warmup) {
         const after = await readModelStatus(machine);
         run.view.modelAfter = after.status?.activeModel ?? null;
@@ -1847,10 +1890,15 @@ export class SessionManager {
     if (outcome.failure === 'http' && machine.cloud) {
       return failed(cloudFailure(machine.cloud.provider, outcome.status, outcome.errorBody));
     }
-    if (outcome.failure === 'http' && machine.server === 'lmstudio') {
-      const said = lmErrorMessage(outcome.errorBody);
+    if (outcome.failure === 'http' && textOnlyServer(machine.server)) {
+      const said =
+        machine.server === 'lmstudio'
+          ? lmErrorMessage(outcome.errorBody)
+          : machine.server === 'ollama'
+            ? ollamaErrorMessage(outcome.errorBody)
+            : compatErrorMessage(outcome.errorBody);
       return failed(
-        `LM Studio answered HTTP ${outcome.status ?? 'nothing'}${said ? `: ${said}` : '.'}`,
+        `${SERVER_LABEL[machine.server]} answered HTTP ${outcome.status ?? 'nothing'}${said ? `: ${said}` : '.'}`,
       );
     }
     if (outcome.failure === 'http') {
@@ -1867,8 +1915,8 @@ export class SessionManager {
     const inBandError = outcome.timeline.events.find((e) => e.event.type === 'error')?.event;
     const source = machine.cloud
       ? CLOUD_INFO[machine.cloud.provider].label
-      : machine.server === 'lmstudio'
-        ? 'LM Studio'
+      : textOnlyServer(machine.server)
+        ? SERVER_LABEL[machine.server]
         : 'Unsloth';
     if (inBandError?.type === 'error') return failed(`${source} reported: ${inBandError.message}`);
     if (!client.sawDone && client.finishReason === null) {
