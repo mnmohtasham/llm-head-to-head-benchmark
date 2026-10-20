@@ -16,6 +16,7 @@ import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
 import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerSuiteRoutes } from './routes/suites';
 import { registerRunRoutes } from './routes/runs';
 import { registerLmStudioRoutes } from './routes/lmstudio';
 import { registerShareRoutes } from './routes/share';
@@ -23,9 +24,12 @@ import { ShareStore } from './share';
 import { DeviceRunIndex } from './runs';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
+import { RaceStarter } from './races';
 import { DEFAULT_RUN_TIMINGS, SessionManager, type RunTimings } from './sessions';
 import { SettingsStore } from './settings';
 import { MachineStore } from './store';
+import { SuiteStore } from './suite-store';
+import { SuiteManager } from './suites';
 import { DEFAULT_TELEMETRY, TelemetryHub, type TelemetryOptions } from './telemetry';
 
 export interface AppOptions {
@@ -245,14 +249,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     results,
     restoreText: chatRestorer({ catalog, loads, store }),
   });
-  registerSessionRoutes(app, {
-    store,
+  const races = new RaceStarter({ store, sessions, isLoading: (id) => loads.isActive(id), audio });
+  registerSessionRoutes(app, { store, sessions, races, audio, images, results });
+  const suiteStore = new SuiteStore(options.dataDir, app.log);
+  await suiteStore.init();
+  const suites = new SuiteManager({
+    suites: suiteStore,
+    races,
     sessions,
-    isLoading: (id) => loads.isActive(id),
-    audio,
-    images,
-    results,
+    machines: store,
+    log: app.log,
   });
+  registerSuiteRoutes(app, { suites });
   registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
   registerLmStudioRoutes(app, {
     store,
@@ -268,9 +276,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     ...(options.shareTimeouts ? { timeouts: options.shareTimeouts } : {}),
   });
   app.addHook('onClose', async () => {
+    // A running suite starts no more races; it is marked interrupted at the next start.
+    const suiteStopped = suites.close();
     await backfilled;
     await loads.close();
     await sessions.close();
+    await suiteStopped;
     telemetry.close();
   });
 
