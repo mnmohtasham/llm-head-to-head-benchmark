@@ -54,7 +54,12 @@ export class SuiteManager {
   }
 
   async get(id: string): Promise<Suite | null> {
-    if (this.active?.suite.id === id) return structuredClone(this.active.suite);
+    const entry = this.active;
+    if (entry?.suite.id === id) {
+      // Finished but still being saved: wait, so a finished suite is on disk too.
+      if (entry.suite.finishedAt !== null) await entry.done;
+      else return structuredClone(entry.suite);
+    }
     return this.deps.suites.load(id);
   }
 

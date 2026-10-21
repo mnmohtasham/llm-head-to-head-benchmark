@@ -177,7 +177,7 @@ export async function startOllamaMock(
     if (refused) return refused;
     const body = (request.body ?? {}) as Record<string, unknown>;
     const model = find(body.model);
-    if (!model) return reply.code(404).send({ error: `model "${String(body.model)}" not found` });
+    if (!model) return reply.code(404).send({ error: 'model not found' });
     if (body.keep_alive === 0) {
       loaded.delete(model.name);
       return {
@@ -279,10 +279,7 @@ export async function startOllamaMock(
       return reply.code(config.failWith).send({ error: 'the mock was told to fail' });
     }
     const model = find(body.model);
-    if (!model)
-      return reply
-        .code(404)
-        .send({ error: `model "${String(body.model)}" not found, try pulling it first` });
+    if (!model) return reply.code(404).send({ error: 'model not found, try pulling it first' });
     if (body.think !== undefined && !model.capabilities.includes('thinking')) {
       return reply.code(400).send({ error: `"${model.name}" does not support thinking` });
     }
@@ -293,17 +290,17 @@ export async function startOllamaMock(
 
   app.post('/__mock/config', async (request) => {
     config = { ...config, ...((request.body ?? {}) as Partial<EngineMockConfig>) };
-    return config;
+    return { ok: true };
   });
   app.post('/__mock/load', async (request) => {
     loaded = new Set(((request.body ?? {}) as { names?: string[] }).names ?? []);
-    return { loaded: [...loaded] };
+    return { ok: true };
   });
   app.post('/__mock/reset', async () => {
     config = { ...DEFAULT_ENGINE_CONFIG, ...options.config };
     loaded = initial();
     bodies.length = 0;
-    return config;
+    return { ok: true };
   });
 
   const { url, port } = await listen(app, options.port, options.host);
@@ -448,9 +445,7 @@ export async function startCompatMock(
         .send({ error: { message: 'The mock was told to fail.', code: config.failWith } });
     }
     if (body.model !== modelId) {
-      return reply
-        .code(404)
-        .send({ error: { message: `The model ${String(body.model)} does not exist.` } });
+      return reply.code(404).send({ error: { message: 'The model does not exist.' } });
     }
     // Requests beyond the slots wait their turn, as llama-server queues them.
     while (active >= slots) await sleep(5);
@@ -466,12 +461,12 @@ export async function startCompatMock(
 
   app.post('/__mock/config', async (request) => {
     config = { ...config, ...((request.body ?? {}) as Partial<EngineMockConfig>) };
-    return config;
+    return { ok: true };
   });
   app.post('/__mock/reset', async () => {
     config = { ...DEFAULT_ENGINE_CONFIG, ...options.config };
     bodies.length = 0;
-    return config;
+    return { ok: true };
   });
 
   const { url, port } = await listen(app, options.port, options.host);

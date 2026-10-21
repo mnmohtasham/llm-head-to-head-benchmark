@@ -233,4 +233,11 @@ describe('quants in names', () => {
   ])('%s → %s', (name, quant) => {
     expect(quantFromName(name)).toBe(quant);
   });
+
+  it('stays fast on a name a hostile server makes up', () => {
+    const started = performance.now();
+    expect(quantFromName(`q9${'_q0'.repeat(50_000)}!`)).toBeNull();
+    expect(quantFromName(`q9_${'0_q0_'.repeat(50_000)}`)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(200);
+  });
 });

@@ -85,13 +85,23 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const strings = (v: unknown): string[] => list(v).filter((x): x is string => typeof x === 'string');
 
-/** A quant named in a model's file name or tag, such as Q4_K_M, IQ3_XS, F16 or BF16. */
+/** A quant, as a whole part of a name: Q4_K_M, IQ3_XS, Q8_0, F16, BF16, FP8… */
+const QUANT = /^(?:I?Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32|FP8|MXFP4)$/i;
+
+/**
+ * A quant named in a model's file name or tag, such as Q4_K_M, IQ3_XS, F16 or BF16. The name is
+ * split at its separators and each part tested whole, so the time stays linear in its length
+ * whatever a server sends.
+ */
 export function quantFromName(name: string | null): string | null {
   if (!name) return null;
-  const found = /(?:^|[-_.:/])((?:I?Q\d(?:_[A-Z0-9]+)*)|BF16|F16|F32|FP8|MXFP4)(?=$|[-_.:/])/i.exec(
-    name,
-  );
-  return found?.[1] ? found[1].toUpperCase() : null;
+  for (const part of name.slice(-300).split(/[-.:/]/)) {
+    if (QUANT.test(part)) return part.toUpperCase();
+    // Joined to the name by an underscore, such as model_Q4_K_M.
+    const at = part.search(/_I?Q\d/i);
+    if (at > 0 && QUANT.test(part.slice(at + 1))) return part.slice(at + 1).toUpperCase();
+  }
+  return null;
 }
 
 /** Shared by both servers' probes: network failures in words. */
