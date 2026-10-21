@@ -1,8 +1,11 @@
 import {
   DEFAULT_PLAN,
   MAX_ROUNDS,
+  REASONING_EFFORTS,
   statisticOf,
+  type CloudModel,
   type MachineView,
+  type ModelStatus,
   type PreflightIssue,
   type RunPlan,
   type RunView,
@@ -18,6 +21,24 @@ import { RoundTable } from './RoundTable';
 import { ExportLinks, Scoreboard } from './Scoreboard';
 import { SetupTable } from './SetupTable';
 import { StatsTable } from './StatsTable';
+
+/** Effort levels every selected model accepts. */
+export function commonEfforts(statuses: ModelStatus[]): string[] {
+  if (statuses.length === 0) return [];
+  const [first, ...rest] = statuses.map((s) =>
+    s.reasoningEffortLevels.filter((level) =>
+      (REASONING_EFFORTS as readonly string[]).includes(level),
+    ),
+  );
+  return (first ?? []).filter((level) => rest.every((levels) => levels.includes(level)));
+}
+
+/** Effort levels any of these cloud models takes; each gets the nearest level it offers. */
+export function cloudEfforts(models: CloudModel[]): string[] {
+  return REASONING_EFFORTS.filter(
+    (level) => level !== 'none' && models.some((m) => m.efforts.includes(level)),
+  );
+}
 
 /** The machines to race, each with a line about what it has loaded. */
 export function MachinePicker({

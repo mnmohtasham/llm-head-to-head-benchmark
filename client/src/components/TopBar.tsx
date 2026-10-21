@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useAuth } from '../auth';
 
-export type Page = 'machines' | 'models' | 'text' | 'transcribe' | 'image' | 'results';
+export type Page = 'machines' | 'models' | 'text' | 'transcribe' | 'image' | 'suites' | 'results';
 
 const TABS: ReadonlyArray<{ page: Page; label: string }> = [
   { page: 'machines', label: 'Machines' },
@@ -9,6 +9,7 @@ const TABS: ReadonlyArray<{ page: Page; label: string }> = [
   { page: 'text', label: 'Text' },
   { page: 'transcribe', label: 'Transcribe' },
   { page: 'image', label: 'Image' },
+  { page: 'suites', label: 'Suites' },
   { page: 'results', label: 'Results' },
 ];
 
