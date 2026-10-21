@@ -477,10 +477,16 @@ export function RaceReport({
   const label = roundIndex === -1 ? 'warm-up' : `round ${(roundIndex ?? 0) + 1}`;
   return (
     <>
-      {session.state === 'interrupted' ? (
-        <div className="banner banner-warn" role="status">
-          {session.error}
-        </div>
+      {session.error && session.state !== 'running' ? (
+        session.state === 'failed' ? (
+          <div className="banner banner-error" role="alert" data-testid="race-error">
+            The race failed. {session.error}
+          </div>
+        ) : (
+          <div className="banner banner-warn" role="status" data-testid="race-error">
+            {session.error}
+          </div>
+        )
       ) : null}
       {!running && counted ? <Scoreboard session={session} /> : null}
       {!running && round && counted ? (

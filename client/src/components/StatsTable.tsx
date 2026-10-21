@@ -11,15 +11,20 @@ import { useState, type CSSProperties } from 'react';
 import { api, messageOf } from '../api';
 import { formatMsValue } from '../format';
 
-/** "failed 1 of 3" next to a machine that did not finish every round. */
+/** "failed 1 of 3" or "cancelled 1 of 3" next to a machine that did not finish every round. */
 function failures(session: SessionView, machineId: string) {
   const runs = runsOf(session, machineId);
-  const failed = runs.filter((run) => run.state !== 'done').length;
-  if (failed === 0) return null;
+  const failed = runs.filter((run) => run.state === 'failed').length;
+  const cancelled = runs.filter((run) => run.state === 'cancelled').length;
+  const parts = [
+    failed > 0 ? `failed ${failed}` : null,
+    cancelled > 0 ? `cancelled ${cancelled}` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
   return (
     <span className="compare-state">
       {' '}
-      failed {failed} of {runs.length}
+      {parts.join(', ')} of {runs.length}
     </span>
   );
 }

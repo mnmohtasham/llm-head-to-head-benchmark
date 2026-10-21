@@ -622,6 +622,10 @@ test.describe('one machine', () => {
       'Unsloth reported: Context size has been exceeded.',
     );
     await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Failed');
+    // The race as a whole failed too, and says why.
+    await expect(page.getByTestId('race-error')).toHaveText(
+      'The race failed. Every machine failed in every round. Each pane says why.',
+    );
   });
 
   test('will not start while a chosen machine has no model', async ({ page, request }) => {
