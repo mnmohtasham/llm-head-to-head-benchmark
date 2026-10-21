@@ -321,11 +321,13 @@ export function ResultsPage() {
     );
 
   const download = () => {
-    const blob = new Blob([runsCsv(sorted, visible)], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([runsCsv(sorted, visible, statistic)], {
+      type: 'text/csv;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `model-duel-results-${view}-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.download = `model-duel-results-${view}-${statistic === 'mean' ? 'averages' : 'medians'}-${new Date().toISOString().slice(0, 10)}.csv`;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -616,12 +618,27 @@ export function ResultsPage() {
             ) : null}
 
             {sorted.length === 0 ? (
-              <p className="muted">
-                No runs match these filters.{' '}
-                <button type="button" className="btn btn-quiet btn-inline" onClick={clearFilters}>
-                  Clear filters
-                </button>
-              </p>
+              filtering ? (
+                <p className="muted">
+                  No runs match these filters.{' '}
+                  <button type="button" className="btn btn-quiet btn-inline" onClick={clearFilters}>
+                    Clear filters
+                  </button>
+                </p>
+              ) : !unfinished ? (
+                <p className="muted">
+                  Every run here failed or was cancelled, so none is shown.{' '}
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-inline"
+                    onClick={() => setUnfinished(true)}
+                  >
+                    Show them
+                  </button>
+                </p>
+              ) : (
+                <p className="muted">No runs of this kind yet.</p>
+              )
             ) : (
               <div className="table-scroll results-scroll" tabIndex={0} aria-label="Results table">
                 <table className="metrics-table results-table" data-testid="results-table">

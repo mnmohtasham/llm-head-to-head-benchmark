@@ -71,7 +71,10 @@ export interface DeviceRun {
   chatModel: boolean;
 
   prompt: string | null;
-  /** The full custom prompt, for search. */
+  /**
+   * The prompt for search and comparison: the whole of a short one; for a long one, its start and
+   * a fingerprint of the whole, so a row stays small and two different prompts still differ.
+   */
   promptText: string | null;
   promptTokens: number | null;
   prefill: 'cold' | 'warm' | null;
@@ -127,6 +130,25 @@ function median(values: number[]): number | null {
   return sorted.length % 2
     ? (sorted[mid] ?? null)
     : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+/** Longer prompts are kept as their start and a fingerprint: the 32K preset alone is 150 KB. */
+const PROMPT_KEEP = 2000;
+
+/** FNV-1a over the whole text, as eight hex digits: enough to tell two prompts apart. */
+function fingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+export function promptKey(prompt: string): string {
+  return prompt.length <= PROMPT_KEEP
+    ? prompt
+    : `${prompt.slice(0, PROMPT_KEEP)}… (${prompt.length.toLocaleString('en-US')} characters, #${fingerprint(prompt)})`;
 }
 
 function counted(values: string[]): string | null {
@@ -330,7 +352,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
           ? `Custom: ${text.prompt.length > 48 ? `${text.prompt.slice(0, 48).trimEnd()}…` : text.prompt}`
           : (preset?.label ?? text.preset)
         : null,
-      promptText: text ? text.prompt : null,
+      promptText: text ? promptKey(text.prompt) : null,
       promptTokens: median(
         done
           .map((run) => run.client?.promptTokens)
@@ -879,11 +901,38 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
 }
 
 /** The rows as CSV, with the columns' raw values: numbers stay numbers. */
-export function runsCsv(runs: readonly DeviceRun[], columns: readonly RunColumn[]): string {
+/**
+ * The rows and columns shown, with raw numbers. Every measurement's header says its unit and
+ * whether it is a median or an average; the headline, whose metric differs from row to row, gets
+ * a column naming its metric and unit; GPU layers set to automatic read "auto" as on screen.
+ */
+export function runsCsv(
+  runs: readonly DeviceRun[],
+  columns: readonly RunColumn[],
+  statistic: Statistic = 'median',
+): string {
   const cell = csvCell;
-  const header = columns.map((c) =>
-    cell(c.unit && c.unit !== 'text' ? `${c.label} (${c.unit})` : c.label),
+  const word = statisticWord(statistic);
+  const measured = (c: RunColumn) => c.id === 'headline' || c.id.startsWith('metric:');
+  const header = columns.flatMap((c) => {
+    const unit = c.unit && c.unit !== 'text' ? c.unit : null;
+    const parts = [unit, measured(c) && c.unit !== 'text' ? word : null].filter(Boolean);
+    const label = parts.length > 0 ? `${c.label} (${parts.join(', ')})` : c.label;
+    return c.id === 'headline' ? [cell(label), cell('Headline metric')] : [cell(label)];
+  });
+  const value = (c: RunColumn, r: DeviceRun) => {
+    const v = c.value(r);
+    return c.id === 'gpuLayers' && typeof v === 'number' && v < 0 ? 'auto' : v;
+  };
+  const body = runs.map((r) =>
+    columns
+      .flatMap((c) => {
+        if (c.id !== 'headline') return [cell(value(c, r))];
+        const found = headlineOf(r, statistic);
+        const spec = found && metricsFor(r.kind).find((m) => m.key === found.key);
+        return [cell(value(c, r)), cell(spec ? `${spec.label} (${spec.unit})` : null)];
+      })
+      .join(','),
   );
-  const body = runs.map((r) => columns.map((c) => cell(c.value(r))).join(','));
   return `${[header.join(','), ...body].join('\n')}\n`;
 }

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { CloudModel } from '../src/cloud';
 import type { MachineProvenance, SessionView } from '../src/session';
-import { deviceRuns, quantOfFile, runColumns, runsCsv, type DeviceRun } from '../src/runs';
+import {
+  deviceRuns,
+  promptKey,
+  quantOfFile,
+  runColumns,
+  runsCsv,
+  type DeviceRun,
+} from '../src/runs';
 import { makeRun, makeSession, makeStatus } from './make';
 
 function provenance(machineId: string, over: Partial<MachineProvenance> = {}): MachineProvenance {
@@ -224,11 +231,26 @@ describe('columns and CSV', () => {
     runs[0]!.prompt = 'Custom: say "hi", then stop';
     expect(runsCsv(runs, columns)).toBe(
       [
-        'Machine,GPU,GPU memory (GB),Prompt,Decode speed (tok/s)',
+        'Machine,GPU,GPU memory (GB),Prompt,"Decode speed (tok/s, median)"',
         'test,NVIDIA GeForce RTX 3060,12,"Custom: say ""hi"", then stop",57',
         'lenovo,AMD Radeon 780M Graphics,28,Custom: Hi,18.5',
         '',
       ].join('\n'),
     );
+    const headline = runColumns('all').filter((c) => c.id === 'headline' || c.id === 'gpuLayers');
+    const csv = runsCsv(runs, headline, 'mean');
+    expect(csv.split('\n')[0]).toBe('GPU layers,Headline (average),Headline metric');
+  });
+});
+
+describe('prompts in rows', () => {
+  it('keep a short prompt whole, and a long one as its start and a fingerprint', () => {
+    expect(promptKey('Why is the sky blue?')).toBe('Why is the sky blue?');
+    const long = 'word '.repeat(30_000);
+    const a = promptKey(`${long}one`);
+    const b = promptKey(`${long}two`);
+    expect(a.length).toBeLessThan(2100);
+    expect(a).toMatch(/… \(150,003 characters, #[0-9a-f]{8}\)$/);
+    expect(a).not.toBe(b);
   });
 });
