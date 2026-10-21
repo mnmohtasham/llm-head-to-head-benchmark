@@ -6,8 +6,9 @@ import {
   type CloudProvider,
   type MachineView,
 } from '@duel/shared';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { ApiError, api, messageOf } from '../api';
+import { useId, useRef, useState, type FormEvent } from 'react';
+import { api, splitFieldErrors } from '../api';
+import { useModal } from '../useModal';
 import { modelFacts } from './CloudCard';
 import { ColorField } from './MachineDialog';
 
@@ -19,6 +20,9 @@ export interface CloudFormValues {
   apiKey: string;
   cloud: { provider: CloudProvider; model: CloudModel };
 }
+
+/** Fields that show their own error; the server's errors for any other go above the buttons. */
+const SHOWN_FIELDS = ['apiKey', 'baseUrl', 'model', 'name'];
 
 interface Props {
   machine: MachineView | null;
@@ -45,6 +49,8 @@ export function CloudDialog({ machine, usedColors, onSubmit, onClose }: Props) {
   const [models, setModels] = useState<CloudModel[] | null>(saved?.model ? [saved.model] : null);
   const [modelId, setModelId] = useState(saved?.model?.id ?? '');
   const [fetching, setFetching] = useState(false);
+  /** Bumped by every fetch and provider change, so only the latest list is taken. */
+  const fetchTicket = useRef(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [color, setColor] = useState<string>(
     machine?.color ?? MACHINE_COLORS.find((c) => !usedColors.includes(c)) ?? MACHINE_COLORS[0],
@@ -55,12 +61,12 @@ export function CloudDialog({ machine, usedColors, onSubmit, onClose }: Props) {
   const savedKey = machine?.hasApiKey ? machine.apiKeyMasked : null;
   const model = models?.find((m) => m.id === modelId) ?? null;
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
   const pickProvider = (next: CloudProvider) => {
+    // A list still on its way is the old provider's.
+    fetchTicket.current += 1;
+    setFetching(false);
     setProvider(next);
     setModels(null);
     setModelId('');
@@ -80,8 +86,9 @@ export function CloudDialog({ machine, usedColors, onSubmit, onClose }: Props) {
       setErrors((current) => ({ ...current, apiKey: 'Enter the API key first.' }));
       return;
     }
-    setErrors((current) => ({ ...current, apiKey: '', model: '' }));
+    setErrors((current) => ({ ...current, apiKey: '', baseUrl: '', model: '' }));
     setFetching(true);
+    const ticket = ++fetchTicket.current;
     try {
       const { models: list } = await api.cloudModels({
         provider,
@@ -89,13 +96,18 @@ export function CloudDialog({ machine, usedColors, onSubmit, onClose }: Props) {
         baseUrl: address.trim() || undefined,
         machineId: machine?.id,
       });
+      if (ticket !== fetchTicket.current) return;
       setModels(list);
       if (!list.some((m) => m.id === modelId)) setModelId('');
       if (list.length === 0) setFetchError(`${info.label} offers this key no text models.`);
     } catch (error) {
-      setFetchError(messageOf(error));
+      if (ticket !== fetchTicket.current) return;
+      // The key and the address show their own errors; anything else goes under the model.
+      const { fields, form } = splitFieldErrors(error, ['apiKey', 'baseUrl']);
+      setErrors((current) => ({ ...current, ...fields }));
+      setFetchError(form);
     } finally {
-      setFetching(false);
+      if (ticket === fetchTicket.current) setFetching(false);
     }
   };
 
@@ -118,9 +130,9 @@ export function CloudDialog({ machine, usedColors, onSubmit, onClose }: Props) {
         cloud: { provider, model },
       });
     } catch (error) {
-      if (error instanceof ApiError && Object.keys(error.fields).length > 0)
-        setErrors(error.fields);
-      else setFormError(messageOf(error));
+      const { fields, form } = splitFieldErrors(error, SHOWN_FIELDS);
+      setErrors((current) => ({ ...current, ...fields }));
+      setFormError(form);
       setBusy(false);
     }
   };

@@ -8,13 +8,15 @@ export function relativeTime(iso: string, now: number): string {
   return new Date(iso).toLocaleDateString();
 }
 
+const CLOCK = new Intl.DateTimeFormat([], {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
 export function clockTime(date: Date): string {
-  return date.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  return CLOCK.format(date);
 }
 
 export function formatGb(gb: number | null): string {

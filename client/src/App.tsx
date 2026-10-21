@@ -3,13 +3,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, messageOf } from './api';
 import type { LogEntry, NewLogEntry } from './components/LogPanel';
 import type { Page } from './components/TopBar';
-import { MachinesPage } from './pages/MachinesPage';
-import { ModelsPage } from './pages/ModelsPage';
-import { ResultsPage } from './pages/ResultsPage';
-import { SuitesPage } from './pages/SuitesPage';
-import { TextPage } from './pages/TextPage';
-import { ImagePage } from './pages/ImagePage';
-import { TranscribePage } from './pages/TranscribePage';
+// Each page is fetched the first time its tab is opened.
+import {
+  ImagePage,
+  MachinesPage,
+  ModelsPage,
+  ResultsPage,
+  SuitesPage,
+  TextPage,
+  TranscribePage,
+} from './LazyPages';
 
 let nextLogId = 1;
 

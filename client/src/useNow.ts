@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 
-/** The current time, refreshed on an interval, for "2 min ago" labels. */
-export function useNow(intervalMs = 30_000): number {
+/** The current time, refreshed on an interval, for "2 min ago" labels. Null stops the clock. */
+export function useNow(intervalMs: number | null = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (intervalMs === null) return;
     const timer = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(timer);
   }, [intervalMs]);

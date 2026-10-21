@@ -27,6 +27,7 @@ import {
   cloudEfforts,
   commonEfforts,
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   sharedHost,
   Toggle,
@@ -34,6 +35,7 @@ import {
 } from '../components/RaceParts';
 import { plural, SUITE_STATE_LABEL, SuiteReport, when } from '../components/SuiteReport';
 import { TopBar } from '../components/TopBar';
+import { fieldNumber, formProblem } from '../fields';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 /** How often a running suite is read again. */
@@ -247,14 +249,15 @@ export function SuitesPage({ machines, loadError }: Props) {
     maxTokens: tokenValues,
     plan: plan.value,
     mode,
-    concurrency: Number(concurrency),
+    // Only what is sent is checked: latency mode hides Requests at once.
+    concurrency: mode === 'throughput' ? fieldNumber(concurrency) : undefined,
     prefill,
     acknowledgeWarnings: acceptWarnings,
   });
   const problem = tokenValues.some((n) => !Number.isInteger(n))
     ? 'Max tokens takes whole numbers, separated by commas.'
     : !draft.success
-      ? (draft.error.issues[0]?.message ?? 'Check the settings.')
+      ? formProblem(draft.error, { ...PLAN_LABELS, concurrency: 'Requests at once' })
       : null;
   const sharing = sharedHost(chosen, hosts);
 

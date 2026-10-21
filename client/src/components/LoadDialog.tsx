@@ -13,8 +13,17 @@ import {
   type ModelFormat,
   type SpeculativeType,
 } from '@duel/shared';
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { fieldNumber, formProblem } from '../fields';
 import { formatTokens } from '../format';
+import { useModal } from '../useModal';
+
+/** The number fields by their path in the load settings. */
+const LOAD_LABELS: Readonly<Record<string, string>> = {
+  contextLength: 'Context length',
+  reasoningBudget: 'Reasoning budget',
+  parallelSlots: 'Parallel slots',
+};
 
 interface ModelOption {
   modelId: string;
@@ -86,17 +95,20 @@ export function LoadDialog({
   const id = useId();
   const [selected, setSelected] = useState<string[]>([...initialMachineIds]);
   const options = useMemo(() => modelOptions(models, selected), [models, selected]);
-  const [modelId, setModelId] = useState<string>(
+  const [pickedModel, setPickedModel] = useState<string>(
     () => initialModelId ?? modelOptions(models, initialMachineIds)[0]?.modelId ?? '',
   );
+  // Until a model is picked, the first one offered: the lists may arrive after the dialog opens.
+  const modelId = pickedModel || (options[0]?.modelId ?? '');
   const chosen = options.find((option) => sameId(option.modelId, modelId));
-  const [quant, setQuant] = useState<string | null>(() =>
-    bestQuant(
-      modelOptions(models, initialMachineIds).find((o) =>
-        sameId(o.modelId, initialModelId ?? modelId),
-      ),
-    ),
+  const [pickedQuant, setPickedQuant] = useState<string | null>(() =>
+    bestQuant(modelOptions(models, initialMachineIds).find((o) => sameId(o.modelId, pickedModel))),
   );
+  // A quant the chosen model is not offered in falls back to its most common one.
+  const quant = chosen
+    ? (chosen.quants.find((q) => pickedQuant !== null && sameId(q.quant, pickedQuant))?.quant ??
+      bestQuant(chosen))
+    : pickedQuant;
   const [context, setContext] = useState('0');
   const [speculative, setSpeculative] = useState<SpeculativeType>('off');
   const [budget, setBudget] = useState('-1');
@@ -106,10 +118,7 @@ export function LoadDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
   const gguf = chosen ? chosen.format === 'gguf' : true;
   const rows = machines.map((machine) => {
@@ -134,23 +143,23 @@ export function LoadDialog({
     );
 
   const pickModel = (next: string) => {
-    setModelId(next);
-    setQuant(bestQuant(options.find((option) => sameId(option.modelId, next))));
+    setPickedModel(next);
+    setPickedQuant(bestQuant(options.find((option) => sameId(option.modelId, next))));
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
     const settings = loadSettingsSchema.safeParse({
-      contextLength: Number(context),
+      contextLength: fieldNumber(context),
       speculativeType: speculative,
-      reasoningBudget: Number(budget),
-      parallelSlots: Number(slots),
+      reasoningBudget: fieldNumber(budget),
+      parallelSlots: fieldNumber(slots),
       cacheTypeKv: kvCache === '' ? null : kvCache,
       extraArgs: splitArgs(extraArgs),
     });
     if (!settings.success) {
-      setError(settings.error.issues[0]?.message ?? 'Check the settings.');
+      setError(formProblem(settings.error, LOAD_LABELS));
       return;
     }
     if (!modelId) {
@@ -221,7 +230,7 @@ export function LoadDialog({
           <label htmlFor={`${id}-model`}>Model</label>
           <select
             id={`${id}-model`}
-            value={modelId}
+            value={chosen?.modelId ?? modelId}
             onChange={(event) => pickModel(event.target.value)}
           >
             {options.length === 0 ? (
@@ -243,8 +252,11 @@ export function LoadDialog({
             <select
               id={`${id}-quant`}
               value={quant ?? ''}
-              onChange={(event) => setQuant(event.target.value || null)}
+              onChange={(event) => setPickedQuant(event.target.value || null)}
             >
+              {chosen === undefined ? (
+                <option value={quant ?? ''}>{quant ?? 'No quant on the selected machines'}</option>
+              ) : null}
               {(chosen?.quants ?? []).map((q) => (
                 <option key={q.quant} value={q.quant}>
                   {q.quant}

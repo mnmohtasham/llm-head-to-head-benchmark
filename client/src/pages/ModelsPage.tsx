@@ -104,7 +104,11 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
   useEffect(() => {
     if (!anyActive) return;
     let stopped = false;
+    // A slow answer is waited for: the next tick does not send another request meanwhile.
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const { jobs: list, serverTime } = await api.listLoads();
         if (stopped) return;
@@ -116,6 +120,8 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
         });
       } catch {
         // Keep following; a missed tick is harmless.
+      } finally {
+        inFlight = false;
       }
     };
     void tick();
@@ -204,6 +210,7 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
     });
   };
 
+  const listsIn = (machines ?? []).every((m) => models[m.id] !== undefined);
   const busyMachineIds = new Set(
     Object.values(jobs)
       .filter(isActiveJob)
@@ -221,6 +228,9 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
               type="button"
               className="btn btn-primary"
               onClick={() => setDialog({ machineIds: machines.map((m) => m.id), modelId: null })}
+              // The dialog offers the models on the machines, so it waits for every list.
+              disabled={!listsIn}
+              title={listsIn ? undefined : 'Reading the model lists…'}
             >
               Load on all machines
             </button>
@@ -281,7 +291,7 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
           </div>
         ) : null}
 
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {dialog && machines ? (

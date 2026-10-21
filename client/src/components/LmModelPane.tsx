@@ -2,6 +2,7 @@ import type { LmModel, MachineView } from '@duel/shared';
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { api, messageOf, type LmModelsView } from '../api';
 import { formatBytes, formatDuration, formatTokens } from '../format';
+import { useModal } from '../useModal';
 import { useNow } from '../useNow';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { NewLogEntry } from './LogPanel';
@@ -444,10 +445,7 @@ function LoadDialog({
   const [replace, setReplace] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
   const pick = (next: string) => {
     setKey(next);

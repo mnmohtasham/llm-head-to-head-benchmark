@@ -64,17 +64,19 @@ interface Props {
 }
 
 export function TranscriptPane({ machine, modelName, run, telemetry }: Props) {
-  const now = useNow(100);
   const [raw, setRaw] = useState(false);
   const t = run?.transcription ?? null;
   const running = run !== null && run.finishedAt === null;
   const phase = !run ? 'idle' : run.state;
+  const since = running && run.state === 'streaming' ? run.requestedAtMs : null;
+  // The clock ticks only while the total counts up; an idle pane does not draw ten times a second.
+  const now = useNow(since === null ? null : 100);
   const elapsed =
     run?.live?.elapsedMs && !running
       ? run.live.elapsedMs
-      : running && run.requestedAtMs !== null && run.state === 'streaming'
-        ? now - run.requestedAtMs
-        : null;
+      : since === null
+        ? null
+        : Math.max(0, now - since);
   const wer = t?.wer ?? null;
 
   return (

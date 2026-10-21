@@ -1,4 +1,5 @@
 import type { SessionSummary } from '@duel/shared';
+import { memo } from 'react';
 import { formatRate, formatSeconds } from '../format';
 
 const STATE_LABEL: Record<SessionSummary['state'], string> = {
@@ -9,14 +10,17 @@ const STATE_LABEL: Record<SessionSummary['state'], string> = {
   interrupted: 'Interrupted',
 };
 
+// One formatter for every row: making one per call costs more than the rest of the row.
+const WHEN = new Intl.DateTimeFormat([], {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 function when(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  return WHEN.format(new Date(iso));
 }
 
 interface Props {
@@ -25,8 +29,11 @@ interface Props {
   onDelete: (session: SessionSummary) => void;
 }
 
-/** Every saved race, newest first. Open shows it again; delete removes its file. */
-export function SessionList({ sessions, currentId, onDelete }: Props) {
+/**
+ * Every saved race, newest first. Open shows it again; delete removes its file. It draws again
+ * only when its props change, not with every update of a live race above it.
+ */
+export const SessionList = memo(function SessionList({ sessions, currentId, onDelete }: Props) {
   return (
     <section className="panel session-list" aria-labelledby="results-title">
       <h2 id="results-title" className="section-title">
@@ -97,4 +104,4 @@ export function SessionList({ sessions, currentId, onDelete }: Props) {
       )}
     </section>
   );
-}
+});

@@ -7,6 +7,7 @@ import {
 } from '@duel/shared';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, api, messageOf, type SentShare, type ShareSettingsView } from '../api';
+import { useModal } from '../useModal';
 
 function Dialog({
   title,
@@ -23,10 +24,7 @@ function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const id = useId();
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
   return (
     <dialog
       ref={ref}

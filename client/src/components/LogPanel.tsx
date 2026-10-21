@@ -1,4 +1,5 @@
 import type { MachineView } from '@duel/shared';
+import { memo } from 'react';
 import { clockTime } from '../format';
 
 export interface LogEntry {
@@ -12,9 +13,16 @@ export interface LogEntry {
 
 export type NewLogEntry = Omit<LogEntry, 'id' | 'at'>;
 
-export function LogPanel({ machines, entries }: { machines: MachineView[]; entries: LogEntry[] }) {
+/** The activity log. It draws again only when its props change, not with every race update. */
+export const LogPanel = memo(function LogPanel({
+  machines,
+  entries,
+}: {
+  machines: MachineView[] | null;
+  entries: LogEntry[];
+}) {
   const roster =
-    machines.length === 0
+    !machines || machines.length === 0
       ? 'No machines yet.'
       : `${machines.length} ${machines.length === 1 ? 'machine' : 'machines'}: ${machines
           .map((machine) => machine.name)
@@ -44,4 +52,4 @@ export function LogPanel({ machines, entries }: { machines: MachineView[]; entri
       </ol>
     </section>
   );
-}
+});

@@ -18,14 +18,17 @@ export const SUITE_STATE_LABEL: Record<SuiteState, string> = {
   interrupted: 'Interrupted',
 };
 
+// One formatter for every row: making one per call costs more than the rest of the row.
+const WHEN = new Intl.DateTimeFormat([], {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 export function when(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  return WHEN.format(new Date(iso));
 }
 
 export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

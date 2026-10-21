@@ -178,7 +178,11 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
         {machines && machines.length === 0 ? <EmptyState onAdd={openAdd} /> : null}
         {local.length > 0 ? (
           <section className="panel telemetry-panel" aria-label="Live hardware">
-            <TelemetrySwitch enabled={telemetry.enabled} onError={setTelemetryError} />
+            <TelemetrySwitch
+              enabled={telemetry.enabled}
+              onChange={telemetry.setEnabled}
+              onError={setTelemetryError}
+            />
             {telemetryError ? <p className="field-error">{telemetryError}</p> : null}
           </section>
         ) : null}
@@ -216,7 +220,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
           </div>
         ) : null}
 
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {dialog?.mode === 'add-cloud' || (dialog?.mode === 'edit' && dialog.machine.cloud) ? (
