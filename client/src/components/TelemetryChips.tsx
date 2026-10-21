@@ -1,4 +1,5 @@
 import type { TelemetrySample, TelemetryStatus } from '@duel/shared';
+import { memo } from 'react';
 import { api, messageOf } from '../api';
 
 const pct = (v: number | null) => (v === null ? 'n/a' : `${Math.round(v)}%`);
@@ -57,7 +58,7 @@ export function TelemetryChips({
 }
 
 /** The global switch: polling adds a little load on every machine, so it can be turned off. */
-export function TelemetrySwitch({
+export const TelemetrySwitch = memo(function TelemetrySwitch({
   enabled,
   onChange,
   onError,
@@ -99,4 +100,4 @@ export function TelemetrySwitch({
       </p>
     </div>
   );
-}
+});

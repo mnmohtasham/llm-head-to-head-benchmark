@@ -16,6 +16,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
   type ChangeEvent,
   type CSSProperties,
@@ -165,7 +166,10 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : machines.slice(0, 1).map((m) => m.id));
   }, [selected, machines, stt]);
 
-  const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
+  const chosen = useMemo(
+    () => (machines ?? []).filter((m) => selected?.includes(m.id)),
+    [machines, selected],
+  );
   const chosenIds = chosen.map((m) => m.id);
   const effectiveModel = model === OTHER ? customModel.trim() : model;
   const draft = transcribeConfigSchema.safeParse({
@@ -191,21 +195,47 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
     : null;
   const preflight = usePreflight(preflightKey, running || uploading);
   const blocked = !draft.success || chosen.length === 0 || uploading || preflight.stops;
-  const sharing = sharedHost(chosen, hosts);
+  const sharing = useMemo(() => sharedHost(chosen, hosts), [chosen, hosts]);
 
-  const toggle = (id: string) => {
+  const toggle = useCallback((id: string) => {
     setSelected((current) => {
       const list = current ?? [];
       return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
     });
-  };
+  }, []);
+  const describe = useCallback(
+    (m: MachineView) => {
+      const read = stt[m.id];
+      if (!read) return 'checking…';
+      if (read.error || !read.status) return read.error ? 'unreachable' : 'checking…';
+      if (!read.status.available) return 'no speech-to-text';
+      return read.status.loadedModel
+        ? `${read.status.loadedModel} on ${read.status.loadedEngine ?? 'unknown'} in memory`
+        : 'no speech model in memory';
+    },
+    [stt],
+  );
+  const preflightProblem = useMemo(
+    () =>
+      uploading
+        ? { text: 'Waiting for the upload…', error: false }
+        : problem
+          ? { text: problem, error: true }
+          : chosen.length === 0
+            ? { text: 'Pick at least one machine.', error: false }
+            : null,
+    [uploading, problem, chosen.length],
+  );
 
-  const pickEngine = (next: SttEngineName) => {
-    setEngine(next);
-    if (model !== OTHER && !modelsFor(next).includes(model)) {
-      setModel(next === 'mtmd' ? 'qwen3-asr-0.6b' : 'large-v3-turbo');
-    }
-  };
+  const pickEngine = useCallback(
+    (next: SttEngineName) => {
+      setEngine(next);
+      if (model !== OTHER && !modelsFor(next).includes(model)) {
+        setModel(next === 'mtmd' ? 'qwen3-asr-0.6b' : 'large-v3-turbo');
+      }
+    },
+    [model],
+  );
 
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -273,17 +303,24 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
   const columns = Math.min(Math.max(panes.length, 1), 4);
   const audio = preflight.current?.result?.audio ?? null;
   /** Pre-flight's shortcut when a machine has the model loaded with another engine. */
-  const engineShortcut = (issue: PreflightIssue) => {
-    if (issue.code !== 'stt-download' || !issue.machineId || running) return null;
-    const status = stt[issue.machineId]?.status;
-    const loaded = status?.loadedEngine ?? null;
-    if (!loaded || loaded === engine || status?.loadedModel !== effectiveModel) return null;
-    return (
-      <button type="button" className="btn btn-quiet btn-inline" onClick={() => pickEngine(loaded)}>
-        Race with {ENGINE_LABEL[loaded]}
-      </button>
-    );
-  };
+  const engineShortcut = useCallback(
+    (issue: PreflightIssue) => {
+      if (issue.code !== 'stt-download' || !issue.machineId || running) return null;
+      const status = stt[issue.machineId]?.status;
+      const loaded = status?.loadedEngine ?? null;
+      if (!loaded || loaded === engine || status?.loadedModel !== effectiveModel) return null;
+      return (
+        <button
+          type="button"
+          className="btn btn-quiet btn-inline"
+          onClick={() => pickEngine(loaded)}
+        >
+          Race with {ENGINE_LABEL[loaded]}
+        </button>
+      );
+    },
+    [running, stt, engine, effectiveModel, pickEngine],
+  );
   const onDisk = chosen
     .filter((m) => stt[m.id]?.status?.engines[engine].downloaded.includes(effectiveModel))
     .map((m) => m.name);
@@ -349,15 +386,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
               selected={selected}
               onToggle={toggle}
               running={running}
-              describe={(m) => {
-                const read = stt[m.id];
-                if (!read) return 'checking…';
-                if (read.error || !read.status) return read.error ? 'unreachable' : 'checking…';
-                if (!read.status.available) return 'no speech-to-text';
-                return read.status.loadedModel
-                  ? `${read.status.loadedModel} on ${read.status.loadedEngine ?? 'unknown'} in memory`
-                  : 'no speech model in memory';
-              }}
+              describe={describe}
             />
 
             <div className="field audio-source">
@@ -516,15 +545,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
 
             <PlanFields plan={plan} running={running} sharing={sharing} />
             <PreflightPanel
-              problem={
-                uploading
-                  ? { text: 'Waiting for the upload…', error: false }
-                  : problem
-                    ? { text: problem, error: true }
-                    : chosen.length === 0
-                      ? { text: 'Pick at least one machine.', error: false }
-                      : null
-              }
+              problem={preflightProblem}
               checking={preflight.current === null}
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
@@ -591,9 +612,9 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
         <SessionList
           sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => race.setDeleting(target)}
+          onDelete={race.setDeleting}
         />
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {race.deleting ? (

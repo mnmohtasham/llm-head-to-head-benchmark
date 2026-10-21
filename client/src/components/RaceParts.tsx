@@ -14,7 +14,7 @@ import {
   type Statistic,
   type Workload,
 } from '@duel/shared';
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { fieldNumber } from '../fields';
 import { BlindVote } from './BlindVote';
 import { RaceCharts } from './RaceCharts';
@@ -41,8 +41,11 @@ export function cloudEfforts(models: CloudModel[]): string[] {
   );
 }
 
+// The form's parts are memoized: during a race the page draws again with every update of the
+// panes, and these change only when the user does something.
+
 /** The machines to race, each with a line about what it has loaded. */
-export function MachinePicker({
+export const MachinePicker = memo(function MachinePicker({
   machines,
   selected,
   onToggle,
@@ -77,7 +80,7 @@ export function MachinePicker({
       ))}
     </fieldset>
   );
-}
+});
 
 /** The plan's number fields by their path in a race request, for `formProblem`. */
 export const PLAN_LABELS: Readonly<Record<string, string>> = {
@@ -92,32 +95,37 @@ export function usePlan() {
   const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
   const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
   const [statistic, setStatistic] = useState<Statistic>('median');
-  return {
-    rounds,
-    setRounds,
-    warmup,
-    setWarmup,
-    settleSeconds,
-    setSettleSeconds,
-    sequencing,
-    setSequencing,
-    statistic,
-    setStatistic,
-    value: {
-      rounds: fieldNumber(rounds),
+  const fill = useCallback((plan: RunPlan) => {
+    setRounds(String(plan.rounds));
+    setWarmup(plan.warmup);
+    setSettleSeconds(String(plan.settleMs / 1000));
+    setSequencing(plan.sequencing);
+    setStatistic(statisticOf(plan));
+  }, []);
+  // The same object until a field changes, so the plan's fields need not draw again.
+  return useMemo(
+    () => ({
+      rounds,
+      setRounds,
       warmup,
-      settleMs: Math.round(fieldNumber(settleSeconds) * 1000),
+      setWarmup,
+      settleSeconds,
+      setSettleSeconds,
       sequencing,
+      setSequencing,
       statistic,
-    } satisfies RunPlan,
-    fill: (plan: RunPlan) => {
-      setRounds(String(plan.rounds));
-      setWarmup(plan.warmup);
-      setSettleSeconds(String(plan.settleMs / 1000));
-      setSequencing(plan.sequencing);
-      setStatistic(statisticOf(plan));
-    },
-  };
+      setStatistic,
+      value: {
+        rounds: fieldNumber(rounds),
+        warmup,
+        settleMs: Math.round(fieldNumber(settleSeconds) * 1000),
+        sequencing,
+        statistic,
+      } satisfies RunPlan,
+      fill,
+    }),
+    [rounds, warmup, settleSeconds, sequencing, statistic, fill],
+  );
 }
 
 /** Names of chosen machines that share a computer, which should take turns. */
@@ -169,7 +177,7 @@ function Toggle<T extends string | boolean>({
   );
 }
 
-export function PlanFields({
+export const PlanFields = memo(function PlanFields({
   plan,
   running,
   sharing,
@@ -262,12 +270,12 @@ export function PlanFields({
       ) : null}
     </>
   );
-}
+});
 
 export { Toggle };
 
 /** What pre-flight found, and the Race anyway switch when it only warns. */
-export function PreflightPanel({
+export const PreflightPanel = memo(function PreflightPanel({
   problem,
   checking,
   error,
@@ -379,7 +387,7 @@ export function PreflightPanel({
       )}
     </section>
   );
-}
+});
 
 /** A line about where a running session is. */
 function progressText(workload: Workload, progress: SessionProgress, rounds: number): string {

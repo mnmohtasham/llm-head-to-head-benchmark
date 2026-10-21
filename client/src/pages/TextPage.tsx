@@ -20,6 +20,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -198,7 +199,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : fallback ? [fallback.id] : []);
   }, [selected, machines, statuses]);
 
-  const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
+  const chosen = useMemo(
+    () => (machines ?? []).filter((m) => selected?.includes(m.id)),
+    [machines, selected],
+  );
   const chosenStatuses = chosen.map((m) => statuses[m.id]?.status ?? null);
   const loaded = chosenStatuses.filter((s): s is ModelStatus => !!s?.activeModel);
   const cloudModels = chosen
@@ -243,62 +247,98 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const preflight = usePreflight(preflightKey, running);
   const blocked = !draft.success || chosen.length === 0 || preflight.stops;
   // Machines on one computer compete for it, so they should take turns.
-  const sharing = sharedHost(chosen, hosts);
+  const sharing = useMemo(() => sharedHost(chosen, hosts), [chosen, hosts]);
+  const recheck = preflight.recheck;
 
   /** Pre-flight's shortcut when a machine has too few slots: reload its model with enough. */
-  const reloadWithSlots = async (machineId: string, slots: number) => {
-    setReloading((current) => ({ ...current, [machineId]: 'Loading again…' }));
-    try {
-      await api.reloadSlots(machineId, slots);
-      const deadline = Date.now() + 15 * 60_000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        // The load goes on after leaving the tab; following it stops.
-        if (!mounted.current) return;
-        const view = await api.machineStatus(machineId);
-        setStatuses((current) => ({ ...current, [machineId]: view }));
-        if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
-          setReloading((current) => ({
-            ...current,
-            [machineId]:
-              view.job?.state === 'loaded'
-                ? ''
-                : `The load ended: ${view.job?.error ?? view.job?.state ?? 'unknown'}`,
-          }));
-          break;
+  const reloadWithSlots = useCallback(
+    async (machineId: string, slots: number) => {
+      setReloading((current) => ({ ...current, [machineId]: 'Loading again…' }));
+      try {
+        await api.reloadSlots(machineId, slots);
+        const deadline = Date.now() + 15 * 60_000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          // The load goes on after leaving the tab; following it stops.
+          if (!mounted.current) return;
+          const view = await api.machineStatus(machineId);
+          setStatuses((current) => ({ ...current, [machineId]: view }));
+          if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
+            setReloading((current) => ({
+              ...current,
+              [machineId]:
+                view.job?.state === 'loaded'
+                  ? ''
+                  : `The load ended: ${view.job?.error ?? view.job?.state ?? 'unknown'}`,
+            }));
+            break;
+          }
         }
+      } catch (error) {
+        setReloading((current) => ({ ...current, [machineId]: messageOf(error) }));
       }
-    } catch (error) {
-      setReloading((current) => ({ ...current, [machineId]: messageOf(error) }));
-    }
-    preflight.recheck();
-  };
-  const slotShortcut = (issue: PreflightIssue) => {
-    if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
-    // The other servers load with their own settings; reloading with more slots is Unsloth's shortcut.
-    if (machines?.find((m) => m.id === issue.machineId)?.server !== 'unsloth') return null;
-    const id = issue.machineId;
-    const state = reloading[id];
-    return state ? (
-      <span className="field-hint">{state}</span>
-    ) : (
-      <button
-        type="button"
-        className="btn btn-quiet btn-inline"
-        onClick={() => void reloadWithSlots(id, Number(concurrency))}
-        disabled={running}
-      >
-        Reload with {concurrency} slots
-      </button>
-    );
-  };
+      recheck();
+    },
+    [recheck],
+  );
+  const slotShortcut = useCallback(
+    (issue: PreflightIssue) => {
+      if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
+      // The other servers load with their own settings; reloading with more slots is Unsloth's shortcut.
+      if (machines?.find((m) => m.id === issue.machineId)?.server !== 'unsloth') return null;
+      const id = issue.machineId;
+      const state = reloading[id];
+      return state ? (
+        <span className="field-hint">{state}</span>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-quiet btn-inline"
+          onClick={() => void reloadWithSlots(id, Number(concurrency))}
+          disabled={running}
+        >
+          Reload with {concurrency} slots
+        </button>
+      );
+    },
+    [machines, reloading, reloadWithSlots, concurrency, running],
+  );
 
-  const toggle = (id: string) => {
+  const toggle = useCallback((id: string) => {
     setSelected((current) => {
       const list = current ?? [];
       return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
     });
-  };
+  }, []);
+  const describe = useCallback(
+    (m: MachineView) => {
+      if (m.cloud) {
+        return `${CLOUD_INFO[m.cloud.provider].label} · ${m.cloud.model?.id ?? 'no model chosen'}`;
+      }
+      const s = statuses[m.id];
+      return s
+        ? s.error
+          ? 'unreachable'
+          : [
+              m.server === 'unsloth' ? null : serverName(m.server, s.status ?? null),
+              s.status?.activeModel ?? 'no model loaded',
+              s.status?.quant,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+        : 'checking…';
+    },
+    [statuses],
+  );
+  const preflightProblem = useMemo(
+    () =>
+      problem
+        ? { text: problem, error: true }
+        : chosen.length === 0
+          ? { text: 'Pick at least one machine.', error: false }
+          : null,
+    [problem, chosen.length],
+  );
 
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -436,23 +476,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               selected={selected}
               onToggle={toggle}
               running={running}
-              describe={(m) => {
-                if (m.cloud) {
-                  return `${CLOUD_INFO[m.cloud.provider].label} · ${m.cloud.model?.id ?? 'no model chosen'}`;
-                }
-                const s = statuses[m.id];
-                return s
-                  ? s.error
-                    ? 'unreachable'
-                    : [
-                        m.server === 'unsloth' ? null : serverName(m.server, s.status ?? null),
-                        s.status?.activeModel ?? 'no model loaded',
-                        s.status?.quant,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')
-                  : 'checking…';
-              }}
+              describe={describe}
             />
 
             <div className="field">
@@ -675,13 +699,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               </p>
             ) : null}
             <PreflightPanel
-              problem={
-                problem
-                  ? { text: problem, error: true }
-                  : chosen.length === 0
-                    ? { text: 'Pick at least one machine.', error: false }
-                    : null
-              }
+              problem={preflightProblem}
               checking={preflight.current === null}
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
@@ -700,7 +718,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 .join(' ')}
               raceAnyway={preflight.raceAnyway}
               setRaceAnyway={preflight.setRaceAnyway}
-              onRecheck={preflight.recheck}
+              onRecheck={recheck}
               running={running}
             />
             {race.formError ? (
@@ -760,9 +778,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         <SessionList
           sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => race.setDeleting(target)}
+          onDelete={race.setDeleting}
         />
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {race.deleting ? (

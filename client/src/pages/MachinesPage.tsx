@@ -220,7 +220,7 @@ export function MachinesPage({ machines, setMachines, loadError, log, addLog }: 
           </div>
         ) : null}
 
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {dialog?.mode === 'add-cloud' || (dialog?.mode === 'edit' && dialog.machine.cloud) ? (

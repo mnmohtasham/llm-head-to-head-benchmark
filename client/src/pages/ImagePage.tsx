@@ -12,7 +12,14 @@ import {
   type RunView,
   type SessionView,
 } from '@duel/shared';
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
 import { api, messageOf } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ImageMetrics, ImagePane } from '../components/ImagePane';
@@ -172,7 +179,10 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : machines.slice(0, 1).map((m) => m.id));
   }, [selected, machines, info]);
 
-  const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
+  const chosen = useMemo(
+    () => (machines ?? []).filter((m) => selected?.includes(m.id)),
+    [machines, selected],
+  );
   const chosenIds = chosen.map((m) => m.id);
 
   // Models on any picked machine, and on which ones each file is.
@@ -245,14 +255,36 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     : null;
   const preflight = usePreflight(preflightKey, running);
   const blocked = !draft.success || chosen.length === 0 || preflight.stops;
-  const sharing = sharedHost(chosen, hosts);
+  const sharing = useMemo(() => sharedHost(chosen, hosts), [chosen, hosts]);
 
-  const toggle = (id: string) => {
+  const toggle = useCallback((id: string) => {
     setSelected((list) => {
       const now = list ?? [];
       return now.includes(id) ? now.filter((x) => x !== id) : [...now, id];
     });
-  };
+  }, []);
+  const describe = useCallback(
+    (m: MachineView) => {
+      const read = info[m.id];
+      if (!read) return 'checking…';
+      if (!read.status) return read.error ? 'no image generation' : 'checking…';
+      if (read.status.loaded) {
+        return `${read.status.repoId?.split('/').pop() ?? 'image model'} in memory`;
+      }
+      const text = chat[m.id];
+      return text ? `chat: ${text.split('/').pop() ?? text}` : 'nothing loaded';
+    },
+    [info, chat],
+  );
+  const preflightProblem = useMemo(
+    () =>
+      problem
+        ? { text: problem, error: true }
+        : chosen.length === 0
+          ? { text: 'Pick at least one machine.', error: false }
+          : null,
+    [problem, chosen.length],
+  );
 
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -364,16 +396,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
               selected={selected}
               onToggle={toggle}
               running={running}
-              describe={(m) => {
-                const read = info[m.id];
-                if (!read) return 'checking…';
-                if (!read.status) return read.error ? 'no image generation' : 'checking…';
-                if (read.status.loaded) {
-                  return `${read.status.repoId?.split('/').pop() ?? 'image model'} in memory`;
-                }
-                const text = chat[m.id];
-                return text ? `chat: ${text.split('/').pop() ?? text}` : 'nothing loaded';
-              }}
+              describe={describe}
             />
 
             <div className="run-options">
@@ -595,13 +618,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
 
             <PlanFields plan={plan} running={running} sharing={sharing} />
             <PreflightPanel
-              problem={
-                problem
-                  ? { text: problem, error: true }
-                  : chosen.length === 0
-                    ? { text: 'Pick at least one machine.', error: false }
-                    : null
-              }
+              problem={preflightProblem}
               checking={preflight.current === null}
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
@@ -662,9 +679,9 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
         <SessionList
           sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => race.setDeleting(target)}
+          onDelete={race.setDeleting}
         />
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {race.deleting ? (

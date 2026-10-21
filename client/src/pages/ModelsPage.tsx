@@ -291,7 +291,7 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
           </div>
         ) : null}
 
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {dialog && machines ? (
