@@ -16,6 +16,7 @@ export default defineConfig(
       'e2e/test-results/**',
       'e2e/playwright-report/**',
       'coverage/**',
+      '.claude/**',
     ],
   },
   js.configs.recommended,

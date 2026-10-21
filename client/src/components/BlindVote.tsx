@@ -33,6 +33,8 @@ export function BlindVote({
   const [revealed, setRevealed] = useState(false);
   const [tally, setTally] = useState<PairTally[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** One vote at a time: each answer is the race with every vote so far. */
+  const [voting, setVoting] = useState(false);
   const latest = useRef<SessionView | null>(null);
   const complete = rounds.length > 0 && rounds.every((r) => choices[r.round]);
 
@@ -40,11 +42,14 @@ export function BlindVote({
     const where = sidesOf(session, sides, round);
     if (!where) return;
     setError(null);
+    setVoting(true);
     try {
       latest.current = await api.vote(session.id, { round, ...where, choice });
       setChoices((current) => ({ ...current, [round]: choice }));
     } catch (failure) {
       setError(messageOf(failure));
+    } finally {
+      setVoting(false);
     }
   };
 
@@ -90,6 +95,7 @@ export function BlindVote({
                   aria-checked={choices[r.round] === choice}
                   className={`toggle-chip${choices[r.round] === choice ? ' toggle-chip-on' : ''}`}
                   onClick={() => void vote(r.round, choice)}
+                  disabled={voting}
                 >
                   {label}
                 </button>
@@ -103,7 +109,7 @@ export function BlindVote({
             type="button"
             className="btn btn-primary"
             onClick={() => void reveal()}
-            disabled={!complete}
+            disabled={!complete || voting}
           >
             Reveal
           </button>

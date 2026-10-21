@@ -160,4 +160,20 @@ describe('runEnergy', () => {
     expect(energy.tokensPerJoule).toBeNull();
     expect(energy.coverage).toBeCloseTo(0.125, 6);
   });
+
+  it('fills a missed poll at the covered mean power, so the run does not look cheaper', () => {
+    // A steady 200 W for 10 s, with no reading between 3 s and 6.5 s.
+    const samples = Array.from({ length: 21 }, (_, i) => sample(i * 500, 200)).filter(
+      (s) => s.at <= 3000 || s.at >= 6500,
+    );
+    const energy = runEnergy(
+      samples,
+      { start: 0, firstToken: 0, lastToken: 10_000, end: 10_000 },
+      1000,
+    );
+    expect(energy.coverage).toBeCloseTo(0.65, 6);
+    expect(energy.energyJ).toBeCloseTo(2000, 6);
+    expect(energy.decodeEnergyJ).toBeCloseTo(2000, 6);
+    expect(energy.tokensPerJoule).toBeCloseTo(0.5, 6);
+  });
 });

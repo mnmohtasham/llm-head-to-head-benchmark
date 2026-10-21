@@ -1,5 +1,6 @@
 import { csvCell } from './csv';
 import { CLOUD_INFO, type CloudProvider } from './cloud';
+import { SERVER_LABEL, type MachineServer } from './engines';
 import { metricKind, metricsFor, type Better, type MetricKind, type MetricUnit } from './compare';
 import { formatValue } from './format';
 import { IMAGE_PRESETS } from './images';
@@ -37,8 +38,8 @@ export interface DeviceRun {
   machine: string;
   color: string;
   cloud: CloudProvider | null;
-  /** The server the machine ran: Unsloth Studio, LM Studio, or a cloud provider's API. */
-  server: 'unsloth' | 'lmstudio' | 'cloud';
+  /** The server the machine ran: a local server, or a cloud provider's API. */
+  server: MachineServer | 'cloud';
   /** The other machines in the race. */
   others: string[];
 
@@ -51,6 +52,8 @@ export interface DeviceRun {
   os: string | null;
   studio: string | null;
   llamaCpp: string | null;
+  /** The server's software and version, such as "Unsloth Studio 0.1.815", "Ollama 0.12.6" or "vLLM 0.11.0". */
+  serverVersion: string | null;
 
   model: string | null;
   quant: string | null;
@@ -68,7 +71,10 @@ export interface DeviceRun {
   chatModel: boolean;
 
   prompt: string | null;
-  /** The full custom prompt, for search. */
+  /**
+   * The prompt for search and comparison: the whole of a short one; for a long one, its start and
+   * a fingerprint of the whole, so a row stays small and two different prompts still differ.
+   */
   promptText: string | null;
   promptTokens: number | null;
   prefill: 'cold' | 'warm' | null;
@@ -126,6 +132,25 @@ function median(values: number[]): number | null {
     : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
 }
 
+/** Longer prompts are kept as their start and a fingerprint: the 32K preset alone is 150 KB. */
+const PROMPT_KEEP = 2000;
+
+/** FNV-1a over the whole text, as eight hex digits: enough to tell two prompts apart. */
+function fingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+export function promptKey(prompt: string): string {
+  return prompt.length <= PROMPT_KEEP
+    ? prompt
+    : `${prompt.slice(0, PROMPT_KEEP)}… (${prompt.length.toLocaleString('en-US')} characters, #${fingerprint(prompt)})`;
+}
+
 function counted(values: string[]): string | null {
   if (values.length === 0) return null;
   const counts = new Map<string, number>();
@@ -150,6 +175,15 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
     const done = runs.filter((run) => run.state === 'done');
     const chatModel = text !== null && cloud === null;
     const lmstudio = p?.server === 'lmstudio';
+    // Machines saved before other servers were added ran Unsloth Studio.
+    const server: MachineServer = p?.server ?? 'unsloth';
+    const unsloth = server === 'unsloth';
+    const serverName =
+      server === 'openai-compatible'
+        ? (status?.engine?.name ?? 'OpenAI-compatible')
+        : unsloth
+          ? null
+          : SERVER_LABEL[server];
 
     let model: string | null;
     let quant: string | null = null;
@@ -163,7 +197,11 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       engine = cloud
         ? `${CLOUD_INFO[cloud.provider].label} API`
         : status?.backend
-          ? `${lmstudio ? 'LM Studio ' : ''}${backendLabel(status.backend)}`
+          ? serverName === null
+            ? backendLabel(status.backend)
+            : status.backend === 'other'
+              ? serverName
+              : `${serverName} ${backendLabel(status.backend)}`
           : null;
     } else if (view.workload === 'transcribe') {
       const stt = p?.sttAfter ?? null;
@@ -199,6 +237,22 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       } else if (lmstudio && p?.request) {
         const r = typeof p.request.reasoning === 'string' ? p.request.reasoning : null;
         thinking = r === null ? 'model default' : r === 'off' || r === 'on' ? r : `on, ${r}`;
+      } else if (server === 'ollama' && p?.request) {
+        const think = p.request.think;
+        thinking =
+          think === undefined
+            ? status?.supportsReasoning
+              ? 'model default'
+              : 'off'
+            : think === false
+              ? 'off'
+              : think === true
+                ? 'on'
+                : `on, ${String(think)}`;
+      } else if (server === 'openai-compatible' && p?.request) {
+        const kwargs = p.request.chat_template_kwargs as { enable_thinking?: unknown } | undefined;
+        thinking =
+          kwargs?.enable_thinking === false ? 'off' : `on${effort(p.request.reasoning_effort)}`;
       } else if (p?.request) {
         thinking =
           p.request.enable_thinking === false ? 'off' : `on${effort(p.request.reasoning_effort)}`;
@@ -246,7 +300,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       machine: machine.name,
       color: machine.color,
       cloud: cloud?.provider ?? null,
-      server: cloud ? 'cloud' : lmstudio ? 'lmstudio' : 'unsloth',
+      server: cloud ? 'cloud' : server,
       others: view.machines.filter((m) => m.id !== machine.id).map((m) => m.name),
 
       gpu: cloud ? `${CLOUD_INFO[cloud.provider].label}, cloud` : gpuName(p?.gpus ?? []),
@@ -258,7 +312,18 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
       platform: platformLabel(p?.platform.backend ?? null),
       os: p?.platform.os ?? null,
       studio: p?.versions.studio ?? p?.versions.unsloth ?? null,
-      llamaCpp: p?.versions.llamaCpp ?? null,
+      llamaCpp:
+        p?.versions.llamaCpp ??
+        (status?.engine?.name === 'llama.cpp' ? (status.engine.version ?? null) : null),
+      serverVersion: cloud
+        ? null
+        : unsloth
+          ? (p?.versions.studio ?? p?.versions.unsloth)
+            ? `Unsloth Studio ${p?.versions.studio ?? p?.versions.unsloth}`
+            : null
+          : status?.engine?.version
+            ? `${serverName} ${status.engine.version}`
+            : null,
 
       model,
       quant,
@@ -268,13 +333,13 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
         : chatModel
           ? (status?.contextLength ?? null)
           : null,
-      // LM Studio reports neither the KV cache type nor speculative decoding.
-      kvCache: chatModel && !lmstudio ? kv : null,
+      // Only Unsloth reports the KV cache type and speculative decoding.
+      kvCache: chatModel && unsloth ? kv : null,
       gpuLayers: chatModel ? (status?.gpuLayers ?? null) : null,
       totalLayers: chatModel ? (status?.totalLayers ?? null) : null,
       slots: chatModel ? (status?.parallelSlots ?? null) : null,
       speculative:
-        chatModel && status && !lmstudio
+        chatModel && status && unsloth
           ? speculativeOn(status)
             ? [status.speculativeType, status.specDrafterKind].filter(Boolean).join(' · ')
             : 'off'
@@ -287,7 +352,7 @@ export function deviceRuns(session: StoredSession | SessionView): DeviceRun[] {
           ? `Custom: ${text.prompt.length > 48 ? `${text.prompt.slice(0, 48).trimEnd()}…` : text.prompt}`
           : (preset?.label ?? text.preset)
         : null,
-      promptText: text ? text.prompt : null,
+      promptText: text ? promptKey(text.prompt) : null,
       promptTokens: median(
         done
           .map((run) => run.client?.promptTokens)
@@ -372,8 +437,7 @@ const INITIAL_METRICS: Record<MetricKind, readonly string[]> = {
 };
 
 const SERVER_NAMES: Record<DeviceRun['server'], string> = {
-  unsloth: 'Unsloth Studio',
-  lmstudio: 'LM Studio',
+  ...SERVER_LABEL,
   cloud: 'Cloud API',
 };
 
@@ -550,6 +614,16 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
       group: 'Machine',
       value: (r) => r.llamaCpp,
       text: (r) => show(r.llamaCpp),
+      numeric: false,
+      filter: true,
+      initial: false,
+    },
+    {
+      id: 'serverVersion',
+      label: 'Server version',
+      group: 'Machine',
+      value: (r) => r.serverVersion,
+      text: (r) => show(r.serverVersion),
       numeric: false,
       filter: true,
       initial: false,
@@ -827,11 +901,38 @@ export function runColumns(view: RunsView, statistic: Statistic = 'median'): Run
 }
 
 /** The rows as CSV, with the columns' raw values: numbers stay numbers. */
-export function runsCsv(runs: readonly DeviceRun[], columns: readonly RunColumn[]): string {
+/**
+ * The rows and columns shown, with raw numbers. Every measurement's header says its unit and
+ * whether it is a median or an average; the headline, whose metric differs from row to row, gets
+ * a column naming its metric and unit; GPU layers set to automatic read "auto" as on screen.
+ */
+export function runsCsv(
+  runs: readonly DeviceRun[],
+  columns: readonly RunColumn[],
+  statistic: Statistic = 'median',
+): string {
   const cell = csvCell;
-  const header = columns.map((c) =>
-    cell(c.unit && c.unit !== 'text' ? `${c.label} (${c.unit})` : c.label),
+  const word = statisticWord(statistic);
+  const measured = (c: RunColumn) => c.id === 'headline' || c.id.startsWith('metric:');
+  const header = columns.flatMap((c) => {
+    const unit = c.unit && c.unit !== 'text' ? c.unit : null;
+    const parts = [unit, measured(c) && c.unit !== 'text' ? word : null].filter(Boolean);
+    const label = parts.length > 0 ? `${c.label} (${parts.join(', ')})` : c.label;
+    return c.id === 'headline' ? [cell(label), cell('Headline metric')] : [cell(label)];
+  });
+  const value = (c: RunColumn, r: DeviceRun) => {
+    const v = c.value(r);
+    return c.id === 'gpuLayers' && typeof v === 'number' && v < 0 ? 'auto' : v;
+  };
+  const body = runs.map((r) =>
+    columns
+      .flatMap((c) => {
+        if (c.id !== 'headline') return [cell(value(c, r))];
+        const found = headlineOf(r, statistic);
+        const spec = found && metricsFor(r.kind).find((m) => m.key === found.key);
+        return [cell(value(c, r)), cell(spec ? `${spec.label} (${spec.unit})` : null)];
+      })
+      .join(','),
   );
-  const body = runs.map((r) => columns.map((c) => cell(c.value(r))).join(','));
   return `${[header.join(','), ...body].join('\n')}\n`;
 }

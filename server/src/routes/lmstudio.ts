@@ -28,9 +28,26 @@ const loadSchema = z
  */
 export function registerLmStudioRoutes(
   app: FastifyInstance,
-  deps: { store: MachineStore; loadTimeoutMs: number },
+  deps: {
+    store: MachineStore;
+    loadTimeoutMs: number;
+    /** Whether a race is running on the machine: its model must not change under it. */
+    isRacing?: (machineId: string) => boolean;
+  },
 ): void {
   const { store } = deps;
+  const isRacing = deps.isRacing ?? (() => false);
+  /** Loads and unloads wait for a race on the machine to end. */
+  const racing = (machine: StoredMachine, reply: FastifyReply): boolean => {
+    if (!isRacing(machine.id)) return false;
+    void fail(
+      reply,
+      409,
+      'racing',
+      `A race is running on ${machine.name}. Cancel it or wait for it to finish, so its runs all use one model.`,
+    );
+    return true;
+  };
   /** Loads in flight, one per machine, so a double click does not load twice. */
   const loading = new Map<string, string>();
 
@@ -63,6 +80,7 @@ export function registerLmStudioRoutes(
   app.post<IdParams>('/api/machines/:id/lmstudio/load', async (request, reply) => {
     const machine = lmMachine(request.params.id, reply);
     if (!machine) return reply;
+    if (racing(machine, reply)) return reply;
     const parsed = loadSchema.safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'That is not a model to load.');
     if (loading.has(machine.id)) {
@@ -90,6 +108,7 @@ export function registerLmStudioRoutes(
   app.post<IdParams>('/api/machines/:id/lmstudio/unload', async (request, reply) => {
     const machine = lmMachine(request.params.id, reply);
     if (!machine) return reply;
+    if (racing(machine, reply)) return reply;
     const parsed = z
       .object({ instanceId: z.string().min(1).max(300) })
       .strict()

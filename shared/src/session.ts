@@ -56,12 +56,15 @@ export const runPlanSchema = z.object({
 export type RunPlan = z.infer<typeof runPlanSchema>;
 export const DEFAULT_PLAN: RunPlan = runPlanSchema.parse({});
 
+/** The machines of a race, each once. */
+export const machineIdsSchema = z
+  .array(z.string().min(1))
+  .min(1, 'Pick at least one machine.')
+  .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
+  .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.');
+
 const sessionRequestBase = {
-  machineIds: z
-    .array(z.string().min(1))
-    .min(1, 'Pick at least one machine.')
-    .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
-    .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.'),
+  machineIds: machineIdsSchema,
   plan: runPlanSchema.prefault({}),
   /** Start even though pre-flight has warnings; errors can never be overridden. */
   acknowledgeWarnings: z.boolean().default(false),
@@ -149,8 +152,8 @@ export interface MachineProvenance {
   restore: RestoreOutcome | null;
   /** A cloud reference model: the provider and the model, with what it accepts. */
   cloud?: CloudConfig | null;
-  /** Set when the machine runs LM Studio instead of Unsloth Studio. */
-  server?: 'lmstudio';
+  /** Set when the machine runs another server than Unsloth Studio. */
+  server?: 'lmstudio' | 'ollama' | 'openai-compatible';
 }
 
 export interface RestoreOutcome {
@@ -252,6 +255,23 @@ export interface RawRun {
   headersAtMs: number | null;
   endAtMs: number;
   events: CompactEvent[];
+  /**
+   * Events left out because the race had already kept as many as a race may (RAW_EVENT_BUDGET).
+   * The run's measurements are complete; only its raw record is.
+   */
+  omitted?: number;
+}
+
+/**
+ * Roughly how many characters of raw events one race keeps, about 64 MB on disk. Past it, the
+ * later runs keep their measurements but not their raw events, so no machine can make a race too
+ * large to save, whatever it sends.
+ */
+export const RAW_EVENT_BUDGET = 64 * 1024 * 1024;
+
+/** About what one compact event takes in a session file. */
+export function rawEventSize(event: CompactEvent): number {
+  return event.length === 4 ? 24 + event[3].length : 200;
 }
 
 export type StoredRun = RunView & { raw: RawRun | null };
@@ -397,7 +417,8 @@ export function migrateSession(value: StoredSession): StoredSession {
       warmup: value.warmup ? round(value.warmup) : null,
     };
   }
-  if (value.workload !== 'text') {
+  // A file without a workload is an early text session, migrated below.
+  if (value.workload === 'transcribe' || value.workload === 'image') {
     return {
       ...value,
       schemaVersion: SESSION_SCHEMA_VERSION,

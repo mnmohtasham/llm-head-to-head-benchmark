@@ -1,4 +1,4 @@
-import type { NetworkError, RouteResult } from '@duel/shared';
+import { maskApiKey, type NetworkError, type RouteResult } from '@duel/shared';
 import { Agent, request } from 'undici';
 import { readText } from './limits';
 
@@ -12,6 +12,8 @@ export interface RequestOptions {
   headersTimeoutMs?: number;
   /** Limit for a silence between body chunks; defaults to timeoutMs. */
   bodyTimeoutMs?: number;
+  /** Ends the request early, such as when a race is cancelled. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -55,7 +57,8 @@ export class UnslothClient {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (options.auth !== false && this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
-    const signal = AbortSignal.timeout(options.timeoutMs);
+    const timeout = AbortSignal.timeout(options.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
     const started = performance.now();
     try {
       const response = await request(`${this.baseUrl}${path}`, {
@@ -67,7 +70,8 @@ export class UnslothClient {
         headersTimeout: options.headersTimeoutMs ?? options.timeoutMs,
         bodyTimeout: options.bodyTimeoutMs ?? options.timeoutMs,
       });
-      const text = await readText(response.body);
+      // A server that echoes the request back must not carry the key on to the browser or a file.
+      const text = this.withoutKey(await readText(response.body));
       const ms = performance.now() - started;
       const header = response.headers['content-type'];
       const contentType = (Array.isArray(header) ? header[0] : header) ?? null;
@@ -89,6 +93,13 @@ export class UnslothClient {
         error: toNetworkError(error, signal),
       };
     }
+  }
+
+  private withoutKey(text: string): string {
+    const key = this.apiKey;
+    return key && key.length >= 6 && text.includes(key)
+      ? text.split(key).join(maskApiKey(key) ?? '…')
+      : text;
   }
 
   async close(): Promise<void> {

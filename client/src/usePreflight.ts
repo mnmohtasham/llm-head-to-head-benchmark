@@ -5,8 +5,10 @@ import {
   type PreflightRequest,
   type PreflightResult,
 } from '@duel/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, messageOf } from './api';
+
+const NO_ISSUES: PreflightIssue[] = [];
 
 /**
  * Pre-flight runs on the machines themselves, a moment after the form stops changing. The request
@@ -18,10 +20,16 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
     result: PreflightResult | null;
     error: string | null;
   } | null>(null);
-  const [raceAnyway, setRaceAnyway] = useState(false);
+  /** The request whose warnings the user accepted with Race anyway; any other one asks again. */
+  const [accepted, setAccepted] = useState<string | null>(null);
   /** Bumped to run pre-flight again for the same request, after the machines changed. */
   const [round, setRound] = useState(0);
   const ticketRef = useRef(0);
+
+  // A changed request asks again, even when the form comes back to the accepted one.
+  useEffect(() => {
+    setAccepted(null);
+  }, [requestKey]);
 
   useEffect(() => {
     if (!requestKey || paused) return;
@@ -44,13 +52,29 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
   }, [requestKey, paused, round]);
 
   const current = preflight && preflight.key === requestKey ? preflight : null;
-  const issues: PreflightIssue[] = current?.result?.issues ?? [];
+  const issues = current?.result?.issues ?? NO_ISSUES;
+  const levels = useMemo(
+    () => ({
+      errors: issues.filter((issue) => issue.level === 'error'),
+      warnings: issues.filter((issue) => issue.level === 'warning'),
+      notes: issues.filter((issue) => issue.level === 'note'),
+    }),
+    [issues],
+  );
+  const raceAnyway = accepted !== null && accepted === requestKey;
+  const setRaceAnyway = useCallback(
+    (on: boolean) => setAccepted(on ? requestKey : null),
+    [requestKey],
+  );
+  // Forget the last answer, so the panel says it is checking until the new one is in.
+  const recheck = useCallback(() => {
+    setPreflight(null);
+    setRound((n) => n + 1);
+  }, []);
   return {
     current,
     issues,
-    errors: issues.filter((issue) => issue.level === 'error'),
-    warnings: issues.filter((issue) => issue.level === 'warning'),
-    notes: issues.filter((issue) => issue.level === 'note'),
+    ...levels,
     /** Nothing checked yet, an error, or warnings the user has not accepted. */
     stops:
       current === null ||
@@ -59,7 +83,7 @@ export function usePreflight(requestKey: string | null, paused: boolean) {
       (hasWarnings(issues) && !raceAnyway),
     raceAnyway,
     setRaceAnyway,
-    recheck: () => setRound((n) => n + 1),
+    recheck,
     /** Shows what the server's own pre-flight found when it refused to start. */
     showIssues: (found: PreflightIssue[]) => {
       if (!requestKey) return;

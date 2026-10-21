@@ -4,6 +4,8 @@ import {
   abbaOrder,
   chatRequestBody,
   compactEvents,
+  RAW_EVENT_BUDGET,
+  rawEventSize,
   computeClientMetrics,
   DEFAULT_SAMPLING,
   describeAddress,
@@ -27,9 +29,17 @@ import {
   stepMetrics,
   CLOUD_INFO,
   cloudRequest,
+  compatChatBody,
+  compatErrorMessage,
   lmChatBody,
   lmErrorMessage,
+  ollamaChatBody,
+  ollamaErrorMessage,
+  SERVER_LABEL,
+  serverName,
+  textOnlyServer,
   type LmStats,
+  type OllamaStats,
   type CloudProvider,
   observeQueue,
   summarizeThroughput,
@@ -77,6 +87,7 @@ import {
 } from './imagegen';
 import { cloudFailure, streamCloud } from './cloud';
 import { streamLmChat } from './lmstudio';
+import { streamCompatChat, streamOllamaChat } from './engines';
 import type { ImageStore } from './imagestore';
 import type { ResultStore } from './results';
 import { watchQueue } from './queue';
@@ -140,13 +151,14 @@ const PROMPT_KEPT = 300;
 type Listener = (message: SessionStreamMessage) => void;
 
 /**
- * What goes to a machine for one text run: Unsloth's chat body, LM Studio's native chat body, or a
- * cloud provider's request.
+ * What goes to a machine for one text run: Unsloth's chat body, another local server's (LM
+ * Studio's or Ollama's native chat, or an OpenAI-compatible one), or a cloud provider's request.
  */
 interface OutgoingRequest {
   body: Record<string, unknown>;
   cloud: { provider: CloudProvider; path: string } | null;
-  lmstudio?: boolean;
+  /** The local server when it is not Unsloth Studio. */
+  engine?: 'lmstudio' | 'ollama' | 'openai-compatible';
 }
 
 interface LiveRun {
@@ -197,6 +209,10 @@ interface ActiveSession {
   /** Resolves when the rounds are over, before any chat model is loaded again. */
   roundsOver: Promise<void>;
   endRounds: () => void;
+  /** Characters of raw events kept so far, against RAW_EVENT_BUDGET. */
+  rawSize: number;
+  /** Runs whose telemetry is attached with the whole window around them. */
+  telemetryDone: Set<string>;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -306,7 +322,12 @@ function publicRound(round: StoredRound): RoundView {
  */
 export class SessionManager {
   private readonly active = new Map<string, ActiveSession>();
-  private readonly recent = new Map<string, StoredSession>();
+  /** Races that just finished, as their public views: raw events stay on disk. */
+  private readonly recent = new Map<string, SessionView>();
+  /** Set when the app stops, so nothing slow starts after the races are cancelled. */
+  private closing = false;
+  /** Changes to finished races (votes, the statistic), one at a time per race. */
+  private readonly edits = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly deps: {
@@ -351,8 +372,12 @@ export class SessionManager {
 
   async get(id: string): Promise<SessionView | null> {
     await this.settledIfEnding(id);
-    const live = this.active.get(id)?.session ?? this.recent.get(id);
-    if (live) return publicSession(structuredClone(live));
+    // Raw events are dropped before the copy: copying them stalls the event loop, which would
+    // delay the token timestamps of a race running at the same time.
+    const live = this.active.get(id)?.session;
+    if (live) return structuredClone(publicSession(live));
+    const recent = this.recent.get(id);
+    if (recent) return recent;
     const stored = await this.deps.sessions.load(id);
     return stored ? publicSession(stored) : null;
   }
@@ -366,9 +391,27 @@ export class SessionManager {
     const entry = this.active.get(id);
     if (!entry) return null;
     this.flush(entry);
-    const snapshot = publicSession(structuredClone(entry.session));
+    const snapshot = structuredClone(publicSession(entry.session));
     entry.listeners.add(listener);
     return { snapshot, leave: () => entry.listeners.delete(listener) };
+  }
+
+  /** Whether any race is running now. */
+  racing(): boolean {
+    return [...this.active.values()].some((entry) => entry.session.finishedAt === null);
+  }
+
+  /** Whether a running race uses this machine. */
+  racingOn(machineId: string): boolean {
+    return [...this.active.values()].some(
+      (entry) =>
+        entry.session.finishedAt === null && entry.machines.some((m) => m.id === machineId),
+    );
+  }
+
+  /** Whether a race is running now, so it can be joined. */
+  isRunning(id: string): boolean {
+    return this.active.has(id);
   }
 
   /** Waits for a session to end; for tests and shutdown. */
@@ -425,6 +468,8 @@ export class SessionManager {
       imageLoads: machines.map(() => false),
       roundsOver: Promise.resolve(),
       endRounds: () => undefined,
+      rawSize: 0,
+      telemetryDone: new Set(),
     };
     entry.roundsOver = new Promise((resolve) => {
       entry.endRounds = resolve;
@@ -438,7 +483,7 @@ export class SessionManager {
         `Model Duel stopped the race: ${(error as Error).message}`,
       );
     });
-    return publicSession(structuredClone(session));
+    return structuredClone(publicSession(session));
   }
 
   async cancel(id: string): Promise<SessionView | null> {
@@ -460,8 +505,8 @@ export class SessionManager {
       inFlight.flatMap((run) =>
         session.workload === 'image'
           ? [cancelImage(run.machine)]
-          : run.machine.cloud || run.machine.server === 'lmstudio'
-            ? // Closing the connection is how a cloud or LM Studio request is cancelled.
+          : run.machine.cloud || textOnlyServer(run.machine.server)
+            ? // Closing the connection is how a request to anything but Unsloth is cancelled.
               []
             : batch > 0
               ? Array.from({ length: batch }, (_unused, k) =>
@@ -478,7 +523,7 @@ export class SessionManager {
   /** The whole session as stored, raw events included, for the JSON export. */
   async getStored(id: string): Promise<StoredSession | null> {
     await this.settledIfEnding(id);
-    const live = this.active.get(id)?.session ?? this.recent.get(id);
+    const live = this.active.get(id)?.session;
     if (live) return structuredClone(live);
     return this.deps.sessions.load(id);
   }
@@ -488,6 +533,22 @@ export class SessionManager {
    * same round replaces the first.
    */
   async vote(id: string, vote: Vote): Promise<SessionView | string> {
+    return this.edit(id, () => this.applyVote(id, vote));
+  }
+
+  /** Runs one change to a finished race after the ones before it, so none is written over. */
+  private edit<T>(id: string, change: () => Promise<T>): Promise<T> {
+    const before = this.edits.get(id) ?? Promise.resolve();
+    const next = before.then(change, change);
+    const settled = next.catch(() => undefined);
+    this.edits.set(id, settled);
+    void settled.then(() => {
+      if (this.edits.get(id) === settled) this.edits.delete(id);
+    });
+    return next;
+  }
+
+  private async applyVote(id: string, vote: Vote): Promise<SessionView | string> {
     const entry = this.active.get(id);
     if (entry) {
       if (entry.session.finishedAt === null) return 'The race is still running.';
@@ -509,12 +570,16 @@ export class SessionManager {
     await this.deps.sessions.save(stored);
     // Votes are part of the result, so the file follows them.
     await this.writeResult(stored);
-    if (this.recent.has(id)) this.recent.set(id, stored);
+    if (this.recent.has(id)) this.recent.set(id, publicSession(stored));
     return publicSession(stored);
   }
 
   /** Sums a finished race up by its medians or its averages, from now on. */
   async setStatistic(id: string, statistic: Statistic): Promise<SessionView | string> {
+    return this.edit(id, () => this.applyStatistic(id, statistic));
+  }
+
+  private async applyStatistic(id: string, statistic: Statistic): Promise<SessionView | string> {
     const entry = this.active.get(id);
     if (entry) {
       if (entry.session.finishedAt === null) return 'The race is still running.';
@@ -526,7 +591,7 @@ export class SessionManager {
     await this.deps.sessions.save(stored);
     // The verdicts in the result file change with it.
     await this.writeResult(stored);
-    if (this.recent.has(id)) this.recent.set(id, stored);
+    if (this.recent.has(id)) this.recent.set(id, publicSession(stored));
     return publicSession(stored);
   }
 
@@ -556,6 +621,7 @@ export class SessionManager {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     const entries = [...this.active.values()];
     for (const entry of entries) entry.controller.abort();
     await Promise.allSettled(entries.map((entry) => entry.done));
@@ -587,7 +653,7 @@ export class SessionManager {
       imageAfter: null,
       restore: null,
       cloud: machine.cloud,
-      ...(machine.server === 'lmstudio' && !machine.cloud ? { server: 'lmstudio' as const } : {}),
+      ...(machine.server !== 'unsloth' && !machine.cloud ? { server: machine.server } : {}),
     };
   }
 
@@ -686,7 +752,7 @@ export class SessionManager {
       type: 'run',
       warmup: round.warmup,
       round: round.view.index,
-      run: publicRun(structuredClone(run.view)),
+      run: structuredClone(publicRun(run.view)),
     });
   }
 
@@ -696,8 +762,9 @@ export class SessionManager {
     const provenance = entry.session.provenance[index];
     if (!machine || !provenance) return;
     const { session } = entry;
-    if (machine.server === 'lmstudio' && !machine.cloud && session.workload !== 'text') {
-      entry.unready[index] = `${machine.name} runs LM Studio, which races text only.`;
+    if (textOnlyServer(machine.server) && !machine.cloud && session.workload !== 'text') {
+      entry.unready[index] =
+        `${machine.name} runs ${SERVER_LABEL[machine.server]}, which races text only.`;
       return;
     }
     if (session.workload === 'transcribe') {
@@ -788,7 +855,7 @@ export class SessionManager {
       const anyReady = entry.models.some((model) => model !== null) && entry.stopReason === null;
       if (session.telemetry.enabled && anyReady && !signal.aborted) {
         releaseTelemetry = this.deps.telemetry.acquire(
-          entry.machines.filter((m) => !m.cloud && m.server !== 'lmstudio').map((m) => m.id),
+          entry.machines.filter((m) => !m.cloud && !textOnlyServer(m.server)).map((m) => m.id),
         );
         this.setProgress(entry, 'baseline', null);
         await pause(baselineMs, signal);
@@ -845,14 +912,22 @@ export class SessionManager {
   }
 
   /** Lines each run up with the samples taken around it, and adds up its energy. */
+  /**
+   * Lines each run up with the samples taken around it. Called after every round, so a long race
+   * keeps its early rounds' readings (the buffer holds three hours) and a crash keeps the rounds
+   * already saved; a run whose window after it has not passed yet is done again later.
+   */
   private attachTelemetry(entry: ActiveSession) {
+    if (!entry.session.telemetry.enabled) return;
     const baseline = this.deps.timings.telemetryBaselineMs;
+    const now = performance.timeOrigin + performance.now();
     const rounds = [
       ...(entry.session.warmup ? [entry.session.warmup] : []),
       ...entry.session.rounds,
     ];
     for (const round of rounds) {
       for (const run of round.runs) {
+        if (entry.telemetryDone.has(run.id)) continue;
         const recorded = entry.phases.get(run.id);
         if (!recorded) continue;
         const { phases, outputTokens } = recorded;
@@ -862,6 +937,7 @@ export class SessionManager {
           phases.end + baseline,
         );
         run.telemetry = { samples, energy: runEnergy(samples, phases, outputTokens) };
+        if (now >= phases.end + baseline) entry.telemetryDone.add(run.id);
       }
     }
   }
@@ -878,6 +954,19 @@ export class SessionManager {
           entry.imageLoads[i] === true && !!t.provenance?.statusBefore?.activeModel,
       );
     if (targets.length === 0) return;
+    // Shutting down: a reload takes minutes, longer than a stop waits, so say it was skipped.
+    if (this.closing) {
+      for (const { provenance } of targets) {
+        provenance.restore = {
+          model: provenance.statusBefore?.activeModel ?? 'the chat model',
+          quant: provenance.statusBefore?.quant ?? null,
+          state: 'skipped',
+          error: 'Model Duel was stopping, so the chat model was not loaded again.',
+          durationMs: null,
+        };
+      }
+      return;
+    }
     this.setProgress(entry, 'restoring', null);
     await Promise.all(
       targets.map(async ({ machine, provenance }) => {
@@ -945,7 +1034,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -980,11 +1069,26 @@ export class SessionManager {
           );
           return { body: built.body, cloud: { provider: cloud.provider, path: built.path } };
         }
-        if (run.machine.server === 'lmstudio' && run.provenance.statusBefore) {
+        const before = run.provenance.statusBefore;
+        if (run.machine.server === 'lmstudio' && before) {
           return {
-            body: lmChatBody(config, run.provenance.statusBefore, view.nonce),
+            body: lmChatBody(config, before, view.nonce),
             cloud: null,
-            lmstudio: true,
+            engine: 'lmstudio',
+          };
+        }
+        if (run.machine.server === 'ollama' && before) {
+          return {
+            body: ollamaChatBody(config, before, view.nonce),
+            cloud: null,
+            engine: 'ollama',
+          };
+        }
+        if (run.machine.server === 'openai-compatible' && before) {
+          return {
+            body: compatChatBody(config, before, view.nonce),
+            cloud: null,
+            engine: 'openai-compatible',
           };
         }
         const model = entry.models[round.runs.indexOf(run)] ?? '';
@@ -1047,8 +1151,9 @@ export class SessionManager {
       entry.stopReason = `Unsloth cut the prompt on ${cutOn} to fit its context, so the race stopped. Pick a shorter prompt, or load the model with a longer context.`;
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1098,7 +1203,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -1125,7 +1230,10 @@ export class SessionManager {
           },
         });
         run.view.live = { ...run.view.live, load: null };
-        if (loaded.error) {
+        if (loaded.error && signal.aborted) {
+          // The race was cancelled during the load: the run was cancelled, not failed.
+          this.finishRun(entry, round, run, 'cancelled', null);
+        } else if (loaded.error) {
           this.finishRun(entry, round, run, 'failed', loaded.error);
           // A model that did not load is not tried again in the next rounds.
           if (!signal.aborted) entry.unready[i] = `The image model did not load: ${loaded.error}`;
@@ -1188,8 +1296,9 @@ export class SessionManager {
       }
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1341,7 +1450,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -1357,8 +1466,10 @@ export class SessionManager {
     const loads = new Map<string, number | null>();
     await Promise.all(
       ready.map(async (run) => {
-        const loaded = await ensureSttModel(run.machine, config);
-        if (loaded.error) {
+        const loaded = await ensureSttModel(run.machine, config, signal);
+        if (loaded.cancelled) {
+          this.finishRun(entry, round, run, 'cancelled', null);
+        } else if (loaded.error) {
           this.finishRun(entry, round, run, 'failed', loaded.error);
           // A model that did not load is not tried again in the next rounds.
           const i = entry.machines.indexOf(run.machine);
@@ -1423,8 +1534,9 @@ export class SessionManager {
       view.flags = roundFlags(view.runs, names, view.loopLagMs);
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1532,9 +1644,15 @@ export class SessionManager {
     body: Record<string, unknown>,
     options: Parameters<typeof streamChatCompletion>[3],
   ): Promise<
-    StreamOutcome & { usage?: Record<string, unknown> | null; lmstudio?: LmStats | null }
+    StreamOutcome & {
+      usage?: Record<string, unknown> | null;
+      lmstudio?: LmStats | null;
+      ollama?: OllamaStats | null;
+    }
   > {
-    if (outgoing.lmstudio) return streamLmChat(machine, body, options);
+    if (outgoing.engine === 'lmstudio') return streamLmChat(machine, body, options);
+    if (outgoing.engine === 'ollama') return streamOllamaChat(machine, body, options);
+    if (outgoing.engine === 'openai-compatible') return streamCompatChat(machine, body, options);
     return outgoing.cloud
       ? streamCloud(
           outgoing.cloud.provider,
@@ -1598,11 +1716,9 @@ export class SessionManager {
     entry.starts.set(run.view.id, run.view.requestedAtMs);
     run.view.live = { ...run.view.live, requests: { done: 0, total: count } };
     const signal = AbortSignal.any([entry.controller.signal, round.controller.signal]);
-    // A cloud provider and LM Studio have no admission queue to watch.
+    // Only Unsloth has an admission queue to watch.
     const queue =
-      machine.cloud || outgoing.lmstudio
-        ? null
-        : watchQueue(machine, this.deps.timings.queuePollMs);
+      machine.cloud || outgoing.engine ? null : watchQueue(machine, this.deps.timings.queuePollMs);
     const sentAt: number[] = [];
     let finished = 0;
     const outcomes = await Promise.all(
@@ -1611,7 +1727,7 @@ export class SessionManager {
         return this.open(
           machine,
           outgoing,
-          outgoing.cloud || outgoing.lmstudio
+          outgoing.cloud || outgoing.engine
             ? body
             : { ...body, cancel_id: `${String(body.cancel_id)}-${k + 1}` },
           {
@@ -1739,10 +1855,15 @@ export class SessionManager {
             outputTokens: client.outputTokens,
           },
     );
+    const compact = compactEvents(events, requestAt);
+    const size = compact.reduce((sum, event) => sum + rawEventSize(event), 0);
+    const keep = entry.rawSize + size <= RAW_EVENT_BUDGET;
+    if (keep) entry.rawSize += size;
     run.view.raw = {
       headersAtMs: headersAt === null ? null : round3(headersAt - requestAt),
       endAtMs: round3(endAt - requestAt),
-      events: compactEvents(events, requestAt),
+      events: keep ? compact : [],
+      ...(keep ? {} : { omitted: compact.length }),
     };
     const usage = [...events].reverse().find((e) => e.event.type === 'usage')?.event;
     const timings: Timings | null = usage?.type === 'usage' ? usage.timings : null;
@@ -1762,12 +1883,25 @@ export class SessionManager {
         },
       };
       run.view.modelAfter = machine.cloud.model?.id ?? null;
-    } else if (machine.server === 'lmstudio') {
-      run.view.server = {
-        timings: null,
-        monitor: null,
-        lmstudio: (outcome as { lmstudio?: LmStats | null }).lmstudio ?? null,
-      };
+    } else if (textOnlyServer(machine.server)) {
+      // LM Studio's stats come apart; Ollama's and llama-server's arrive as llama.cpp timings.
+      const source = serverName(machine.server, run.provenance.statusBefore);
+      run.view.server =
+        machine.server === 'lmstudio'
+          ? {
+              timings: null,
+              monitor: null,
+              source,
+              lmstudio: (outcome as { lmstudio?: LmStats | null }).lmstudio ?? null,
+            }
+          : machine.server === 'ollama'
+            ? {
+                timings,
+                monitor: null,
+                source,
+                ollama: (outcome as { ollama?: OllamaStats | null }).ollama ?? null,
+              }
+            : { timings, monitor: null, source };
       if (!round.warmup) {
         const after = await readModelStatus(machine);
         run.view.modelAfter = after.status?.activeModel ?? null;
@@ -1803,6 +1937,20 @@ export class SessionManager {
         run,
         'cancelled',
         `Stopped because Unsloth cut the prompt on ${round.truncatedBy}.`,
+      );
+      return;
+    }
+    // Model Duel refuses loads during a race, but a model can be swapped on the machine itself:
+    // such a run measured two models, so it is not counted.
+    const before = run.view.modelBefore;
+    const after = run.view.modelAfter;
+    if (verdict.state === 'done' && before && after && before !== after) {
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'failed',
+        `The loaded model changed during the run, from ${before} to ${after}, so it is not counted.`,
       );
       return;
     }
@@ -1847,10 +1995,15 @@ export class SessionManager {
     if (outcome.failure === 'http' && machine.cloud) {
       return failed(cloudFailure(machine.cloud.provider, outcome.status, outcome.errorBody));
     }
-    if (outcome.failure === 'http' && machine.server === 'lmstudio') {
-      const said = lmErrorMessage(outcome.errorBody);
+    if (outcome.failure === 'http' && textOnlyServer(machine.server)) {
+      const said =
+        machine.server === 'lmstudio'
+          ? lmErrorMessage(outcome.errorBody)
+          : machine.server === 'ollama'
+            ? ollamaErrorMessage(outcome.errorBody)
+            : compatErrorMessage(outcome.errorBody);
       return failed(
-        `LM Studio answered HTTP ${outcome.status ?? 'nothing'}${said ? `: ${said}` : '.'}`,
+        `${SERVER_LABEL[machine.server]} answered HTTP ${outcome.status ?? 'nothing'}${said ? `: ${said}` : '.'}`,
       );
     }
     if (outcome.failure === 'http') {
@@ -1867,8 +2020,8 @@ export class SessionManager {
     const inBandError = outcome.timeline.events.find((e) => e.event.type === 'error')?.event;
     const source = machine.cloud
       ? CLOUD_INFO[machine.cloud.provider].label
-      : machine.server === 'lmstudio'
-        ? 'LM Studio'
+      : textOnlyServer(machine.server)
+        ? SERVER_LABEL[machine.server]
         : 'Unsloth';
     if (inBandError?.type === 'error') return failed(`${source} reported: ${inBandError.message}`);
     if (!client.sawDone && client.finishReason === null) {
@@ -1899,14 +2052,15 @@ export class SessionManager {
       session.error ??= `The race could not be saved: ${(failure as Error).message}`;
     }
     await this.writeResult(session);
-    this.recent.set(session.id, session);
+    const finished = publicSession(session);
+    this.recent.set(session.id, finished);
     while (this.recent.size > KEEP_RECENT) {
       const oldest = this.recent.keys().next().value;
       if (oldest === undefined) break;
       this.recent.delete(oldest);
     }
     this.active.delete(session.id);
-    this.broadcast(entry, { type: 'finished', session: publicSession(structuredClone(session)) });
+    this.broadcast(entry, { type: 'finished', session: finished });
     entry.listeners.clear();
     this.deps.log.info({ sessionId: session.id, state }, 'race finished');
   }

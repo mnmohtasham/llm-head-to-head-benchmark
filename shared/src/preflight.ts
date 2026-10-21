@@ -1,5 +1,6 @@
 import type { TextConfig } from './chat';
 import { CLOUD_INFO, type CloudConfig } from './cloud';
+import { serverName } from './engines';
 import type { ModelStatus } from './models';
 import { backendLabel, speculativeOn } from './session';
 import { STT_MODELS, type SttStatus, type TranscribeConfig } from './transcribe';
@@ -56,6 +57,7 @@ export interface PreflightIssue {
     | 'cloud'
     | 'cloud-model'
     | 'lmstudio'
+    | 'engine'
     | 'server';
   machineId: string | null;
   text: string;
@@ -139,6 +141,32 @@ export function preflightIssues(
       error('no-model', m.id, `No model is loaded on ${m.name}. Load one on the Models tab.`);
       continue;
     }
+    if (s.server === 'ollama' || s.server === 'openai-compatible') {
+      const name = serverName(s.server, s);
+      const others = s.engine?.otherLoaded ?? [];
+      if (others.length > 0) {
+        error(
+          'engine',
+          m.id,
+          s.server === 'ollama'
+            ? `Ollama on ${m.name} has more than one model loaded: ${[s.activeModel, ...others].join(', ')}. Unload all but the one to race, on the Models tab, so they do not share the GPU.`
+            : `The server on ${m.name} serves more than one model: ${[s.activeModel, ...others].join(', ')}. Races use the first; start the server with only the model to race.`,
+        );
+      }
+      const e = s.engine;
+      if (e?.sizeBytes && e.sizeVramBytes !== null && e.sizeVramBytes < e.sizeBytes * 0.99) {
+        warning(
+          'engine',
+          m.id,
+          `${s.activeModel} on ${m.name} is only ${Math.round((e.sizeVramBytes / e.sizeBytes) * 100)}% in GPU memory, so part of it runs on the CPU and its speed measures that too.`,
+        );
+      }
+      note(
+        'engine',
+        m.id,
+        `${name} cannot count tokens before a race, so pre-flight cannot check that the prompt and Max tokens fit ${m.name}'s context${s.contextLength !== null ? ` of ${n(s.contextLength)}` : ''}.`,
+      );
+    }
     if (s.server === 'lmstudio') {
       const others = s.lmstudio?.otherLoaded ?? [];
       if (others.length > 0) {
@@ -205,7 +233,7 @@ export function preflightIssues(
         error(
           'slots',
           m.id,
-          `${m.name} serves ${slots} ${slots === 1 ? 'request' : 'requests'} at once, so ${count - slots} of the ${count} would wait in the queue, which measures the queue rather than the machine. ${s.server === 'lmstudio' ? `Load it again in LM Studio with ${count} parallel requests.` : `Reload its model with ${count} slots.`}`,
+          `${m.name} serves ${slots} ${slots === 1 ? 'request' : 'requests'} at once, so ${count - slots} of the ${count} would wait in the queue, which measures the queue rather than the machine. ${s.server === 'lmstudio' ? `Load it again in LM Studio with ${count} parallel requests.` : s.server === 'openai-compatible' ? `Start the server with ${count} parallel slots (llama-server --parallel ${count}).` : s.server === 'ollama' ? `Start Ollama with OLLAMA_NUM_PARALLEL=${count}.` : `Reload its model with ${count} slots.`}`,
         );
       } else if (slots > 1 && context !== null && m.promptTokens !== null) {
         const share = Math.floor(context / slots);
@@ -254,21 +282,17 @@ export function preflightIssues(
   compare('context', 'context lengths', (s) =>
     s.contextLength === null ? 'unknown' : `${n(s.contextLength)} tokens`,
   );
-  const lmstudio = loaded.filter((m) => m.status.server === 'lmstudio');
-  if (lmstudio.length > 0 && lmstudio.length < loaded.length) {
-    const each = loaded
-      .map(
-        (m) => `${m.name} runs ${m.status.server === 'lmstudio' ? 'LM Studio' : 'Unsloth Studio'}`,
-      )
-      .join(', ');
+  const servers = loaded.map((m) => serverName(m.status.server ?? 'unsloth', m.status));
+  if (new Set(servers).size > 1) {
+    const each = loaded.map((m, i) => `${m.name} runs ${servers[i]}`).join(', ');
     warning(
       'server',
       null,
-      `The machines run different servers: ${each}. Each builds and sets up llama.cpp its own way, so the race compares the servers as well as the hardware.`,
+      `The machines run different servers: ${each}. Each builds and sets up its inference engine its own way, so the race compares the servers as well as the hardware.`,
     );
   }
-  // LM Studio does not report these, so they are compared between Unsloth machines only.
-  const unsloth = loaded.filter((m) => m.status.server !== 'lmstudio');
+  // The other servers do not report these, so they are compared between Unsloth machines only.
+  const unsloth = loaded.filter((m) => m.status.server === undefined);
   const compareUnsloth = (
     code: PreflightIssue['code'],
     what: string,

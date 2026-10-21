@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
-import 'uplot/dist/uPlot.min.css';
 
 /** A uPlot chart that fills its container's width and follows it when it resizes. */
 export function Chart({

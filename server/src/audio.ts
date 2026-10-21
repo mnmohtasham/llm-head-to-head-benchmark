@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -43,9 +43,16 @@ export interface UploadedAudio {
   seconds: number | null;
 }
 
+/** How much uploaded audio is kept; past it the files used longest ago go first. */
+export const AUDIO_KEEP_BYTES = 2 * 1024 * 1024 * 1024;
+export const AUDIO_KEEP_FILES = 50;
+
 /** Uploaded audio, stored by content hash in `<dataDir>/audio/`. */
 export class AudioStore {
-  constructor(readonly dataDir: string) {}
+  constructor(
+    readonly dataDir: string,
+    private readonly keep = { bytes: AUDIO_KEEP_BYTES, files: AUDIO_KEEP_FILES },
+  ) {}
 
   private dir(): string {
     return path.join(this.dataDir, 'audio');
@@ -70,7 +77,32 @@ export class AudioStore {
     await writeFile(path.join(this.dir(), `${id}.json`), `${JSON.stringify(meta)}\n`, {
       mode: 0o600,
     });
+    await this.prune(id);
     return meta;
+  }
+
+  /**
+   * Keeps the folder within its limits, removing the files written longest ago but never the one
+   * just saved. A race that named a removed file says to upload it again.
+   */
+  private async prune(keepId: string): Promise<void> {
+    const names = (await readdir(this.dir())).filter((n) => /^[0-9a-f]{64}\.bin$/.test(n));
+    const files = await Promise.all(
+      names.map(async (name) => {
+        const info = await stat(path.join(this.dir(), name)).catch(() => null);
+        return { id: name.slice(0, 64), bytes: info?.size ?? 0, at: info?.mtimeMs ?? 0 };
+      }),
+    );
+    files.sort((a, b) => b.at - a.at);
+    let total = 0;
+    let count = 0;
+    for (const file of files) {
+      total += file.bytes;
+      count += 1;
+      if (file.id === keepId || (total <= this.keep.bytes && count <= this.keep.files)) continue;
+      await rm(path.join(this.dir(), `${file.id}.bin`), { force: true });
+      await rm(path.join(this.dir(), `${file.id}.json`), { force: true });
+    }
   }
 
   async meta(id: string): Promise<UploadedAudio | null> {

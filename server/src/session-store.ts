@@ -57,8 +57,13 @@ export class SessionStore {
       if (!ID_PATTERN.test(id)) continue;
       const session = await this.read(id);
       if (!session) continue;
-      if (session.state === 'running') await this.markInterrupted(session);
-      this.index.set(session.id, summarizeSession(session));
+      // One damaged file must not keep the app from starting: it is left out, and logged.
+      try {
+        if (session.state === 'running') await this.markInterrupted(session);
+        this.index.set(session.id, summarizeSession(session));
+      } catch (error) {
+        this.log?.warn({ sessionId: id, err: error }, 'skipped a session file that is damaged');
+      }
     }
   }
 

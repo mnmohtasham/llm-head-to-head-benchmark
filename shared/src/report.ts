@@ -1,7 +1,15 @@
 import { csvCell } from './csv';
-import { metricKind, SERVER_METRICS, type MetricUnit } from './compare';
+import {
+  metricKind,
+  metricsFor,
+  SERVER_METRICS,
+  type MetricKind,
+  type MetricSpec,
+  type MetricUnit,
+} from './compare';
 import { formatMsValue, formatSeconds, formatValue } from './format';
 import { CLOUD_INFO } from './cloud';
+import { serverName } from './engines';
 import { imagePrompt } from './images';
 import { PRESETS } from './presets';
 import { LIBRISPEECH_CLIP } from './transcribe';
@@ -258,8 +266,9 @@ interface SetupSpec {
   pick: (p: MachineProvenance, session: SessionView, index: number) => string;
 }
 
-/** LM Studio does not report these settings, so they are not compared or guessed. */
+/** The servers other than Unsloth do not report these settings, so they are not compared or guessed. */
 const lm = (p: MachineProvenance) => p.server === 'lmstudio';
+const other = (p: MachineProvenance) => p.server !== undefined;
 const NOT_REPORTED = 'not reported';
 
 const SETUP: readonly SetupSpec[] = [
@@ -283,7 +292,11 @@ const SETUP: readonly SetupSpec[] = [
       p.cloud
         ? `${CLOUD_INFO[p.cloud.provider].label} API, cloud`
         : p.statusBefore
-          ? `${lm(p) ? 'LM Studio ' : ''}${backendLabel(p.statusBefore.backend)}`
+          ? p.server
+            ? p.statusBefore.backend === 'other'
+              ? serverName(p.server, p.statusBefore)
+              : `${serverName(p.server, p.statusBefore)} ${backendLabel(p.statusBefore.backend)}`
+            : backendLabel(p.statusBefore.backend)
           : 'n/a',
   },
   {
@@ -308,7 +321,7 @@ const SETUP: readonly SetupSpec[] = [
     pick: (p) => {
       const s = p.statusBefore;
       if (!s) return 'n/a';
-      if (lm(p)) return NOT_REPORTED;
+      if (other(p)) return NOT_REPORTED;
       if (!speculativeOn(s)) return s.specFallbackReason ? `off (${s.specFallbackReason})` : 'off';
       return [s.speculativeType, s.specDrafterKind].filter(Boolean).join(' · ');
     },
@@ -319,7 +332,7 @@ const SETUP: readonly SetupSpec[] = [
     matters: true,
     pick: (p) =>
       p.statusBefore
-        ? lm(p)
+        ? other(p)
           ? NOT_REPORTED
           : (p.statusBefore.cacheTypeKv ?? 'Unsloth default')
         : 'n/a',
@@ -330,7 +343,7 @@ const SETUP: readonly SetupSpec[] = [
     matters: true,
     pick: (p) =>
       p.statusBefore
-        ? lm(p)
+        ? other(p)
           ? NOT_REPORTED
           : (p.statusBefore.gpuMemoryMode ?? 'Unsloth default')
         : 'n/a',
@@ -347,7 +360,17 @@ const SETUP: readonly SetupSpec[] = [
         const r = typeof body.reasoning === 'string' ? body.reasoning : null;
         return r === null ? 'model default' : r === 'off' ? 'off' : r === 'on' ? 'on' : `on, ${r}`;
       }
+      if (p.server === 'ollama') {
+        // Ollama takes true or false, or a level for models that think at one.
+        const think = body.think;
+        if (think === undefined) return p.statusBefore?.supportsReasoning ? 'model default' : 'off';
+        return think === false ? 'off' : think === true ? 'on' : `on, ${String(think)}`;
+      }
       const effort = typeof body.reasoning_effort === 'string' ? `, ${body.reasoning_effort}` : '';
+      if (p.server === 'openai-compatible') {
+        const kwargs = body.chat_template_kwargs as { enable_thinking?: unknown } | undefined;
+        return kwargs?.enable_thinking === false ? 'off' : `on${effort}`;
+      }
       return body.enable_thinking === false ? 'off' : `on${effort}`;
     },
   },
@@ -356,7 +379,19 @@ const SETUP: readonly SetupSpec[] = [
     label: 'Unsloth Studio',
     matters: false,
     pick: (p) => {
-      if (!lm(p)) return text(p.versions.studio ?? p.versions.unsloth);
+      if (!other(p)) return text(p.versions.studio ?? p.versions.unsloth);
+      if (p.server && p.server !== 'lmstudio') {
+        // Another server in place of Unsloth: which one, and how much of the model is on the GPU.
+        const e = p.statusBefore?.engine;
+        const name = serverName(p.server, p.statusBefore);
+        const vram =
+          e?.sizeBytes && e.sizeVramBytes !== null
+            ? `${Math.round((e.sizeVramBytes / e.sizeBytes) * 100)}% in GPU memory`
+            : null;
+        return [`${name}${e?.version ? ` ${e.version}` : ''} instead`, vram]
+          .filter(Boolean)
+          .join(' · ');
+      }
       // LM Studio in place of Unsloth: what it says about how the model was loaded.
       const d = p.statusBefore?.lmstudio;
       const flash =
@@ -602,10 +637,19 @@ export function headlineRows(rows: readonly StatRow[]): Array<{ row: StatRow; he
   for (const row of rows) {
     if (!HEADLINES[row.key]) continue;
     const server = SERVER_METRICS[row.key] ? byKey.get(SERVER_METRICS[row.key] ?? '') : undefined;
-    const everyone = server?.summaries.every((summary) => summary.n > 0) ?? false;
+    // Every machine with a measurement has the server's number too; a machine with neither,
+    // such as one that failed every round, is in no comparison either way.
+    const everyone =
+      server?.summaries.every((summary, i) => summary.n > 0 || (row.summaries[i]?.n ?? 0) === 0) ??
+      false;
     out.push({ row: server && everyone ? server : row, headline: row.key });
   }
   return out;
+}
+
+/** The metrics a race of this kind is headlined by, in the comparison's order. */
+export function headlineMetrics(kind: MetricKind): MetricSpec[] {
+  return metricsFor(kind).filter((metric) => HEADLINES[metric.key]);
 }
 
 /** Sentences for the scoreboard: a winner only where the gate names one, otherwise a tie. */
@@ -673,6 +717,10 @@ export function toCsv(tables: readonly TableModel[]): string {
  * Text from machines, models or people made inert in Markdown: no HTML, links, emphasis or code,
  * and nothing that ends a table cell or line.
  */
+/**
+ * Text from machines as plain Markdown: no HTML, no markup, and no links, which GitHub-flavoured
+ * viewers would otherwise make of bare addresses, www. names and e-mail addresses.
+ */
 function mdText(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -680,6 +728,9 @@ function mdText(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/[\\`*_[\]!]/g, '\\$&')
     .replace(/\|/g, '\\|')
+    .replace(/:\/\//g, ':&#47;&#47;')
+    .replace(/\b(www)\./gi, '$1&#46;')
+    .replace(/@/g, '&#64;')
     .replace(/\r\n|\r|\n/g, ' ');
 }
 

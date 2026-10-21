@@ -1,5 +1,6 @@
 import { DEFAULT_SAMPLING, type ClientMetrics, type RunView } from '../src/chat';
 import type { ModelStatus } from '../src/models';
+import type { DeviceRun } from '../src/runs';
 import type { RoundView, SessionView, StoredSession } from '../src/session';
 
 /** A finished run with plausible numbers; override what a test cares about. */
@@ -134,6 +135,60 @@ export function makeStatus(over: Partial<ModelStatus> = {}): ModelStatus {
     memoryWarning: null,
     loading: [],
     isVision: false,
+    ...over,
+  };
+}
+
+/** A Results row of a finished text race on an RTX 3060; override what a test cares about. */
+export function makeDeviceRun(over: Partial<DeviceRun> = {}): DeviceRun {
+  const sessionId = over.sessionId ?? '11111111-1111-4111-8111-111111111111';
+  const machineId = over.machineId ?? 'rtx';
+  return {
+    key: `${sessionId}/${machineId}`,
+    sessionId,
+    machineId,
+    workload: 'text',
+    kind: 'text',
+    createdAt: '2026-10-01T12:00:00.000Z',
+    state: 'done',
+    error: null,
+    rounds: 3,
+    roundsDone: 3,
+    machine: 'test',
+    color: '#ef8fb0',
+    cloud: null,
+    server: 'unsloth',
+    others: [],
+    gpu: 'NVIDIA GeForce RTX 3060',
+    gpuMemoryGb: 12,
+    memoryGb: 30.24,
+    platform: 'CUDA',
+    os: 'Linux-6.17.0-41-generic-x86_64',
+    studio: '0.1.815-beta',
+    llamaCpp: 'b9601',
+    serverVersion: 'Unsloth Studio 0.1.815-beta',
+    model: 'unsloth/Qwen3.8-27B-GGUF',
+    quant: 'Q4_K_M',
+    engine: 'GGUF',
+    contextLength: 32768,
+    kvCache: null,
+    gpuLayers: -1,
+    totalLayers: 34,
+    slots: 4,
+    speculative: 'off',
+    gpuMemoryMode: null,
+    chatModel: true,
+    prompt: 'Short',
+    promptText: 'Explain the difference between latency and throughput.',
+    promptTokens: 42,
+    prefill: 'cold',
+    thinking: 'off',
+    maxTokens: 512,
+    concurrency: null,
+    settings: null,
+    metrics: { decode: 55, decodeServer: 57, ttft: 160, ttftServer: 150, finish: 'stop ×3' },
+    means: { decode: 54, decodeServer: 56, ttft: 170, ttftServer: 155, finish: 'stop ×3' },
+    wins: [],
     ...over,
   };
 }

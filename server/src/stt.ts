@@ -41,8 +41,10 @@ export function servedEngine(
 export async function ensureSttModel(
   machine: StoredMachine,
   config: Pick<TranscribeConfig, 'model' | 'engine' | 'device'>,
-): Promise<{ loadMs: number | null; error: string | null }> {
+  signal?: AbortSignal,
+): Promise<{ loadMs: number | null; error: string | null; cancelled?: boolean }> {
   const before = await readSttStatus(machine);
+  if (signal?.aborted) return { loadMs: null, error: null, cancelled: true };
   if (!before.status) return { loadMs: null, error: before.error };
   const engine = servedEngine(before.status, config.engine);
   if (before.status.loadedModel === config.model && before.status.loadedEngine === engine) {
@@ -54,8 +56,10 @@ export async function ensureSttModel(
     const answer = await c.postJson(
       '/api/inference/audio/stt/load',
       { model: config.model, engine: config.engine, device: config.device },
-      { timeoutMs: 15 * 60_000 },
+      { timeoutMs: 15 * 60_000, ...(signal ? { signal } : {}) },
     );
+    // A cancelled race stops waiting; the machine may still finish the load on its own.
+    if (signal?.aborted) return { loadMs: null, error: null, cancelled: true };
     const loadMs = performance.now() - started;
     if (answer.status !== 200) {
       const detail = (answer.body as { detail?: unknown } | null)?.detail;

@@ -8,7 +8,7 @@ import type {
   SessionView,
   Workload,
 } from '@duel/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, messageOf } from './api';
 import type { NewLogEntry } from './components/LogPanel';
 
@@ -78,6 +78,25 @@ function applyMessage(session: SessionView, message: SessionStreamMessage): Sess
   );
 }
 
+/** Applies stream messages in order to the race on screen; a snapshot replaces it whole. */
+function applyMessages(
+  session: SessionView | null,
+  id: string,
+  messages: readonly SessionStreamMessage[],
+): SessionView | null {
+  let view = session;
+  for (const message of messages) {
+    if (message.type === 'snapshot') view = message.session;
+    else if (view && view.id === id) view = applyMessage(view, message);
+  }
+  return view;
+}
+
+/** The longest wait before reading a race whose stream closed again. */
+const MAX_RETRY_MS = 15_000;
+/** Hidden tabs get no animation frames, so text still lands this often there. */
+const HIDDEN_FLUSH_MS = 250;
+
 interface Options {
   workload: Workload;
   machines: MachineView[] | null;
@@ -99,6 +118,12 @@ export function useRace({ workload, machines, addLog, describeRun, onOpen }: Opt
   const [formError, setFormError] = useState<string | null>(null);
   const [devMode, setDevMode] = useState(false);
   const [starting, setStarting] = useState(false);
+  /** The race a cancel was asked for, until it stops. */
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  /** The live stream dropped and is being opened again. */
+  const [reconnecting, setReconnecting] = useState(false);
+  /** A race opened from the address, waiting for the machine list before it fills the form. */
+  const [toFill, setToFill] = useState<SessionView | null>(null);
   const [deleting, setDeleting] = useState<SessionSummary | null>(null);
   /** The round shown in the panes; null follows the newest. -1 is the warm-up. */
   const [shownRound, setShownRound] = useState<number | null>(null);
@@ -143,7 +168,7 @@ export function useRace({ workload, machines, addLog, describeRun, onOpen }: Opt
         setSession(view);
         setShownRound(null);
         // Opening a race on purpose loads its settings, so Start runs it again.
-        if (view.id === routeId) onOpen(view);
+        if (view.id === routeId) setToFill(view);
       },
       (error: unknown) => {
         if (!cancelled) setFormError(`Could not open that race. ${messageOf(error)}`);
@@ -152,47 +177,147 @@ export function useRace({ workload, machines, addLog, describeRun, onOpen }: Opt
     return () => {
       cancelled = true;
     };
-  }, [wantedId, shownId, routeId, onOpen, workload]);
+  }, [wantedId, shownId, routeId, workload]);
+
+  // The form picks the race's machines from the machine list, so it waits for the list.
+  useEffect(() => {
+    if (!toFill || machines === null) return;
+    onOpen(toFill);
+    setToFill(null);
+  }, [toFill, machines, onOpen]);
 
   const reportRun = useCallback(
-    (run: RunView) => {
+    (run: RunView, warmup: boolean) => {
       const machine = machines?.find((m) => m.id === run.machineId);
+      const what = warmup ? 'Warm-up' : 'Run';
       addLog({
         machineName: machine?.name ?? run.machineName,
         color: machine?.color ?? null,
         tone: run.state === 'done' ? 'ok' : run.state === 'cancelled' ? 'info' : 'error',
         text:
           run.state === 'done'
-            ? describeRun(run)
+            ? `${warmup ? 'Warm-up, not counted: ' : ''}${describeRun(run)}`
             : run.state === 'cancelled'
-              ? 'Run cancelled.'
-              : `Run failed: ${run.error ?? 'unknown error'}`,
+              ? `${what} cancelled.`
+              : `${what} failed: ${run.error ?? 'unknown error'}`,
       });
     },
     [machines, addLog, describeRun],
   );
+  // The stream stays open when the machine list changes; runs are reported with the latest names.
+  const reportRunRef = useRef(reportRun);
+  useEffect(() => {
+    reportRunRef.current = reportRun;
+  }, [reportRun]);
 
   const running = session !== null && session.finishedAt === null;
   useEffect(() => {
     if (!shownId || !running) return;
-    const source = new EventSource(api.sessionStreamUrl(shownId));
-    source.onmessage = (event) => {
-      const message = JSON.parse(event.data as string) as SessionStreamMessage;
-      setSession((current) =>
-        message.type === 'snapshot'
-          ? message.session
-          : current && current.id === shownId
-            ? applyMessage(current, message)
-            : current,
-      );
-      if (message.type === 'run') reportRun(message.run);
-      if (message.type === 'finished') {
-        source.close();
-        refreshSummaries();
-      }
+    let source: EventSource | null = null;
+    let stopped = false;
+    let lost = false;
+    let failures = 0;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    // Text arrives about twenty times a second; it is applied at most once a frame, in order.
+    let queue: SessionStreamMessage[] = [];
+    let frame: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      frame = null;
+      timer = null;
+      const batch = queue;
+      queue = [];
+      if (batch.length > 0) setSession((current) => applyMessages(current, shownId, batch));
     };
-    return () => source.close();
-  }, [shownId, running, reportRun, refreshSummaries]);
+    const schedule = () => {
+      if (frame !== null || timer !== null) return;
+      frame = requestAnimationFrame(flush);
+      timer = setTimeout(flush, HIDDEN_FLUSH_MS);
+    };
+    const setLost = (now: boolean) => {
+      if (lost === now) return;
+      lost = now;
+      setReconnecting(now);
+    };
+
+    // The stream closed for good: read the race, which says whether it ended meanwhile.
+    const recover = () => {
+      api.getSession(shownId).then(
+        (view) => {
+          if (stopped) return;
+          if (view.finishedAt === null) {
+            retryLater();
+            return;
+          }
+          flush();
+          setLost(false);
+          setSession((current) => (current?.id === view.id ? view : current));
+          refreshSummaries();
+        },
+        (error: unknown) => {
+          if (stopped) return;
+          // Signed out: the sign-in screen takes over. Gone: there is nothing left to follow.
+          if (error instanceof ApiError && (error.status === 401 || error.status === 404)) {
+            setLost(false);
+            if (error.status === 404) setFormError(`This race is gone. ${messageOf(error)}`);
+            return;
+          }
+          retryLater();
+        },
+      );
+    };
+    const retryLater = () => {
+      const wait = Math.min(1000 * 2 ** failures, MAX_RETRY_MS);
+      failures += 1;
+      retry = setTimeout(connect, wait);
+    };
+
+    const connect = () => {
+      retry = null;
+      const stream = new EventSource(api.sessionStreamUrl(shownId));
+      source = stream;
+      stream.onopen = () => {
+        failures = 0;
+      };
+      // Every connection starts with a snapshot, which replaces the race whole, so text from
+      // before a reconnect is never added twice.
+      stream.onmessage = (event) => {
+        const message = JSON.parse(event.data as string) as SessionStreamMessage;
+        setLost(false);
+        queue.push(message);
+        if (message.type === 'delta') schedule();
+        else flush();
+        if (message.type === 'run') reportRunRef.current(message.run, message.warmup);
+        if (message.type === 'finished') {
+          stopped = true;
+          stream.close();
+          refreshSummaries();
+        }
+      };
+      stream.onerror = () => {
+        if (stopped) return;
+        setLost(true);
+        // The browser opens a dropped connection again by itself. An answer that is not a
+        // stream, such as a proxy's 502 or a 401 after signing out, closes it for good.
+        if (stream.readyState !== EventSource.CLOSED) return;
+        stream.close();
+        recover();
+      };
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      source?.close();
+      if (retry !== null) clearTimeout(retry);
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      setReconnecting(false);
+    };
+  }, [shownId, running, refreshSummaries]);
 
   /** Starts a race; returns the refusal so pre-flight can show what the server found. */
   const start = async (request: SessionRequest, names: string[]): Promise<ApiError | null> => {
@@ -225,10 +350,12 @@ export function useRace({ workload, machines, addLog, describeRun, onOpen }: Opt
 
   const cancel = async () => {
     if (!session) return;
+    setCancellingId(session.id);
     try {
       setSession(await api.cancelSession(session.id));
       refreshSummaries();
     } catch (error) {
+      setCancellingId(null);
       setFormError(messageOf(error));
     }
   };
@@ -272,6 +399,10 @@ export function useRace({ workload, machines, addLog, describeRun, onOpen }: Opt
     setFormError,
     devMode,
     starting,
+    /** Cancel was asked for and the race has not stopped yet. */
+    cancelling: running && cancellingId === session?.id,
+    /** The live stream dropped and is being opened again. */
+    reconnecting: running && reconnecting,
     deleting,
     setDeleting,
     setShownRound,

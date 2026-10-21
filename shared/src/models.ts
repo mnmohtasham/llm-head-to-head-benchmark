@@ -1,3 +1,4 @@
+import type { EngineStatusDetails } from './engines';
 import type { LmStatusDetails } from './lmstudio';
 import { z } from 'zod';
 import { describeAddress } from './url';
@@ -341,10 +342,12 @@ export interface ModelStatus {
   memoryWarning: string | null;
   loading: string[];
   isVision: boolean;
-  /** Set for LM Studio, whose status Model Duel reads into this shape. Absent means Unsloth. */
-  server?: 'lmstudio';
+  /** Set for the servers whose status Model Duel reads into this shape. Absent means Unsloth. */
+  server?: 'lmstudio' | 'ollama' | 'openai-compatible';
   /** What LM Studio says about its loaded model beyond Unsloth's fields. */
   lmstudio?: LmStatusDetails | null;
+  /** What Ollama or an OpenAI-compatible server says beyond Unsloth's fields. */
+  engine?: EngineStatusDetails | null;
 }
 
 export function normalizeStatus(body: unknown): ModelStatus {

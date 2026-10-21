@@ -3,7 +3,7 @@ import net, { type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
-import { SESSION_COOKIE } from '../src/auth';
+import { SESSION_COOKIE, throttleKey } from '../src/auth';
 import { tempDir } from './helpers';
 
 const PASSWORD = 'correct horse battery staple';
@@ -12,7 +12,14 @@ afterEach(async () => {
   for (const undo of cleanup.splice(0)) await undo();
 });
 
-async function app(options: { password?: string | null; dataDir?: string; client?: boolean } = {}) {
+async function app(
+  options: {
+    password?: string | null;
+    dataDir?: string;
+    client?: boolean;
+    trustProxy?: boolean;
+  } = {},
+) {
   const dataDir = options.dataDir ?? (await tempDir());
   let clientDir: string | null = null;
   if (options.client) {
@@ -21,7 +28,12 @@ async function app(options: { password?: string | null; dataDir?: string; client
     const dir = clientDir;
     cleanup.push(() => rm(dir, { recursive: true, force: true }));
   }
-  const built = await buildApp({ dataDir, clientDir, password: options.password ?? null });
+  const built = await buildApp({
+    dataDir,
+    clientDir,
+    password: options.password ?? null,
+    ...(options.trustProxy ? { trustProxy: true } : {}),
+  });
   cleanup.push(() => built.close());
   if (!options.dataDir) cleanup.push(() => rm(dataDir, { recursive: true, force: true }));
   return { app: built, dataDir };
@@ -229,5 +241,58 @@ describe('with a password', () => {
       // Whatever each spelling reaches, it is never the machine list.
       expect(response, target).not.toMatch(/^HTTP\/1\.1 200[\s\S]*\r\n\r\n\[/);
     }
+  });
+});
+
+describe('sessions', () => {
+  it('end where a copied cookie is used too, when their owner signs out, and survive a restart', async () => {
+    const dataDir = await tempDir();
+    cleanup.push(() => rm(dataDir, { recursive: true, force: true }));
+    const { app: first } = await app({ password: PASSWORD, dataDir });
+    const kept = await signIn(first);
+    const copied = await signIn(first);
+    expect(
+      (await first.inject({ url: '/api/machines', headers: { cookie: copied } })).statusCode,
+    ).toBe(200);
+    await first.inject({ method: 'POST', url: '/api/logout', headers: { cookie: copied } });
+    expect(
+      (await first.inject({ url: '/api/machines', headers: { cookie: copied } })).statusCode,
+    ).toBe(401);
+    await first.close();
+
+    const { app: second } = await app({ password: PASSWORD, dataDir });
+    expect(
+      (await second.inject({ url: '/api/machines', headers: { cookie: copied } })).statusCode,
+    ).toBe(401);
+    expect(
+      (await second.inject({ url: '/api/machines', headers: { cookie: kept } })).statusCode,
+    ).toBe(200);
+  });
+
+  it('get a Secure cookie when a trusted proxy says the page came over HTTPS', async () => {
+    const { app: direct } = await app({ password: PASSWORD });
+    const plain = await direct.inject({
+      method: 'POST',
+      url: '/api/login',
+      headers: { 'x-forwarded-proto': 'https' },
+      payload: { password: PASSWORD },
+    });
+    expect(String(plain.headers['set-cookie'])).not.toContain('Secure');
+    const { app: proxied } = await app({ password: PASSWORD, trustProxy: true });
+    const secure = await proxied.inject({
+      method: 'POST',
+      url: '/api/login',
+      headers: { 'x-forwarded-proto': 'https' },
+      payload: { password: PASSWORD },
+    });
+    expect(String(secure.headers['set-cookie'])).toContain('; Secure');
+  });
+
+  it('count failures per /64 for IPv6 and per address for IPv4', () => {
+    expect(throttleKey('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(throttleKey('2001:db8:1:2:bbbb:cccc:dddd:eeee')).toBe('2001:db8:1:2::/64');
+    expect(throttleKey('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(throttleKey('::ffff:192.168.1.7')).toBe('192.168.1.7');
+    expect(throttleKey('192.168.1.7')).toBe('192.168.1.7');
   });
 });

@@ -10,6 +10,7 @@ import {
 import type { StoredMachine } from './store';
 import { UnslothClient } from './unsloth';
 import { readLmStatus } from './lmstudio';
+import { readCompatStatus, readOllamaStatus } from './engines';
 
 const MODELS_TTL_MS = 20_000;
 const VARIANT_REQUESTS_AT_ONCE = 4;
@@ -122,8 +123,10 @@ export class ModelCatalog {
 export async function readModelStatus(
   machine: StoredMachine,
 ): Promise<{ status: ModelStatus | null; error: string | null }> {
-  // LM Studio's loaded model, read into the same shape.
+  // The other servers' loaded model, read into the same shape.
   if (machine.server === 'lmstudio') return readLmStatus(machine);
+  if (machine.server === 'ollama') return readOllamaStatus(machine);
+  if (machine.server === 'openai-compatible') return readCompatStatus(machine);
   const client = clientFor(machine);
   try {
     const answer = await client.getJson('/api/inference/status', { timeoutMs: 10_000 });

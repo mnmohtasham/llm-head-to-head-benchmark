@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import { useModal } from '../useModal';
 
 interface Props {
   title: string;
@@ -14,10 +15,7 @@ export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
   const confirm = async () => {
     setBusy(true);
@@ -37,6 +35,10 @@ export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose
       aria-labelledby={`${id}-title`}
       aria-describedby={`${id}-message`}
       onClose={onClose}
+      onCancel={(event) => {
+        // Escape waits for the answer, so an error still has somewhere to show.
+        if (busy) event.preventDefault();
+      }}
     >
       <div className="dialog-body">
         <h2 id={`${id}-title`} className="dialog-title">
@@ -53,6 +55,7 @@ export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose
             type="button"
             className="btn btn-quiet"
             onClick={() => ref.current?.close()}
+            disabled={busy}
             autoFocus
           >
             Cancel

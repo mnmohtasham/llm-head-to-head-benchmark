@@ -5,6 +5,7 @@ import {
   CloudStreamReader,
   modelListPath,
   parseModelList,
+  redactSecrets,
   type CloudModel,
   type CloudProvider,
 } from '@duel/shared';
@@ -78,8 +79,13 @@ export async function listCloudModels(
         models: null,
         error: `${CLOUD_INFO[provider].label} is not answering: ${answer.error}`,
       };
-    if (answer.status !== 200)
-      return { models: null, error: cloudFailure(provider, answer.status, answer.body) };
+    if (answer.status !== 200) {
+      // A provider or proxy that echoes the request must not hand the key back to the page.
+      return {
+        models: null,
+        error: redactSecrets(cloudFailure(provider, answer.status, answer.body), [apiKey]),
+      };
+    }
     models.push(...parseModelList(provider, answer.body));
     const b = (answer.body ?? {}) as {
       has_more?: unknown;

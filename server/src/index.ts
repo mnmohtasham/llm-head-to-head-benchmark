@@ -12,8 +12,8 @@ Usage: npm start -- [options]
 Every option can also be set in the environment (shown in brackets); an option given here wins.
 
   --port <n>          Port (default 3000) [PORT]
-  --host <addr>       Address to bind (default 127.0.0.1) [HOST]. The app has no login,
-                      so bind to a network address only on a network you trust.
+  --host <addr>       Address to bind (default 127.0.0.1) [HOST]. Set DUEL_PASSWORD before
+                      binding to a network address: without it there is no sign-in.
   --data-dir <dir>    Where machines and probes are stored (default ./data) [DUEL_DATA_DIR]
   --client-dir <dir>  Built client to serve (default ./client/dist) [DUEL_CLIENT_DIR]
   --api-only          Serve only /api, for development behind the Vite dev server
@@ -23,6 +23,9 @@ Every option can also be set in the environment (shown in brackets); an option g
 Environment only:
   DUEL_PASSWORD                Ask for this password before anything else (at least 8 characters)
   DUEL_PASSWORD_FILE           Read the password from this file instead, e.g. a Docker secret
+  DUEL_TRUST_PROXY             The HTTPS reverse proxy in front: 1 for any, or its addresses or
+                               ranges, comma separated. Sign-in limits then count each client's
+                               own address, and the session cookie is marked Secure
   LOG_LEVEL                    fatal, error, warn (default), info, debug or trace
   DUEL_TELEMETRY_BASELINE_MS   Idle hardware sampled before and after a race (default 5000)
   DUEL_IN_CONTAINER            1 when running in Docker, for the startup message
@@ -115,6 +118,13 @@ function readPassword(): string | null {
   return password;
 }
 const password = readPassword();
+const proxy = env('DUEL_TRUST_PROXY')?.trim();
+const trustProxy =
+  proxy === undefined || proxy === '' || proxy === '0'
+    ? undefined
+    : proxy === '1' || proxy.toLowerCase() === 'true'
+      ? true
+      : proxy;
 
 const app = await buildApp({
   dataDir,
@@ -123,6 +133,7 @@ const app = await buildApp({
   logger: { level: env('LOG_LEVEL') ?? 'warn' },
   allowedHosts,
   password,
+  ...(trustProxy !== undefined ? { trustProxy } : {}),
   mode: values['api-only'] ? 'dev' : 'production',
   // The telemetry baseline before and after a race; tests shorten it.
   ...(baselineMs
@@ -174,7 +185,15 @@ if (password !== null) {
   );
 }
 
+/** Saves the races and stops. A second signal, or a shutdown that hangs, stops at once. */
+let stopping = false;
 const stop = () => {
+  if (stopping) process.exit(1);
+  stopping = true;
+  setTimeout(() => {
+    process.stderr.write('Model Duel did not stop in time; stopping now.\n');
+    process.exit(1);
+  }, 20_000).unref();
   void app.close().then(() => process.exit(0));
 };
 process.on('SIGINT', stop);

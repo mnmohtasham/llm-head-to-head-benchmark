@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 // The browser half of the smoke test: every tab of a running Model Duel opens without a script
 // error or a Content-Security-Policy violation. It only looks, so real machines are safe.
-const TABS = ['Machines', 'Models', 'Text', 'Transcribe', 'Image', 'Results'];
+const TABS = ['Machines', 'Models', 'Text', 'Transcribe', 'Image', 'Suites', 'Results'];
 
 test('every tab opens without script errors or blocked content', async ({ page }) => {
   const problems: string[] = [];

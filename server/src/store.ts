@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
   MACHINE_COLORS,
+  MACHINE_SERVERS,
   type CloudConfig,
   type MachineServer,
   type LoadJob,
@@ -84,7 +85,15 @@ function isStoredMachine(value: unknown): value is StoredMachine {
 export async function writeFileAtomic(file: string, data: string): Promise<void> {
   // Random, so two writes of one file in the same millisecond never share a temporary file.
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  await writeFile(temporary, data, { mode: 0o600 });
+  // Flushed to disk before the rename, so a power cut leaves the old file or the new one, never
+  // an empty one.
+  const handle = await open(temporary, 'w', 0o600);
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   await rename(temporary, file);
   await chmod(file, 0o600);
 }
@@ -165,7 +174,7 @@ export class MachineStore {
       ({ agentUrl: _agentUrl, agentToken: _agentToken, ...m }) => ({
         ...m,
         cloud: m.cloud ?? null,
-        server: m.server === 'lmstudio' ? 'lmstudio' : 'unsloth',
+        server: (MACHINE_SERVERS as readonly string[]).includes(m.server) ? m.server : 'unsloth',
       }),
     );
   }

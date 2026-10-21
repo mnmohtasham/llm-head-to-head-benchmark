@@ -226,6 +226,11 @@ test.describe('racing two machines', () => {
     await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
     await page.getByRole('checkbox', { name: 'Race anyway' }).check();
     await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+    // Another request asks again: the tick was for the warnings of the one before.
+    await page.getByLabel('Max tokens').fill('1024');
+    await expect(page.getByTestId('race-warnings')).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: 'Race anyway' })).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 
   test('opens a past race from the results log, and deletes one', async ({ page }) => {
@@ -617,6 +622,10 @@ test.describe('one machine', () => {
       'Unsloth reported: Context size has been exceeded.',
     );
     await expect(pane(page, LINUX.name).getByTestId('run-state')).toHaveText('Failed');
+    // The race as a whole failed too, and says why.
+    await expect(page.getByTestId('race-error')).toHaveText(
+      'The race failed. Every machine failed in every round. Each pane says why.',
+    );
   });
 
   test('will not start while a chosen machine has no model', async ({ page, request }) => {
@@ -631,5 +640,23 @@ test.describe('one machine', () => {
       `No model is loaded on ${MAC.name}. Load one on the Models tab.`,
     );
     await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+
+  test('a blank number field holds the race back, unless it is not sent', async ({ page }) => {
+    await setUp(page, [LINUX.name]);
+    await page.getByText('Sampling', { exact: true }).click();
+    await page.getByLabel('Temperature').fill('');
+    await expect(page.getByTestId('preflight')).toContainText('Temperature needs a number.');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+    await page.getByLabel('Temperature').fill('0.6');
+    await page.getByLabel('Seed').fill('');
+    await expect(page.getByTestId('preflight')).toContainText('Seed needs a number.');
+    // Warm prefill sends no seed, so its field no longer matters.
+    await page
+      .getByRole('radiogroup', { name: 'Prefill' })
+      .getByRole('radio', { name: 'Warm' })
+      .click();
+    await expect(page.getByTestId('preflight-status')).toContainText('All clear');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
   });
 });

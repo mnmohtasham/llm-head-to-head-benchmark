@@ -3,7 +3,7 @@ import {
   DEFAULT_SAMPLING,
   MAX_CONCURRENCY,
   PRESETS,
-  REASONING_EFFORTS,
+  serverName,
   sessionRequestSchema,
   textConfigSchema,
   type CloudModel,
@@ -17,13 +17,24 @@ import {
   type SessionView,
   type TextMode,
 } from '@duel/shared';
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
 import { api, messageOf, type PresetView } from '../api';
 import { BlindVote } from '../components/BlindVote';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import {
+  cloudEfforts,
+  commonEfforts,
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   PreflightPanel,
   ProgressLine,
@@ -38,6 +49,7 @@ import { RunPane } from '../components/RunPane';
 import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
+import { fieldNumber, formProblem } from '../fields';
 import { formatMsValue, formatRate } from '../format';
 import { usePreflight } from '../usePreflight';
 import { useRace } from '../useRace';
@@ -46,23 +58,17 @@ import { useTelemetry } from '../useTelemetry';
 const DEFAULT_PROMPT =
   'Explain in about 150 words why memory bandwidth limits how fast a local language model writes text.';
 
-/** Effort levels every selected model accepts. */
-function commonEfforts(statuses: ModelStatus[]): string[] {
-  if (statuses.length === 0) return [];
-  const [first, ...rest] = statuses.map((s) =>
-    s.reasoningEffortLevels.filter((level) =>
-      (REASONING_EFFORTS as readonly string[]).includes(level),
-    ),
-  );
-  return (first ?? []).filter((level) => rest.every((levels) => levels.includes(level)));
-}
-
-/** Effort levels any of these cloud models takes; each gets the nearest level it offers. */
-function cloudEfforts(models: CloudModel[]): string[] {
-  return REASONING_EFFORTS.filter(
-    (level) => level !== 'none' && models.some((m) => m.efforts.includes(level)),
-  );
-}
+/** The number fields by their path in the config. */
+const TEXT_LABELS: Readonly<Record<string, string>> = {
+  maxTokens: 'Max tokens',
+  concurrency: 'Requests at once',
+  'sampling.temperature': 'Temperature',
+  'sampling.topP': 'Top-p',
+  'sampling.topK': 'Top-k',
+  'sampling.minP': 'Min-p',
+  'sampling.repetitionPenalty': 'Repetition penalty',
+  'sampling.seed': 'Seed',
+};
 
 interface Props {
   machines: MachineView[] | null;
@@ -97,6 +103,14 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [concurrency, setConcurrency] = useState('4');
   /** Machines whose model is loading again with more slots, from pre-flight's shortcut. */
   const [reloading, setReloading] = useState<Record<string, string>>({});
+  /** False once the tab is left, which ends a reload's polling. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [sampling, setSampling] = useState(() => ({
     temperature: String(DEFAULT_SAMPLING.temperature),
     topP: String(DEFAULT_SAMPLING.topP),
@@ -185,7 +199,10 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : fallback ? [fallback.id] : []);
   }, [selected, machines, statuses]);
 
-  const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
+  const chosen = useMemo(
+    () => (machines ?? []).filter((m) => selected?.includes(m.id)),
+    [machines, selected],
+  );
   const chosenStatuses = chosen.map((m) => statuses[m.id]?.status ?? null);
   const loaded = chosenStatuses.filter((s): s is ModelStatus => !!s?.activeModel);
   const cloudModels = chosen
@@ -202,25 +219,27 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const effortLevels = loaded.length > 0 ? commonEfforts(loaded) : cloudEfforts(cloudModels);
   const effortValue = effort ?? (effortLevels.includes('low') ? 'low' : '');
 
-  // The config the form describes, or the reason it cannot be sent yet.
+  // The config the form describes, or the reason it cannot be sent yet. Only what is sent is
+  // checked: latency mode hides Requests at once, and warm prefill sends no seed.
   const draft = textConfigSchema.safeParse({
     mode,
-    concurrency: Number(concurrency),
+    concurrency: mode === 'throughput' ? fieldNumber(concurrency) : undefined,
     preset,
     prompt: preset === 'custom' ? prompt : '',
-    maxTokens: Number(maxTokens),
+    maxTokens: fieldNumber(maxTokens),
     thinking: alwaysThinks || (canThink && thinking),
     reasoningEffort: effortValue && effortLevels.includes(effortValue) ? effortValue : null,
     prefill,
     sampling: {
-      temperature: Number(sampling.temperature),
-      topP: Number(sampling.topP),
-      topK: Number(sampling.topK),
-      minP: Number(sampling.minP),
-      repetitionPenalty: Number(sampling.repetitionPenalty),
-      seed: Number(sampling.seed),
+      temperature: fieldNumber(sampling.temperature),
+      topP: fieldNumber(sampling.topP),
+      topK: fieldNumber(sampling.topK),
+      minP: fieldNumber(sampling.minP),
+      repetitionPenalty: fieldNumber(sampling.repetitionPenalty),
+      seed: prefill === 'cold' ? fieldNumber(sampling.seed) : undefined,
     },
   });
+  const problem = draft.success ? null : formProblem(draft.error, TEXT_LABELS);
   const chosenIds = chosen.map((m) => m.id);
   const preflightKey = draft.success
     ? JSON.stringify({ workload: 'text', machineIds: chosenIds, config: draft.data })
@@ -228,66 +247,104 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const preflight = usePreflight(preflightKey, running);
   const blocked = !draft.success || chosen.length === 0 || preflight.stops;
   // Machines on one computer compete for it, so they should take turns.
-  const sharing = sharedHost(chosen, hosts);
+  const sharing = useMemo(() => sharedHost(chosen, hosts), [chosen, hosts]);
+  const recheck = preflight.recheck;
 
   /** Pre-flight's shortcut when a machine has too few slots: reload its model with enough. */
-  const reloadWithSlots = async (machineId: string, slots: number) => {
-    setReloading((current) => ({ ...current, [machineId]: 'Loading again…' }));
-    try {
-      await api.reloadSlots(machineId, slots);
-      const deadline = Date.now() + 15 * 60_000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const view = await api.machineStatus(machineId);
-        setStatuses((current) => ({ ...current, [machineId]: view }));
-        if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
-          setReloading((current) => ({
-            ...current,
-            [machineId]:
-              view.job?.state === 'loaded'
-                ? ''
-                : `The load ended: ${view.job?.error ?? view.job?.state ?? 'unknown'}`,
-          }));
-          break;
+  const reloadWithSlots = useCallback(
+    async (machineId: string, slots: number) => {
+      setReloading((current) => ({ ...current, [machineId]: 'Loading again…' }));
+      try {
+        await api.reloadSlots(machineId, slots);
+        const deadline = Date.now() + 15 * 60_000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          // The load goes on after leaving the tab; following it stops.
+          if (!mounted.current) return;
+          const view = await api.machineStatus(machineId);
+          setStatuses((current) => ({ ...current, [machineId]: view }));
+          if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
+            setReloading((current) => ({
+              ...current,
+              [machineId]:
+                view.job?.state === 'loaded'
+                  ? ''
+                  : `The load ended: ${view.job?.error ?? view.job?.state ?? 'unknown'}`,
+            }));
+            break;
+          }
         }
+      } catch (error) {
+        setReloading((current) => ({ ...current, [machineId]: messageOf(error) }));
       }
-    } catch (error) {
-      setReloading((current) => ({ ...current, [machineId]: messageOf(error) }));
-    }
-    preflight.recheck();
-  };
-  const slotShortcut = (issue: PreflightIssue) => {
-    if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
-    // LM Studio loads with its own settings; reloading with more slots is Unsloth's shortcut.
-    if (machines?.find((m) => m.id === issue.machineId)?.server === 'lmstudio') return null;
-    const id = issue.machineId;
-    const state = reloading[id];
-    return state ? (
-      <span className="field-hint">{state}</span>
-    ) : (
-      <button
-        type="button"
-        className="btn btn-quiet btn-inline"
-        onClick={() => void reloadWithSlots(id, Number(concurrency))}
-        disabled={running}
-      >
-        Reload with {concurrency} slots
-      </button>
-    );
-  };
+      recheck();
+    },
+    [recheck],
+  );
+  const slotShortcut = useCallback(
+    (issue: PreflightIssue) => {
+      if (issue.code !== 'slots' || issue.level !== 'error' || !issue.machineId) return null;
+      // The other servers load with their own settings; reloading with more slots is Unsloth's shortcut.
+      if (machines?.find((m) => m.id === issue.machineId)?.server !== 'unsloth') return null;
+      const id = issue.machineId;
+      const state = reloading[id];
+      return state ? (
+        <span className="field-hint">{state}</span>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-quiet btn-inline"
+          onClick={() => void reloadWithSlots(id, Number(concurrency))}
+          disabled={running}
+        >
+          Reload with {concurrency} slots
+        </button>
+      );
+    },
+    [machines, reloading, reloadWithSlots, concurrency, running],
+  );
 
-  const toggle = (id: string) => {
+  const toggle = useCallback((id: string) => {
     setSelected((current) => {
       const list = current ?? [];
       return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
     });
-  };
+  }, []);
+  const describe = useCallback(
+    (m: MachineView) => {
+      if (m.cloud) {
+        return `${CLOUD_INFO[m.cloud.provider].label} · ${m.cloud.model?.id ?? 'no model chosen'}`;
+      }
+      const s = statuses[m.id];
+      return s
+        ? s.error
+          ? 'unreachable'
+          : [
+              m.server === 'unsloth' ? null : serverName(m.server, s.status ?? null),
+              s.status?.activeModel ?? 'no model loaded',
+              s.status?.quant,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+        : 'checking…';
+    },
+    [statuses],
+  );
+  const preflightProblem = useMemo(
+    () =>
+      problem
+        ? { text: problem, error: true }
+        : chosen.length === 0
+          ? { text: 'Pick at least one machine.', error: false }
+          : null,
+    [problem, chosen.length],
+  );
 
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
     race.setFormError(null);
     if (!draft.success) {
-      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(problem);
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
@@ -298,7 +355,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       plan: plan.value,
     });
     if (!parsed.success) {
-      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(formProblem(parsed.error, PLAN_LABELS));
       return;
     }
     const refused = await race.start(
@@ -307,6 +364,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     );
     // Pre-flight on the server found something the form had not seen yet.
     if (refused?.issues) preflight.showIssues(refused.issues);
+    // The next race accepts its own warnings, or none.
+    else if (!refused) preflight.setRaceAnyway(false);
   };
 
   const round = race.round;
@@ -325,9 +384,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           ? (m.cloud.model?.id ?? null)
           : (statuses[m.id]?.status?.activeModel ?? null),
       }));
-  // Cloud models and LM Studio report no hardware readings.
+  // Cloud models and the servers other than Unsloth report no hardware readings.
   const cloudIds = new Set(
-    (machines ?? []).filter((m) => m.cloud || m.server === 'lmstudio').map((m) => m.id),
+    (machines ?? []).filter((m) => m.cloud || m.server !== 'unsloth').map((m) => m.id),
   );
   const telemetry = useTelemetry(panes.map((pane) => pane.key).filter((id) => !cloudIds.has(id)));
   const columns = Math.min(Math.max(panes.length, 1), 4);
@@ -363,8 +422,13 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         current="text"
         actions={
           running ? (
-            <button type="button" className="btn btn-primary" onClick={() => void race.cancel()}>
-              Cancel
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void race.cancel()}
+              disabled={race.cancelling}
+            >
+              {race.cancelling ? 'Cancelling…' : 'Cancel'}
             </button>
           ) : (
             <button
@@ -412,23 +476,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               selected={selected}
               onToggle={toggle}
               running={running}
-              describe={(m) => {
-                if (m.cloud) {
-                  return `${CLOUD_INFO[m.cloud.provider].label} · ${m.cloud.model?.id ?? 'no model chosen'}`;
-                }
-                const s = statuses[m.id];
-                return s
-                  ? s.error
-                    ? 'unreachable'
-                    : [
-                        m.server === 'lmstudio' ? 'LM Studio' : null,
-                        s.status?.activeModel ?? 'no model loaded',
-                        s.status?.quant,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')
-                  : 'checking…';
-              }}
+              describe={describe}
             />
 
             <div className="field">
@@ -564,7 +612,11 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                     : 'The same prompt every round and no seed: rounds after the first may reuse the cache.'}
                 </p>
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
+              <TelemetrySwitch
+                enabled={telemetry.enabled}
+                onChange={telemetry.setEnabled}
+                onError={race.setFormError}
+              />
             </div>
             <div className="run-options">
               <div className="field">
@@ -647,13 +699,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
               </p>
             ) : null}
             <PreflightPanel
-              problem={
-                !draft.success
-                  ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
-                  : chosen.length === 0
-                    ? { text: 'Pick at least one machine.', error: false }
-                    : null
-              }
+              problem={preflightProblem}
               checking={preflight.current === null}
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
@@ -672,6 +718,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                 .join(' ')}
               raceAnyway={preflight.raceAnyway}
               setRaceAnyway={preflight.setRaceAnyway}
+              onRecheck={recheck}
               running={running}
             />
             {race.formError ? (
@@ -687,6 +734,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
           running={running}
           roundIndex={race.roundIndex}
           manyRounds={race.manyRounds}
+          reconnecting={race.reconnecting}
         />
         {panes.length > 0 ? (
           <div
@@ -730,9 +778,9 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
         <SessionList
           sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => race.setDeleting(target)}
+          onDelete={race.setDeleting}
         />
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {race.deleting ? (

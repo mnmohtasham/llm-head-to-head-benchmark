@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +8,8 @@ import fastifyStatic from '@fastify/static';
 import type { ApiErrorBody } from '@duel/shared';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { AudioStore } from './audio';
+import { SECURITY_HEADERS } from './headers';
+import { LiveStreams } from './live';
 import { registerAuth } from './auth';
 import { ImageStore } from './imagestore';
 import { chatRestorer } from './restore';
@@ -16,16 +20,21 @@ import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
 import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerSuiteRoutes } from './routes/suites';
 import { registerRunRoutes } from './routes/runs';
 import { registerLmStudioRoutes } from './routes/lmstudio';
+import { registerOllamaRoutes } from './routes/ollama';
 import { registerShareRoutes } from './routes/share';
 import { ShareStore } from './share';
 import { DeviceRunIndex } from './runs';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
+import { RaceStarter } from './races';
 import { DEFAULT_RUN_TIMINGS, SessionManager, type RunTimings } from './sessions';
 import { SettingsStore } from './settings';
 import { MachineStore } from './store';
+import { SuiteStore } from './suite-store';
+import { SuiteManager } from './suites';
 import { DEFAULT_TELEMETRY, TelemetryHub, type TelemetryOptions } from './telemetry';
 
 export interface AppOptions {
@@ -48,6 +57,11 @@ export interface AppOptions {
   shareEndpoint?: string;
   /** A password for the whole app; null or missing leaves it open. */
   password?: string | null;
+  /**
+   * The reverse proxy in front, whose X-Forwarded-For and X-Forwarded-Proto are believed: true for
+   * any, or addresses and ranges. Without it, the proxy's own address is the client's.
+   */
+  trustProxy?: boolean | string;
   /** The clock sessions expire by; tests move it. */
   clock?: () => number;
 }
@@ -73,31 +87,9 @@ export const REDACTED_LOG_PATHS = [
   '*.privateKey',
 ];
 
-/**
- * Sent with every response. The page runs only its own scripts and styles, talks only to this
- * server, can never be framed by another site, and names no page in the Referer it sends on.
- */
-export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
-  'content-security-policy': [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data:",
-    "media-src 'self'",
-    "connect-src 'self'",
-    "font-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join('; '),
-  'x-content-type-options': 'nosniff',
-  'x-frame-options': 'DENY',
-  'referrer-policy': 'no-referrer',
-  'cross-origin-opener-policy': 'same-origin',
-  'cross-origin-resource-policy': 'same-origin',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
-};
+const gzipAsync = promisify(gzip);
+/** JSON answers this long or longer are compressed; smaller ones are not worth it. */
+const COMPRESS_FROM = 16 * 1024;
 
 function hostnameOf(hostHeader: string): string {
   if (hostHeader.startsWith('[')) return hostHeader.slice(1, hostHeader.indexOf(']')).toLowerCase();
@@ -150,12 +142,34 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       : (options.logger ?? false);
   // A request body must arrive within ten minutes: long enough for the largest audio file on a
   // slow network, short enough that a stalled upload cannot hold a socket for ever.
-  const app = Fastify({ logger, bodyLimit: 64 * 1024, requestTimeout: 10 * 60_000 });
+  const app = Fastify({
+    logger,
+    bodyLimit: 64 * 1024,
+    requestTimeout: 10 * 60_000,
+    trustProxy: options.trustProxy ?? false,
+  });
 
   app.addHook('onSend', async (request, reply, payload) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) reply.header(name, value);
-    // Answers hold machines, runs and settings: no cache keeps a copy.
-    if (request.url.startsWith('/api/')) reply.header('cache-control', 'no-store');
+    // Answers hold machines, runs and settings: no cache keeps a copy, unless the route said how
+    // long its answer keeps (the race images and the bundled clip, which never change).
+    if (request.url.startsWith('/api/') && !reply.hasHeader('cache-control')) {
+      reply.header('cache-control', 'no-store');
+    }
+    // Large JSON answers, such as every run or a long race, go gzipped to browsers that take it,
+    // compressed on the thread pool so the event loop stays free for a race's timing.
+    if (
+      typeof payload === 'string' &&
+      payload.length >= COMPRESS_FROM &&
+      !reply.hasHeader('content-encoding') &&
+      /\bgzip\b/.test(String(request.headers['accept-encoding'] ?? '')) &&
+      String(reply.getHeader('content-type') ?? '').startsWith('application/json')
+    ) {
+      reply.header('content-encoding', 'gzip');
+      reply.header('vary', 'accept-encoding');
+      reply.removeHeader('content-length');
+      return gzipAsync(payload, { level: 6 });
+    }
     return payload;
   });
 
@@ -200,14 +214,23 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     version,
     onMachineChanged: (id) => catalog.invalidate(id),
   });
-  registerModelRoutes(app, { store, catalog, loads, timings });
+  // Set once the race manager exists: model changes wait for a race on the machine to end.
+  let racingOn = (_machineId: string) => false;
+  registerModelRoutes(app, {
+    store,
+    catalog,
+    loads,
+    timings,
+    isRacing: (id) => racingOn(id),
+  });
   const settings = new SettingsStore(options.dataDir);
   await settings.init();
   const telemetry = new TelemetryHub(store, settings, {
     ...DEFAULT_TELEMETRY,
     ...options.telemetry,
   });
-  registerTelemetryRoutes(app, { store, telemetry });
+  const streams = new LiveStreams();
+  registerTelemetryRoutes(app, { store, telemetry, streams });
   const audio = new AudioStore(options.dataDir);
   const images = new ImageStore(options.dataDir);
   // Audio arrives as the raw file; the upload route alone raises the size limit.
@@ -220,14 +243,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   await sessionStore.init();
   const results = new ResultStore(options.dataDir, { version, build });
   // Races from before result files get theirs now, in the background; closing waits for them.
+  // Set once the race manager exists; until then nothing races.
+  let racing = () => false;
   const backfilled = results
     .backfill(
-      (async function* () {
-        for (const summary of sessionStore.summaries()) {
-          const stored = await sessionStore.load(summary.id);
-          if (stored) yield stored;
-        }
-      })(),
+      sessionStore.summaries(),
+      (id) => sessionStore.load(id),
+      () => racing(),
     )
     .then((written) => {
       if (written > 0) app.log.info({ written }, 'wrote result files for earlier races');
@@ -245,18 +267,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     results,
     restoreText: chatRestorer({ catalog, loads, store }),
   });
-  registerSessionRoutes(app, {
-    store,
+  racing = () => sessions.racing();
+  racingOn = (id) => sessions.racingOn(id);
+  const races = new RaceStarter({ store, sessions, isLoading: (id) => loads.isActive(id), audio });
+  registerSessionRoutes(app, { store, sessions, races, streams, audio, images, results });
+  const suiteStore = new SuiteStore(options.dataDir, app.log);
+  await suiteStore.init();
+  const suites = new SuiteManager({
+    suites: suiteStore,
+    races,
     sessions,
-    isLoading: (id) => loads.isActive(id),
-    audio,
-    images,
-    results,
+    machines: store,
+    log: app.log,
   });
+  registerSuiteRoutes(app, { suites });
   registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
   registerLmStudioRoutes(app, {
     store,
     loadTimeoutMs: options.loadTimings?.loadTimeoutMs ?? 20 * 60_000,
+    isRacing: (id) => sessions.racingOn(id),
+  });
+  registerOllamaRoutes(app, {
+    store,
+    loadTimeoutMs: options.loadTimings?.loadTimeoutMs ?? 20 * 60_000,
+    isRacing: (id) => sessions.racingOn(id),
   });
   const share = new ShareStore(options.dataDir, options.shareEndpoint);
   await share.init();
@@ -267,15 +301,35 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     build,
     ...(options.shareTimeouts ? { timeouts: options.shareTimeouts } : {}),
   });
+  // Before the server stops taking connections: stop the races and save them, then end the live
+  // streams, whose open connections the server would otherwise wait for.
+  app.addHook('preClose', async () => {
+    // A running suite starts no more races; it is marked interrupted at the next start.
+    const suiteStopped = suites.close();
+    await sessions.close();
+    await suiteStopped;
+    streams.endAll();
+  });
   app.addHook('onClose', async () => {
     await backfilled;
     await loads.close();
-    await sessions.close();
     telemetry.close();
   });
 
   if (hasClient) {
-    await app.register(fastifyStatic, { root: clientDir, prefix: '/' });
+    await app.register(fastifyStatic, {
+      root: clientDir,
+      prefix: '/',
+      // The build writes .br and .gz copies; browsers that take them get them.
+      preCompressed: true,
+      setHeaders: (res, file) => {
+        // Bundles are named by their content, so they never change; the page itself may.
+        res.header(
+          'cache-control',
+          /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache',
+        );
+      },
+    });
   }
 
   app.setNotFoundHandler((request, reply) => {

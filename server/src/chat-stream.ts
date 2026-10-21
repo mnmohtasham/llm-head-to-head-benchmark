@@ -34,6 +34,8 @@ export interface StreamTarget {
   interpret?: (message: SseMessage) => ChatEvent[];
   /** Events once the stream has ended, for providers that end without saying so. */
   end?: () => ChatEvent[];
+  /** Reads the bytes into messages: Server-Sent Events unless set, such as Ollama's JSON lines. */
+  parser?: () => SseParser;
 }
 
 /** More events than any real run sends: a max_tokens of 131,072 with thinking stays far below. */
@@ -90,7 +92,7 @@ export async function streamSse(
   const agent = new Agent({ connect: { timeout: 10_000 }, keepAliveTimeout: 1000 });
   const total = AbortSignal.timeout(options.totalTimeoutMs);
   const signal = AbortSignal.any([options.signal, total]);
-  const parser = new SseParser();
+  const parser = target.parser?.() ?? new SseParser();
   const events: TimedEvent[] = [];
   const headers: Record<string, string> = {
     accept: 'text/event-stream',

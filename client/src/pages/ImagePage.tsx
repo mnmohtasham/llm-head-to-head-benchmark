@@ -12,13 +12,21 @@ import {
   type RunView,
   type SessionView,
 } from '@duel/shared';
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
 import { api, messageOf } from '../api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ImageMetrics, ImagePane } from '../components/ImagePane';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import {
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   PreflightPanel,
   ProgressLine,
@@ -30,6 +38,7 @@ import {
 import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
+import { fieldNumber, formProblem } from '../fields';
 import { formatMsValue } from '../format';
 import { usePreflight } from '../usePreflight';
 import { useRace } from '../useRace';
@@ -48,12 +57,26 @@ const SIZES: ReadonlyArray<readonly [string, number, number]> = [
   ['1024×576', 1024, 576],
 ];
 
+/** The number fields by their path in the config. */
+const IMAGE_LABELS: Readonly<Record<string, string>> = {
+  width: 'Width',
+  height: 'Height',
+  steps: 'Steps',
+  guidance: 'Guidance',
+  seed: 'Seed',
+};
+
 const SPEED_LABEL: Record<ImageSpeedMode, string> = {
   off: 'Off',
   eager: 'Eager',
   default: 'Default',
   max: 'Max',
 };
+
+/** The file to race when none is picked: Q4_K_M where there is one. */
+function defaultFile(model: ImageModelView) {
+  return model.files.find((f) => f.quant?.toUpperCase() === 'Q4_K_M') ?? model.files[0];
+}
 
 /** The log line for a finished image. */
 function describeRun(run: RunView): string {
@@ -156,7 +179,10 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     setSelected(ready.length > 0 ? ready : machines.slice(0, 1).map((m) => m.id));
   }, [selected, machines, info]);
 
-  const chosen = (machines ?? []).filter((m) => selected?.includes(m.id));
+  const chosen = useMemo(
+    () => (machines ?? []).filter((m) => selected?.includes(m.id)),
+    [machines, selected],
+  );
   const chosenIds = chosen.map((m) => m.id);
 
   // Models on any picked machine, and on which ones each file is.
@@ -189,16 +215,24 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
       ),
     );
 
-  // Pick the model and file every machine has, once the lists are in.
+  // Pick the model and file every machine has, once the lists are in. A model or file on none of
+  // the picked machines, after unticking the one that had it, gives way to the first one offered.
+  const listsIn = chosen.every((m) => info[m.id]);
   useEffect(() => {
-    if (model !== null || options.length === 0) return;
     const first = options[0];
     if (!first) return;
-    setModel(first.model.repoId);
-    const common =
-      first.model.files.find((f) => f.quant?.toUpperCase() === 'Q4_K_M') ?? first.model.files[0];
-    setFile(first.model.format === 'gguf' ? (common?.filename ?? null) : null);
-  }, [model, options]);
+    if (model === null || (current === null && listsIn)) {
+      setModel(first.model.repoId);
+      setFile(first.model.format === 'gguf' ? (defaultFile(first.model)?.filename ?? null) : null);
+    } else if (
+      current?.model.format === 'gguf' &&
+      listsIn &&
+      current.model.files.length > 0 &&
+      !current.model.files.some((f) => f.filename === file)
+    ) {
+      setFile(defaultFile(current.model)?.filename ?? null);
+    }
+  }, [model, options, current, listsIn, file]);
 
   const draft = imageConfigSchema.safeParse({
     model: model ?? '',
@@ -206,34 +240,57 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     preset,
     prompt: preset === 'custom' ? prompt : '',
     negativePrompt: negative,
-    width: Number(width),
-    height: Number(height),
-    steps: Number(steps),
-    guidance: Number(guidance),
-    seed: Number(seed),
+    width: fieldNumber(width),
+    height: fieldNumber(height),
+    steps: fieldNumber(steps),
+    guidance: fieldNumber(guidance),
+    seed: fieldNumber(seed),
     memoryMode,
     speedMode,
     restoreText,
   });
+  const problem = draft.success ? null : formProblem(draft.error, IMAGE_LABELS);
   const preflightKey = draft.success
     ? JSON.stringify({ workload: 'image', machineIds: chosenIds, config: draft.data })
     : null;
   const preflight = usePreflight(preflightKey, running);
   const blocked = !draft.success || chosen.length === 0 || preflight.stops;
-  const sharing = sharedHost(chosen, hosts);
+  const sharing = useMemo(() => sharedHost(chosen, hosts), [chosen, hosts]);
 
-  const toggle = (id: string) => {
+  const toggle = useCallback((id: string) => {
     setSelected((list) => {
       const now = list ?? [];
       return now.includes(id) ? now.filter((x) => x !== id) : [...now, id];
     });
-  };
+  }, []);
+  const describe = useCallback(
+    (m: MachineView) => {
+      const read = info[m.id];
+      if (!read) return 'checking…';
+      if (!read.status) return read.error ? 'no image generation' : 'checking…';
+      if (read.status.loaded) {
+        return `${read.status.repoId?.split('/').pop() ?? 'image model'} in memory`;
+      }
+      const text = chat[m.id];
+      return text ? `chat: ${text.split('/').pop() ?? text}` : 'nothing loaded';
+    },
+    [info, chat],
+  );
+  const preflightProblem = useMemo(
+    () =>
+      problem
+        ? { text: problem, error: true }
+        : chosen.length === 0
+          ? { text: 'Pick at least one machine.', error: false }
+          : null,
+    [problem, chosen.length],
+  );
 
   const start = async (event?: FormEvent) => {
     event?.preventDefault();
     race.setFormError(null);
     if (!draft.success) {
-      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(problem);
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
@@ -244,14 +301,17 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
       plan: plan.value,
     });
     if (!parsed.success) {
-      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(formProblem(parsed.error, PLAN_LABELS));
       return;
     }
     const refused = await race.start(
       parsed.data,
       chosen.map((m) => m.name),
     );
+    // Pre-flight on the server found something the form had not seen yet.
     if (refused?.issues) preflight.showIssues(refused.issues);
+    // The next race accepts its own warnings, or none.
+    else if (!refused) preflight.setRaceAnyway(false);
   };
 
   const round = race.round;
@@ -282,8 +342,13 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
         current="image"
         actions={
           running ? (
-            <button type="button" className="btn btn-primary" onClick={() => void race.cancel()}>
-              Cancel
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void race.cancel()}
+              disabled={race.cancelling}
+            >
+              {race.cancelling ? 'Cancelling…' : 'Cancel'}
             </button>
           ) : (
             <button
@@ -331,16 +396,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
               selected={selected}
               onToggle={toggle}
               running={running}
-              describe={(m) => {
-                const read = info[m.id];
-                if (!read) return 'checking…';
-                if (!read.status) return read.error ? 'no image generation' : 'checking…';
-                if (read.status.loaded) {
-                  return `${read.status.repoId?.split('/').pop() ?? 'image model'} in memory`;
-                }
-                const text = chat[m.id];
-                return text ? `chat: ${text.split('/').pop() ?? text}` : 'nothing loaded';
-              }}
+              describe={describe}
             />
 
             <div className="run-options">
@@ -361,6 +417,9 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
                   disabled={running || options.length === 0}
                 >
                   {options.length === 0 ? <option value="">No image models found</option> : null}
+                  {options.length > 0 && current === null ? (
+                    <option value="">Reading the model lists…</option>
+                  ) : null}
                   {options.map((o) => (
                     <option key={o.model.repoId} value={o.model.repoId}>
                       {o.model.displayName}
@@ -532,7 +591,11 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
                   disabled={running}
                 />
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
+              <TelemetrySwitch
+                enabled={telemetry.enabled}
+                onChange={telemetry.setEnabled}
+                onError={race.setFormError}
+              />
             </div>
             <p className="field-hint">
               Unsloth&apos;s defaults are 9 steps and guidance 0, which suit distilled models such
@@ -555,13 +618,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
 
             <PlanFields plan={plan} running={running} sharing={sharing} />
             <PreflightPanel
-              problem={
-                !draft.success
-                  ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
-                  : chosen.length === 0
-                    ? { text: 'Pick at least one machine.', error: false }
-                    : null
-              }
+              problem={preflightProblem}
               checking={preflight.current === null}
               error={preflight.current?.error ?? null}
               errors={preflight.errors}
@@ -571,6 +628,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
               details=""
               raceAnyway={preflight.raceAnyway}
               setRaceAnyway={preflight.setRaceAnyway}
+              onRecheck={preflight.recheck}
               running={running}
             />
             {race.formError ? (
@@ -586,6 +644,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
           running={running}
           roundIndex={race.roundIndex}
           manyRounds={race.manyRounds}
+          reconnecting={race.reconnecting}
         />
         {panes.length > 0 ? (
           <div
@@ -620,9 +679,9 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
         <SessionList
           sessions={race.summaries}
           currentId={session?.id ?? null}
-          onDelete={(target) => race.setDeleting(target)}
+          onDelete={race.setDeleting}
         />
-        <LogPanel machines={machines ?? []} entries={log} />
+        <LogPanel machines={machines} entries={log} />
       </main>
 
       {race.deleting ? (

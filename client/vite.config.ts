@@ -1,4 +1,8 @@
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { brotliCompress, constants, gzip } from 'node:zlib';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
@@ -22,9 +26,36 @@ function buildInfo(): Plugin {
   };
 }
 
+// Brotli and gzip copies of the text files, which the server sends to browsers that take them.
+const compressible = /\.(js|css|html|svg|json)$/;
+function precompress(): Plugin {
+  const brotli = promisify(brotliCompress);
+  const zip = promisify(gzip);
+  return {
+    name: 'model-duel-precompress',
+    apply: 'build',
+    async writeBundle(options) {
+      const dir = options.dir ?? path.join(root, 'dist');
+      const files = (await readdir(dir, { recursive: true })).filter((f) => compressible.test(f));
+      await Promise.all(
+        files.map(async (file) => {
+          const full = path.join(dir, file);
+          const data = await readFile(full);
+          if (data.length < 1024) return;
+          await writeFile(
+            `${full}.br`,
+            await brotli(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }),
+          );
+          await writeFile(`${full}.gz`, await zip(data, { level: 9 }));
+        }),
+      );
+    },
+  };
+}
+
 export default defineConfig({
   root,
-  plugins: [react(), buildInfo()],
+  plugins: [react(), buildInfo(), precompress()],
   define: { __BUILD_ID__: JSON.stringify(buildId) },
   server: {
     port: 3000,
@@ -37,6 +68,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    // Maps for debugging, without the comment that makes every browser fetch them.
+    sourcemap: 'hidden',
   },
 });

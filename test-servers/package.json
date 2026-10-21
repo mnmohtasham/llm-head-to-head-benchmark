@@ -8,7 +8,8 @@
     ".": "./src/server.ts",
     "./cloud": "./src/cloud.ts",
     "./share": "./src/share.ts",
-    "./lmstudio": "./src/lmstudio.ts"
+    "./lmstudio": "./src/lmstudio.ts",
+    "./engines": "./src/engines.ts"
   },
   "dependencies": {
     "@duel/shared": "*",

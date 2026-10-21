@@ -1,13 +1,15 @@
 # Model Duel
 
 Model Duel benchmarks local AI models on two or more machines that run
-[Unsloth Studio](https://unsloth.ai/docs/new/studio) or [LM Studio](https://lmstudio.ai). A browser app talks to Unsloth on every
-machine through its API, runs the same workload on each, and compares the results.
+[Unsloth Studio](https://unsloth.ai/docs/new/studio), [LM Studio](https://lmstudio.ai),
+[Ollama](https://ollama.com) or any OpenAI-compatible server, such as llama.cpp's llama-server,
+vLLM or SGLang. A browser app talks to the server on every machine through its API, runs the same
+workload on each, and compares the results.
 
 Model Duel is free and open source under the [MIT license](LICENSE). Run it on any computer on
 your network, with Docker or Node.js, and open it in a browser.
 
-**Status: phase 21 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
+**Status: phase 22 of [ROADMAP.md](ROADMAP.md).** The app registers machines, probes what each one
 supports, loads models, and races a text prompt on several machines at once, side by side, over
 several rounds, with medians, spread and an honest tie when the difference is within noise. It
 has prompt presets up to 32K tokens, cold or warm prefill, full sampling control, and a pre-flight
@@ -19,7 +21,10 @@ generation, with a live step timeline and the images side by side. Throughput mo
 many tokens a machine delivers with several requests at once. Every race is kept as a JSON result file in a documented format, ready
 to share. Models from OpenAI, Anthropic and Google Gemini can join text races as references, picked
 from each provider's own model list. The **Results** tab puts every machine's run from every race in
-one table to filter, sort and download, and sends a run to a public results service when you ask. [PLAN.md](PLAN.md) is the full specification.
+one table to filter, sort and download, compares any runs side by side, follows a machine's numbers
+over time, and sends a run to a public results service when you ask. The **Suites** tab queues a
+matrix of races, prompts by thinking settings by Max tokens, and runs it unattended.
+[PLAN.md](PLAN.md) is the full specification.
 
 ## Requirements
 
@@ -291,23 +296,33 @@ When the race ends:
 
 Model Duel keeps two kinds of numbers for each run, and every table says which is which.
 
-- **Reported by the machine's server.** Numbers Unsloth or LM Studio measured themselves and sent
-  back: llama.cpp's decode and prompt processing speeds, Unsloth's time to first token and
-  transcription time from its monitor, and LM Studio's own stats. The network and this computer
-  are not in them. Their rows end in "server" or "Unsloth".
+- **Reported by the machine's server.** Numbers the server measured itself and sent back:
+  llama.cpp's decode and prompt processing speeds (from Unsloth, llama-server, or Ollama, whose
+  timings mean the same), Unsloth's time to first token and transcription time from its monitor,
+  and LM Studio's own stats. The network and this computer are not in them. Their rows end in
+  "server" or "Unsloth". vLLM and SGLang report none.
 - **Measured by Model Duel.** Times taken on this computer, from the moment the request leaves to
   the moment each part of the answer arrives. They include the network and Model Duel's own
   handling, usually a few milliseconds.
 
-The headlines use the servers' numbers. The scoreboard, the **All** view in Results, and LLM
-Bench's dashboard compare time to first token, decode speed and transcription speed as the
-machines' servers reported them. When one machine in the comparison has no such number, every
-machine is compared on Model Duel's measurement instead, so no headline sets one machine's server
-number against another's measurement. Cloud models report none. Unsloth reports its transcription
-time only for its OpenAI-shaped route, which Model Duel uses only when Unsloth's own route is
-missing, so transcription usually falls back to Model Duel's processing time: from the last byte of
-the upload to the answer, which leaves the upload out and adds one trip across the network. The measured numbers stay in the tables next to the servers', and a record sent to
-LLM Bench carries both, each under its own key.
+The headlines use the servers' numbers. The scoreboard, suites and LLM Bench's dashboard compare
+time to first token, decode speed and transcription speed as the machines' servers reported them.
+When a machine in the comparison has a measurement but no server number, every machine is compared
+on Model Duel's measurement instead, so no headline sets one machine's server number against
+another's measurement; a machine that failed every round has neither and does not count. Cloud
+models, vLLM and SGLang report none. The **All** view in Results, which lists runs from different
+races, shows each row's server number where it has one and names the metric in the cell, such as
+"decode speed, server". Unsloth reports its transcription time only for its OpenAI-shaped route,
+which Model Duel uses only when Unsloth's own route is missing, so transcription usually falls back
+to Model Duel's processing time: from the moment the upload left this computer to the answer. On a
+wired network that leaves the upload out and adds one trip across the network; on slow Wi-Fi, part
+of a large upload still buffered on the way can count as processing. The measured numbers stay in
+the tables next to the servers', and a record sent to LLM Bench carries both, each under its own
+key.
+
+Energy comes from the GPU power readings during the run. A reading that failed leaves a gap, which
+is filled at the mean power of the rest of the run; a run with readings for less than half of it
+gets no energy at all.
 
 Some numbers have no server counterpart and are always measured: the first answer word, total
 time, throughput mode's aggregate speed (over a whole batch, where the network adds well under a
@@ -406,6 +421,69 @@ Duel's own numbers: LM Studio's time to first token, its decode speed and its to
   Pre-flight warns that the race compares servers as well as hardware, and suggests taking turns.
 - Transcription, images and telemetry need Unsloth, so LM Studio machines are left out of
   those tabs.
+- Model loads and unloads on a machine wait for a race on it to end, on every server.
+
+## Ollama machines
+
+A machine can run [Ollama](https://ollama.com). It races on the Text tab, in latency and throughput
+mode, next to the other servers and cloud models.
+
+1. Start Ollama listening on the network: set `OLLAMA_HOST=0.0.0.0` before `ollama serve` (on macOS
+   and Windows, in the app's settings or the environment). Ollama listens on port 11434.
+2. In Model Duel, press **Add machine**, pick **Ollama**, and enter the machine's address. Port
+   11434 is added when you leave it out. Ollama itself takes no key; add one only if a reverse proxy
+   in front of it asks for one.
+3. The probe checks it is Ollama, reads its version, and lists what is downloaded and loaded. It
+   warns when more than one model is loaded, or when the loaded one does not fit in GPU memory and
+   partly runs on the CPU.
+4. On **Models**, the Ollama pane shows the loaded model: quant, parameters, context, how much of it
+   is in GPU memory, and until when it stays loaded. **Load** on a downloaded model unloads the
+   others first, so they do not share the GPU. Pull new models with `ollama pull` on the machine.
+
+Races use Ollama's own chat API, whose last message carries Ollama's timings: the report shows its
+decode speed and prompt processing speed as the server's own numbers, next to Model Duel's.
+
+- **One model at a time.** Pre-flight stops a race when Ollama has more than one model loaded, or
+  none.
+- **No loading mid-race.** Ollama loads any model a request names, and unloads idle ones after five
+  minutes. Races ask only for the loaded model and keep it loaded for 30 minutes after each request,
+  and a run whose timings show Ollama loaded the model for it fails instead of counting the load.
+  The context is never sent with a request, since another context makes Ollama load the model again.
+- **Thinking** is Ollama's `think`: on or off for models that think, and a level (low, medium, high)
+  for gpt-oss, which always thinks.
+- **What Ollama does not report:** its time to first token, KV cache type, GPU layers, speculative
+  decoding and GPU memory mode. It cannot count tokens before a race, so pre-flight cannot check
+  that the prompt fits; it says so. For more requests at once in throughput mode, start Ollama with
+  `OLLAMA_NUM_PARALLEL`.
+
+## OpenAI-compatible servers
+
+Any server with an OpenAI-style `/v1/chat/completions` can race on the Text tab: llama.cpp's
+`llama-server`, vLLM, SGLang and others. It races the model it was started with.
+
+1. Start the server listening on the network, for example `llama-server -m model.gguf --host
+   0.0.0.0 --port 8080` or `vllm serve Qwen/Qwen3-8B --host 0.0.0.0`.
+2. In Model Duel, press **Add machine**, pick **OpenAI-compatible server**, and enter its address.
+   Port 8080, llama-server's, is added when you leave it out; vLLM uses 8000. Add the API key only
+   if the server was started with one (`--api-key`).
+3. The probe lists the served model and tells which software serves it: llama.cpp from its
+   `/props` (with its build, context per slot and slots), vLLM and SGLang from their model list.
+   With more than one model served, races use the first.
+
+- **Whose numbers.** llama-server ends its stream with llama.cpp's own timings, the same Unsloth
+  sends, so its decode and prompt processing speeds are the server's own. vLLM and SGLang send token
+  counts only: their runs are timed by Model Duel, network included, and the probe says so.
+- **Thinking** goes through the chat template, as `chat_template_kwargs: {"enable_thinking": …}`,
+  which Qwen3 and similar templates read. A model whose template ignores it thinks as it always
+  does.
+- **Sampling** sends the standard fields and the repetition penalty under both names, llama-server's
+  and vLLM's; each ignores the other's.
+- Models are not loaded or unloaded from Model Duel: start the server with another model to race
+  that one, then press **Refresh** on its Models pane. For more requests at once in throughput mode,
+  start llama-server with `--parallel`.
+
+Transcription, images and telemetry need Unsloth, so Ollama and OpenAI-compatible machines are left
+out of those tabs, like LM Studio.
 
 ## Cloud models as references
 
@@ -526,6 +604,60 @@ optimisations that engaged, quantisation and offload. Apple Silicon and CUDA res
 and the same seed gives different pixels on them, so pre-flight warns and the images are a sanity
 check rather than a comparison.
 
+## Run a benchmark suite
+
+The **Suites** tab queues a text race for every combination of prompts, thinking settings and Max
+tokens values you pick, runs them one after another while you do something else, and sums them up
+in one table at the end.
+
+1. Tick the machines. Every race of the suite runs on all of them.
+2. Pick one or more **Prompts**. A suite takes the standard prompts only (Short, 8K, 32K, Puzzle,
+   Code, Fixed length), so every race compares with the others and with LLM Bench.
+3. Pick one or more **Thinking** settings: **Off**, **On** at the model's own effort, or **On** at
+   an effort level, such as **On, low**, where every picked model offers the same levels.
+4. Give one or more **Max tokens** values, separated by commas: `512, 2048`.
+5. Set what every race shares: **Mode** (latency, or throughput with **Requests at once**),
+   **Prefill**, **Rounds**, **Sum up rounds by**, **Warm-up**, **Pause between rounds** and
+   **Order**. Sampling is the default: temperature 0.6, top-p 0.95, top-k 20, min-p 0.
+6. The form counts the races as you go, such as "8 races: 2 prompts × 2 thinking settings × 2 Max
+   tokens values", and the requests they send. A suite runs at most 50 races.
+7. Press **Start**. The page follows the suite: which race is running, a link to watch it on the
+   **Text** tab, and the table filling in as races end.
+
+Each race goes through pre-flight first, exactly as from the Text tab.
+
+- A race pre-flight refuses, such as a prompt and Max tokens that do not fit a machine's context,
+  is **skipped**, with pre-flight's reasons under the table, and the suite goes on.
+- A race pre-flight warns about, such as machines with different quants, is skipped too, unless
+  you tick **Accept pre-flight warnings** before starting: then it runs, as with **Race anyway**.
+- A race in which every machine fails is kept as **failed** with the reason, and the suite goes on.
+  A machine that fails while the others finish shows as failed in its own row.
+
+**Cancel suite** stops the race in progress, as its own **Cancel** would, and every race after it.
+Cancelling a single race on the Text tab stops only that race; the suite goes on with the next.
+
+One suite runs at a time, and while it runs nothing else races: a race started from the Text,
+Transcribe or Image tab is refused with a note that a suite is running, and a suite cannot start
+while a race runs. Leave the Models tab alone meanwhile: while a model loads on one of the
+machines, pre-flight skips every race that would start. A suite that was running when Model Duel
+stopped is marked **interrupted** when it starts again. It never resumes by itself; start it again
+from the form.
+
+The table has a row for each race and machine: the prompt, thinking and Max tokens, the machine,
+how its race went, its rounds, and the race's headline numbers, the same as its scoreboard. Time to
+first token and decode speed are the machines' servers' own numbers, marked "server", when every
+machine in that race reported them; otherwise every machine shows Model Duel's measurement, marked
+"Model Duel" (see [Which numbers count](#which-numbers-count)). Prompt processing is the server's own,
+and energy needs **Telemetry**. Each number is the race's median or average, as **Sum up rounds by**
+says. A throughput suite shows aggregate speed, time to first token under load and tokens per joule
+instead. **Open** shows the race on the Text tab, and **Download CSV** saves the table with raw
+numbers, units and whose number each one is.
+
+Every race of a suite is an ordinary race: it is in the results log, in **Results** and in
+`data/results/`, and can be sent to LLM Bench. The suite itself is a small file in `data/suites/`.
+**Past suites** lists them newest first; **Open** shows one again and **Delete** removes the suite's
+file only. Its races stay.
+
 ## Compare every run in the Results tab
 
 **Results** lists every machine's run in every finished race, one row each, so runs from different
@@ -548,7 +680,10 @@ races can be compared: which GPU runs a model fastest, what a quant or a context
   among the rows shown is starred.
 - **Columns** picks what the table shows, for each workload separately. The choice is kept in this
   browser; **Reset columns** goes back to the default.
-- **Download CSV** saves the rows and columns shown, with raw numbers and units in the headers.
+- **Download CSV** saves the rows and columns shown, with raw numbers, and units and "median" or
+  "average" in the headers and the file name.
+- **Compare** and **History** (below) open from the box at the start of a row and the link after
+  its machine.
 - The date opens the race.
 - **Send**, at the start of a row, sends that run to a results service (below).
 
@@ -556,6 +691,73 @@ Unsloth reports the KV cache's type (for example `q8_0`, or the bits on MLX), no
 takes, so the table shows the type; "default" means none was set at load. GPU layers shows "auto"
 when Unsloth fitted the layers to the GPU itself, as it does unless told otherwise. Integrated GPUs,
 such as AMD's 780M, report the memory they may share as their GPU memory.
+
+### Compare runs
+
+Tick the box at the start of 2 to 6 rows of one workload, Text, Throughput, Transcribe or Image,
+and press **Compare** in the bar that appears above the table. The bar says how many runs are
+ticked and, while **Compare** is off, why: too few, more than 6, or runs of different workloads,
+which measure different things. **Clear** unticks them all. The boxes work from the keyboard, and
+each one names its machine and date.
+
+The comparison opens above the filters, one column per run, in the order they were ticked. The
+first run is the **baseline**; **Make baseline** on another column puts that run first.
+
+- **Setup** has a row for each thing a run depends on: machine, GPU, GPU memory, GPU platform,
+  RAM, system, server, Unsloth Studio and llama.cpp versions, model, quant, engine, context, KV
+  cache, GPU layers, slots, speculative decoding, GPU memory mode, prompt, thinking, Max tokens,
+  prefill, requests at once or the workload's settings, and rounds. A value that differs from the
+  first run's is marked with ≠, and its row says **differs**. Rows no run has a value for are left
+  out.
+- **Medians of each run's counted rounds** has a row for every measurement of the workload, the
+  servers' numbers and Model Duel's each in their own row, as in the table. The best value is
+  starred, and under each value is how the run compares with the first: "1.84× faster", "2.10×
+  slower", "1.50× less energy", or "same" within half a percent. Measurements without a better
+  direction, such as total time or output tokens, have no ratio and no star. **Rounds summed up
+  by** switches the comparison between medians and averages too.
+- When the runs did not answer the same request, a note says so and names what differs: the
+  prompt, thinking, Max tokens or prefill, the number of requests at once in throughput mode, or
+  the settings of a transcription or image race. These change the numbers as much as the
+  hardware, so read such a comparison with care.
+
+The address of a comparison opens it again: `#/results?compare=<run>,<run>…`, where each run is
+written as its race and machine ids, `<session id>/<machine id>`. **Copy link** copies the whole
+address. Browsers allow the clipboard only on https and on this computer's own address, so
+elsewhere the link appears, selected, to copy by hand. A link to a run whose race was deleted
+opens the others and says how many are left out. **Close** closes the comparison and keeps what
+is ticked.
+
+### History of a machine
+
+**History**, after the machine's name in a row or under a run in a comparison, shows every
+finished run of that machine with the same model, quant and engine, oldest to newest. Ticked by
+default, **Same prompt** and **Same thinking** keep only the runs asked the same thing as the run
+you started from; untick them to take in the others. Throughput adds **Same requests at once**,
+and transcription and image races have **Same settings** instead.
+
+- A chart for each headline number shows one point per run in race order: decode speed and time
+  to first token for text, aggregate speed and the median request's time to first token for
+  throughput, the real-time factor for transcription, and denoising speed for images. A filled
+  dot is the number as the machine's server reported it; a hollow dot is Model Duel's own
+  measurement, for a run whose server gave none. Hovering a point shows its value, date and
+  source, and clicking it opens its race.
+- Above each chart, the latest run is set against the best: "Latest 59.3 tok/s on 2026-10-21 is
+  51% slower than the best, 121.6 tok/s on 2026-10-14." Like the headlines, this uses the servers'
+  numbers only when every run has one, and Model Duel's measurements otherwise, and says which.
+- A dashed, numbered line on the charts comes before each run that changed something, and
+  **What changed** lists it under the charts: Unsloth Studio or llama.cpp versions, the system,
+  GPU or platform, the GPU memory mode, KV cache, context, GPU layers, slots or speculative
+  decoding, and what the run was asked when the history takes in any prompt. Each line reads like
+  "llama.cpp b9601 → b9650 on 2026-10-02", followed by how the numbers moved from the run before:
+  "Decode speed 121.6 tok/s → 61.1 tok/s, 50% slower". A version that one of the two runs does not
+  know, because the machine was not probed, is not counted as a change. Ollama, vLLM and SGLang
+  versions count too. LM Studio does not report its version, so for LM Studio machines only the
+  settings show.
+- **Every run** lists the runs newest first with their numbers, where each came from, and the
+  number of the change they came with. The date opens the race.
+
+The address `#/results?history=<session id>/<machine id>` opens a history again; **Copy link**
+copies it. A comparison and a history can be open at once.
 
 ### Send a run to a results service
 
@@ -595,10 +797,13 @@ the full picture and how to report a vulnerability.
 - **Password.** Set `DUEL_PASSWORD` (8 characters or more), or `DUEL_PASSWORD_FILE` for a Docker
   secret, and the app asks for it before anything else. In Docker, keep it in `.env`, not in
   `docker-compose.yml`. Set one before opening the app to your
-  network. Sessions last 30 days in an HttpOnly, SameSite=Strict cookie; a restart keeps them and a
-  new password ends them all. Ten wrong passwords from one address make it wait 15 minutes. The
-  password travels over plain HTTP on your network, like everything else, so for access from
-  outside use a VPN or an HTTPS reverse proxy.
+  network. Sessions last 30 days in an HttpOnly, SameSite=Strict cookie; a restart keeps them,
+  signing out ends that session even where a copy of its cookie is used, and a new password ends
+  them all. Ten wrong passwords from one address (or one IPv6 /64) make it wait 15 minutes, and
+  after a hundred wrong passwords from all addresses every check slows down. The password travels
+  over plain HTTP on your network, like everything else, so for access from outside use a VPN or an
+  HTTPS reverse proxy. Behind a proxy, set `DUEL_TRUST_PROXY` to its address (or `1`), so the
+  limits count each client's own address and the cookie is marked Secure.
 - **API keys** live in `data/machines.json`, readable by your user only (mode 600). They never
   reach the browser, the logs, a result file or an export; the app shows only `sk-unsloth-…1234`.
   A key goes only to the address it was saved with: changing a machine's address, or asking a
@@ -609,8 +814,10 @@ the full picture and how to report a vulnerability.
   name. Requests that change anything are refused when a browser says another site made them.
   Every answer carries a strict Content-Security-Policy, and no other site can frame the page.
 - **Untrusted answers.** What machines, providers and the results service send is read with size
-  limits and never shown as HTML. A stream larger than any real answer is stopped, CSV exports
-  cannot carry spreadsheet formulas, and Markdown exports carry no HTML or links from machines.
+  limits and never shown as HTML. A stream larger than any real answer is stopped, and a race keeps
+  at most about 64 MB of raw token events, so no machine can make a race too large to save. A key a
+  server echoes back is masked before the page sees it. CSV exports cannot carry spreadsheet
+  formulas, and Markdown exports carry no HTML or links from machines, bare addresses included.
 - **Sending a record** needs your click and a confirmation showing the record. The server builds
   it, so the page cannot slip anything else in. It goes to LLM Bench only, over https, with no name
   and none of your own prompts; redirects are not followed, and only a short message, an id and a link on LLM Bench's
@@ -618,7 +825,11 @@ the full picture and how to report a vulnerability.
   600).
 - **Docker.** The image holds no data and no keys, and no npm or other package manager. The
   container runs as an unprivileged user, with no Linux capabilities, a read-only file system
-  apart from its data volume, a process limit and rotated logs.
+  apart from its data volume, a process limit and rotated logs. On Linux, use Docker Engine 28 or
+  newer: older versions let other devices on the same network segment reach a container's own
+  address even when the port is published on 127.0.0.1, so without a password they could open the
+  app.
+- **Disk.** Uploaded audio is kept within 2 GB and 50 files, the oldest going first.
 - **Your network.** Unsloth's LAN access is plain HTTP, so anyone on the same network can read the
   traffic, including the key. Use it on a network you trust.
 
@@ -647,11 +858,13 @@ the full picture and how to report a vulnerability.
 `npm start` only: the dev server shows a banner, because hot reload makes timings noisy.
 
 The automated tests need no GPU and no cloud key. `test-servers/` holds stand-ins for Unsloth
-Studio, LM Studio, the three cloud providers and a results service, which answer as the real ones
-do, with shapes taken from their source and from recordings of real machines in `fixtures/`. Only
-the tests start them: they are not part of the build, the Docker image or the app. `npm test` runs
-the unit and integration tests, and `npm run test:e2e` the browser tests, which race the stand-ins
-through the production build, and sign in to a second copy of the app that has a password.
+Studio, LM Studio, Ollama, llama-server and vLLM, the three cloud providers and a results service,
+which answer as the real ones do, with shapes taken from their source, their documentation and
+recordings of real machines in `fixtures/`. Only the tests start them: they are not part of the
+build, the Docker image or the app. `npm test` runs the unit and integration tests, and
+`npm run test:e2e` the browser tests, which race the stand-ins through the production build, and
+sign in to a second copy of the app that has a password. They use ports 3100 and 3101; when
+something else does, move them with `E2E_APP_PORT` and `E2E_AUTH_APP_PORT`.
 
 The smoke tests check a real install instead, with no stand-ins: `npm run smoke` and
 `npm run smoke:browser` only read, so they are safe against your own machines, and

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { metricKind, metricsFor, type MetricKind } from './compare';
+import { MACHINE_SERVERS } from './engines';
 import { scoreboard, setupTable } from './report';
 import { publicRun, publicSession, type StoredSession } from './session';
 import { sessionStats, statisticOf } from './stats';
@@ -122,8 +123,8 @@ export const resultSchema = z.object({
       kind: z.enum(['local', 'cloud']).optional(),
       /** For a cloud model: the provider and model id. */
       cloud: z.object({ provider: z.string(), model: z.string().nullable() }).nullable().optional(),
-      /** For a local machine: the server it ran, Unsloth Studio or LM Studio. Files before it: Unsloth. */
-      server: z.enum(['unsloth', 'lmstudio']).nullable().optional(),
+      /** For a local machine: the server it ran. Files before LM Studio support: Unsloth. */
+      server: z.enum(MACHINE_SERVERS).nullable().optional(),
       hardware: z.object({
         os: z.string().nullable(),
         backend: z.string().nullable(),
@@ -378,11 +379,7 @@ export function buildResult(
         color: machine.color,
         kind: p?.cloud ? ('cloud' as const) : ('local' as const),
         cloud: p?.cloud ? { provider: p.cloud.provider, model: p.cloud.model?.id ?? null } : null,
-        server: p?.cloud
-          ? null
-          : p?.server === 'lmstudio'
-            ? ('lmstudio' as const)
-            : ('unsloth' as const),
+        server: p?.cloud ? null : (p?.server ?? ('unsloth' as const)),
         hardware: {
           os: p?.platform.os ?? null,
           backend: p?.platform.backend ?? null,

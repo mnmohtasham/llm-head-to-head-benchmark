@@ -1,6 +1,6 @@
 # Model Duel v2: build plan
 
-Status: draft v2.22, 2026-09-29. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
+Status: draft v2.23, 2026-10-21. Supersedes the v1 "Model Duel" text. Build order: ROADMAP.md.
 Unsloth facts below were verified against the Unsloth Studio backend source
 (`studio/backend` in unslothai/unsloth, commit f9bffe2, 2026-09-24) and the public docs.
 Re-verify them with the probe (section 3.1) against the versions actually installed.
@@ -20,7 +20,7 @@ median or average (phase 16), in sections 5 and 6. v2.16 sends runs to a public 
 its agent (phase 19), at Mani's request. v2.19 packages the controller for Docker (phase 20), in
 sections 3 and 8, and records how far output length moves between rounds, in section 5. v2.20
 makes it ready for production and open source (phase 21): an optional password and the security
-measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 makes LLM Bench the only results service, in section 7.3. v2.22 makes headlines use the servers' own numbers and sends only runs with a standard prompt, in sections 5 and 7.3.
+measures in section 3, test servers that only the tests start in section 9, and no demo. v2.21 makes LLM Bench the only results service, in section 7.3. v2.22 makes headlines use the servers' own numbers and sends only runs with a standard prompt, in sections 5 and 7.3. v2.23 (phase 22) adds Ollama and OpenAI-compatible machines in section 2.9, comparing runs and a machine's history in section 7.2, benchmark suites in section 7.4, and what a review of timing, size, shutdown and security changed, in sections 3 and 8.
 
 ## 0. Decisions so far
 
@@ -350,6 +350,49 @@ holds the contract and `test-servers/src/lmstudio.ts` copies it.
 - **Pre-flight.** Exactly one chat model loaded; no token count; a warning when Unsloth and LM
   Studio race together; settings LM Studio does not report are compared among Unsloth machines only.
 
+### 2.9 Ollama and OpenAI-compatible servers
+
+Two more text-only servers (phase 22), held in `shared/src/engines.ts` with stand-ins in
+`test-servers/src/engines.ts`. `MACHINE_SERVERS` is `unsloth`, `lmstudio`, `ollama` and
+`openai-compatible`; `textOnlyServer` says which race text only, with no speech, images or
+telemetry. Contracts from Ollama's `docs/api.md`, llama.cpp's `tools/server/README.md` and vLLM's
+docs, read on 2026-10-21; neither has been checked against a real machine yet.
+
+- **Ollama** (default port 11434, no key unless a proxy asks for one). The probe reads
+  `GET /api/version`, `/api/ps` (loaded: `name`, `size`, `size_vram`, `context_length` in newer
+  versions, `expires_at`, `details.quantization_level`) and `/api/tags` (downloaded). A status read
+  adds `POST /api/show` for the loaded model's `capabilities` (thinking, vision) and
+  `<architecture>.context_length`. Races post `/api/chat` with `messages`, `stream`,
+  `keep_alive: 30m`, `think` (true or false; a level for gpt-oss, which cannot stop thinking; left
+  out for a model that cannot think, which Ollama refuses) and `options` (`num_predict`,
+  `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `seed` for cold prefill). `num_ctx`
+  is never sent: another value reloads the model. The answer is one JSON object per line
+  (`NdjsonParser`, the SSE parser's byte-level reading with lines as messages), with
+  `message.thinking` and `message.content`, and a last object with `done_reason` and durations in
+  nanoseconds. `prompt_eval_count/duration` and `eval_count/duration` become llama.cpp's
+  `timings`, which they mean the same as, so the server's decode and prompt speeds need nothing
+  new. A `load_duration` over a second means Ollama loaded the model for this run: the run fails.
+  Loading is `POST /api/generate {model, keep_alive: 30m}` without a prompt; unloading the same
+  with `keep_alive: 0`. More than one loaded model, or a model partly on the CPU (`size_vram` under
+  `size`), is a pre-flight error or warning.
+- **OpenAI-compatible** (default port 8080, llama-server's; vLLM uses 8000; optional bearer key).
+  The probe reads `GET /v1/models`, `/props` (llama-server: `default_generation_settings.n_ctx`,
+  `total_slots`, `build_info`, `model_path`) and `/version` (vLLM). The software is llama.cpp when
+  `/props` has a build, else named by the first model's `owned_by` (`llamacpp`, `vllm`, `sglang`).
+  The first served model is raced. Races post `/v1/chat/completions` with standard fields,
+  `stream_options.include_usage`, `top_k`, `min_p`, the repetition penalty as both
+  `repeat_penalty` (llama-server) and `repetition_penalty` (vLLM), `seed` for cold prefill, and
+  `chat_template_kwargs.enable_thinking`. The stream is Unsloth's: llama-server ends it with
+  llama.cpp `timings`; vLLM and SGLang with token counts only, so their runs are timed by Model
+  Duel alone. The quant comes from the model's file name. There is nothing to load or unload.
+- **Everywhere else.** Every check that meant "not Unsloth" covers all three: hardware borrowed
+  from a probed Unsloth machine on the same host, no telemetry, cancel by closing the connection,
+  no admission queue, no token count before a race, unreported settings compared among Unsloth
+  machines only, and a warning when machines run different servers. `serverName` names an
+  OpenAI-compatible server by its software. Runs carry `server.source`, the server that reported
+  their numbers. Results rows have a **Server version** column; result files and share records
+  take the four values of `server`.
+
 ## 3. Architecture
 
 - Controller: Node 22.19 or newer (undici 8 needs it), TypeScript 6.0, Fastify. Serves the SPA, drives every Unsloth instance, owns
@@ -368,7 +411,13 @@ holds the contract and `test-servers/src/lmstudio.ts` copies it.
   an optional password (`DUEL_PASSWORD`) guards every route but the health check behind an HttpOnly,
   SameSite=Strict session cookie signed with a secret in `data/auth.json`; every answer carries a strict
   Content-Security-Policy and framing, sniffing and referrer headers; a saved key goes only to the address
-  it was saved with; and answers from machines are read with size limits, streams included.
+  it was saved with; and answers from machines are read with size limits, streams included. Since
+  phase 22 a session token is `<expiry>.<random id>.<mac>`, and signing out records the id in
+  `auth.json` (schema 2) until it expires, so a copied cookie stops working; the cookie is Secure
+  when the request came over HTTPS, directly or through a proxy named by `DUEL_TRUST_PROXY`
+  (Fastify's `trustProxy`). Sign-in failures count per address, an IPv6 address by its /64; past
+  10,000 tracked addresses new ones wait, and past 100 failures from all addresses every check
+  waits 2 s more. `UnslothClient` masks the machine's key in any answer that echoes it.
 - Session record: `{id, workload, config, machines[], rounds[], provenance, telemetry, votes,
   schemaVersion}`. Sides are a list, not A and B. As built in phase 4, `data/sessions/<id>.json` holds
   `schemaVersion: 1`, `createdAt`, `finishedAt`, `state` (running, done, failed, cancelled or
@@ -377,7 +426,9 @@ holds the contract and `test-servers/src/lmstudio.ts` copies it.
   before and after, the exact request body) and the event-loop lag. Each run keeps its raw events in a
   compact form, `[t, read, 'r' | 'c', text]` for tokens and `[t, read, event]` otherwise, with times
   from its own request, so metrics can be recomputed later. A file left `running` by a crash is marked
-  interrupted at startup; unreadable files and files from a newer schema are skipped, not fatal.
+  interrupted at startup; unreadable files and files from a newer schema are skipped, not fatal, and
+  so, since phase 22, are files that fail to migrate. Files are fsynced before they are renamed into
+  place.
 - Workload plugin interface in `shared/`:
 
 ```ts
@@ -699,6 +750,42 @@ column, stars the best value of each metric among the rows shown, lets the viewe
 workload (kept in the browser), and downloads the rows shown as CSV with raw values. Column
 definitions, shared by the page and the CSV, are `runColumns` in the same module.
 
+**Comparing runs and a machine's history (phase 22).** Ticking 2 to 6 rows of one kind compares
+them side by side; **History** follows one machine, model, quant and engine over time.
+
+- **Where the logic lives.** `shared/src/comparison.ts` builds a comparison from Results rows
+  (`compareRuns`), checks what can be compared (`cannotCompare`, 2 to 6 runs of one kind), finds
+  what the runs were asked differently (`requestDifferences`, `likeForLikeNote`), works out ratios
+  (`ratioTo`, `ratioText`, with words per unit from `ratioWords`) and reads and writes the hash
+  (`resultsLink`, `parseResultsLink`). `shared/src/history.ts` picks a history's runs
+  (`inHistoryOf`, `runHistory`), builds one series per headline number with the source of each
+  point, sets the latest against the best, and finds and numbers the changes between consecutive
+  runs (`runChanges`, `marks` with each change's effect). Both are tested in `shared/test`; the
+  client only draws them.
+- **One definition of a setting.** Setup rows and changes reuse the Results table's columns
+  (`runColumns`), so a value reads the same in the table, the comparison and the history, and
+  "default" KV cache or "auto" GPU layers need no second formatter. Differences compare the
+  column's raw value, except the prompt, which compares the whole prompt text, so two custom
+  prompts that start alike still differ.
+- **Server numbers.** The comparison keeps the servers' and Model Duel's numbers in separate rows,
+  so no cell sets one against the other. The history's chart shows the server's number where the
+  run has it, as asked, and marks each point's source by shape; the latest-against-best line and
+  each change's effect compare only numbers of the same source, by the headlines' rule.
+- **The address is the state.** The comparison and the history are opened by the hash, so Back
+  closes them, a link opens them, and opening a history keeps the comparison. The ticked runs are
+  page state; a comparison opened from a link ticks its runs.
+- **Speed with hundreds of rows.** The table's filtering, sorting, facets and best values are
+  memoized, and each row is a memoized component with stable callbacks, so ticking a box draws one
+  row again. The history scans the runs once per change of its filter.
+- **Charts.** The history uses the existing uPlot `Chart` component: evenly spaced points in race
+  order, so many runs on one day stay readable, a y axis from zero, so noise does not look like a
+  collapse, change marks drawn in a `draw` hook, and a tooltip in uPlot's overlay. No new
+  dependency.
+- **Left out.** The comparison and history do not pick their own median or average; they follow
+  the page. Failed and cancelled runs have no point in a history. LM Studio versions are not
+  recorded by Model Duel, so they cannot be marked. The history's filter toggles are not part of
+  the link.
+
 ### 7.3 Sending runs to a results service
 
 Mani plans a public service that collects runs from anyone. Each Results row has a **Send** button
@@ -728,6 +815,65 @@ repeated. `settings.prompt` names it and `settings.promptText` carries its publi
 8K and 32K presets and audio); `POST /api/share/send` answers 409 `not_standard` for anything else,
 and the preview says why. The "include my prompt" option is gone.
 
+### 7.4 Benchmark suites
+
+A suite queues a matrix of text races and runs them unattended, one after another. Its axes are
+one or more standard presets (`SUITE_PRESET_IDS` in `shared/src/suite.ts`: every preset but
+`custom`), one or more thinking settings (`{thinking, reasoningEffort}`: off, on at the model's
+default, or on at a level) and one or more Max tokens values. The machines, the run plan, the mode
+and concurrency, the prefill and whether to accept pre-flight warnings are fixed for the suite, and
+sampling is `DEFAULT_SAMPLING`. `suiteRequestSchema` validates the request with the text config's
+own limits (`maxTokensSchema`, `concurrencySchema`, `machineIdsSchema`), refuses repeated values and
+caps the product at `MAX_SUITE_RACES` (50), saying how many it would be. `expandSuite` orders the
+races prompt by prompt, then by thinking setting, then by Max tokens, and `comboRequest` turns each
+into the request `POST /api/sessions` takes, with the preset's prompt filled in by the server.
+
+Every race now starts through `RaceStarter` (`server/src/races.ts`), the one race slot: the
+machine check, the busy check (a race running or in pre-flight), pre-flight and its refusals are
+the same for a tab and a suite. A suite claims the slot when it starts, if no race or other suite
+has it, and holds it until it ends; meanwhile only races carrying its id start, and anything else
+answers 409 `suite_running`. A suite asked for while a race runs answers 409 `busy`. The checks and
+the claim run without an await between them, so a race and a suite asked for at the same moment
+cannot both start.
+
+`SuiteManager` (`server/src/suites.ts`) runs the races in order. A refusal (pre-flight errors,
+warnings without `acknowledgeWarnings`, a machine deleted since) makes the race `skipped` with the
+refusal's message and pre-flight's errors and warnings; a race whose session ends `failed` is
+`failed`; either way the next race starts. When a race ends, `suiteResults` keeps each machine's
+state, rounds and headline numbers in the suite: for each metric of `headlineMetrics(kind)`, the
+row `headlineRows` picks, so the servers' number (`SERVER_METRICS`) where every machine reported
+it and Model Duel's for all otherwise, summed up by the race's own statistic, with `source`
+`server`, `measured`, or null for a metric with one kind. The suite keeps this snapshot rather than
+reading the sessions again, so it still shows after a race is deleted or switched to averages.
+`suiteColumns`, `suiteRows` and `suiteCsv` build the page's table and the CSV from the same column
+definitions; the CSV adds a "from" column after each metric with a server and a measured kind.
+
+Cancel sets the suite cancelled and cancels the race in progress through
+`SessionManager.cancel`, so the machines stop generating; a race that pre-flight was still checking
+is cancelled the moment it starts. Races not yet started become `cancelled`. On shutdown the
+manager starts no more races and does not write the suite again, so its file still says
+`running`; `SuiteStore.init` marks such a suite `interrupted` at the next start, its running race
+`interrupted` ("Model Duel stopped during this race") and the races after it `interrupted`
+("before this race started"). Nothing resumes by itself.
+
+Suites are `data/suites/<id>.json`, schema version 1: `{schemaVersion, id, createdAt, finishedAt,
+state, error, machines: [{id, name, color}], settings, races: [{index, combo, state, sessionId,
+startedAt, finishedAt, error, issues, results}]}`, with suite states `running | done | cancelled |
+failed | interrupted` and race states `queued | running | done | failed | skipped | cancelled |
+interrupted`. They are written atomically with `writeFileAtomic` (mode 600, directory 700), ids are
+checked against the UUID pattern before a path is built, and files that are not suites, or come
+from a newer version, are skipped with a warning. The races themselves are ordinary sessions and
+result files.
+
+API, behind the same sign-in and cross-site checks as every route: `POST /api/suites` (201 with
+the suite; 400 for a bad request, 404 for an unknown machine, 409 `suite_running` or `busy`),
+`GET /api/suites` (`{suites}`: summaries newest first, with a count of races per state),
+`GET /api/suites/:id`, `POST /api/suites/:id/cancel` (the suite as it ended) and
+`DELETE /api/suites/:id` (204; the suite's file only, never its races; 409 while it runs). An id
+that is not a UUID answers 404 like an unknown one. The **Suites** tab (`#/suites`, `#/suites/<id>`)
+reads a running suite every 2 seconds rather than streaming it: a suite changes once per race, and
+each race has its own stream on the Text tab.
+
 ## 8. Timing discipline
 
 `performance.now()` only. Stamp first in the data handler, then parse. Parse SSE events, not raw reads, and
@@ -737,6 +883,19 @@ delay histogram runs during every run, and the result warns above 50 ms. TTFB is
 diagnostic, since servers flush headers at different moments. Measure with the production build, not the
 dev server; the dev server shows a banner. The production build in Docker measures the same as on
 the host within noise (phase 20 record).
+
+Since phase 22, nothing large is copied or written while tokens arrive. Reading or joining a
+running race copies its public view, with raw events already dropped (copying the raw events of a
+100-round race took seconds). A race keeps at most `RAW_EVENT_BUDGET` (about 64 MB) of raw events;
+later runs keep their measurements and the number of events left out (`raw.omitted`), so no
+machine can make a race too large to save (V8's string limit is about 537 M characters).
+Finished races stay in memory as public views only. Result files and exports are indented only
+under 4 MB. Writing missing result files at startup waits while a race runs, and reads only those
+races. Large JSON answers are gzipped on the thread pool. Telemetry is attached after every round
+and saved with it, so the three-hour sample buffer no longer limits a race, and a crash keeps the
+readings of saved rounds. Shutdown (SIGTERM) stops the suite, cancels and saves the races in
+Fastify's `preClose`, ends the live streams, skips reloading a chat model after an image race, and
+exits after 20 seconds at the latest; Compose allows 30.
 
 ## 9. Test servers
 

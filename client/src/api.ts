@@ -6,6 +6,8 @@ import type {
   CloudModel,
   DeviceRun,
   LmModel,
+  OllamaLoaded,
+  OllamaModel,
   CloudProvider,
   MachineCreateInput,
   MachineModelsView,
@@ -22,6 +24,9 @@ import type {
   SessionView,
   ShareRecord,
   Statistic,
+  Suite,
+  SuiteRequest,
+  SuiteSummary,
   ImageModelView,
   ImageStatus,
   SttStatus,
@@ -49,6 +54,15 @@ export interface PresetView {
 export interface LmModelsView {
   machineId: string;
   models: LmModel[];
+  loading: string | null;
+  error: string | null;
+  fetchedAt: string;
+}
+
+export interface OllamaModelsView {
+  machineId: string;
+  downloaded: OllamaModel[];
+  loaded: OllamaLoaded[];
   loading: string | null;
   error: string | null;
   fetchedAt: string;
@@ -144,6 +158,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 const machineUrl = (id: string) => `/api/machines/${encodeURIComponent(id)}`;
 const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
+const suiteUrl = (id: string) => `/api/suites/${encodeURIComponent(id)}`;
 
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
@@ -160,6 +175,13 @@ export const api = {
     ),
   lmUnload: (id: string, instanceId: string) =>
     call<{ unloaded: string }>('POST', `${machineUrl(id)}/lmstudio/unload`, { instanceId }),
+  ollamaModels: (id: string) => call<OllamaModelsView>('GET', `${machineUrl(id)}/ollama/models`),
+  ollamaLoad: (id: string, model: string) =>
+    call<{ loaded: string; seconds: number | null }>('POST', `${machineUrl(id)}/ollama/load`, {
+      model,
+    }),
+  ollamaUnload: (id: string, model: string) =>
+    call<{ unloaded: string }>('POST', `${machineUrl(id)}/ollama/unload`, { model }),
   shareSettings: () => call<ShareSettingsView>('GET', '/api/share/settings'),
   /** LLM Bench's token, or null to remove it. */
   setShareToken: (token: string | null) =>
@@ -264,8 +286,33 @@ export const api = {
   ) => call<SessionView>('POST', `${sessionUrl(id)}/vote`, vote),
   voteTally: () => call<{ tally: PairTally[] }>('GET', '/api/votes/tally'),
   sessionStreamUrl: (id: string) => `${sessionUrl(id)}/stream`,
+  listSuites: () => call<{ suites: SuiteSummary[] }>('GET', '/api/suites'),
+  startSuite: (request: SuiteRequest) => call<Suite>('POST', '/api/suites', request),
+  getSuite: (id: string) => call<Suite>('GET', suiteUrl(id)),
+  cancelSuite: (id: string) => call<Suite>('POST', `${suiteUrl(id)}/cancel`),
+  deleteSuite: (id: string) => call<void>('DELETE', suiteUrl(id)),
 };
 
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A refusal split for a form: field errors for the fields it shows, and everything else as one
+ * message for the form itself, so no error is lost. Without field errors the message is the form's.
+ */
+export function splitFieldErrors(
+  error: unknown,
+  shown: readonly string[],
+): { fields: Record<string, string>; form: string | null } {
+  if (!(error instanceof ApiError) || Object.keys(error.fields).length === 0) {
+    return { fields: {}, form: messageOf(error) };
+  }
+  const fields: Record<string, string> = {};
+  const rest: string[] = [];
+  for (const [key, message] of Object.entries(error.fields)) {
+    if (shown.includes(key)) fields[key] = message;
+    else rest.push(message);
+  }
+  return { fields, form: rest.length > 0 ? rest.join(' ') : null };
 }

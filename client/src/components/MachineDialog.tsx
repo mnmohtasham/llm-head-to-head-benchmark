@@ -1,14 +1,16 @@
 import {
-  LMSTUDIO_PORT,
   MACHINE_COLOR_NAMES,
   MACHINE_COLORS,
+  MACHINE_SERVERS,
   normalizeBaseUrl,
   SERVER_LABEL,
+  SERVER_PORT,
   type MachineServer,
   type MachineView,
 } from '@duel/shared';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { ApiError } from '../api';
+import { useId, useRef, useState, type FormEvent } from 'react';
+import { splitFieldErrors } from '../api';
+import { useModal } from '../useModal';
 
 export interface MachineFormValues {
   name: string;
@@ -20,6 +22,47 @@ export interface MachineFormValues {
   /** The server the machine runs; fixed once the machine is added. */
   server: MachineServer;
 }
+
+/** What each server needs from the person adding it. */
+const SERVER_HELP: Record<
+  MachineServer,
+  { setup: string | null; keyLabel: string; keyPlaceholder: string; keyHint: string }
+> = {
+  unsloth: {
+    setup: null,
+    keyLabel: 'API key',
+    keyPlaceholder: 'sk-unsloth-…',
+    keyHint:
+      'Create one in Unsloth on that machine under Settings → API. It is stored on this computer only and never shown again.',
+  },
+  lmstudio: {
+    setup:
+      'LM Studio races text only. In LM Studio, turn on Serve on Local Network (Developer → Server Settings) so this computer can reach it.',
+    keyLabel: 'API token (optional)',
+    keyPlaceholder: 'Only if LM Studio requires one',
+    keyHint:
+      'Needed only when Require Authentication is on in LM Studio; create one under Developer → Server Settings → Manage Tokens. It is stored on this computer only and never shown again.',
+  },
+  ollama: {
+    setup:
+      'Ollama races text only. Start it with OLLAMA_HOST=0.0.0.0 so this computer can reach it, and load the model to race on the Models tab.',
+    keyLabel: 'API key (optional)',
+    keyPlaceholder: 'Only if a proxy in front of Ollama asks for one',
+    keyHint:
+      'Ollama itself takes no key; a reverse proxy in front of it may. It is stored on this computer only and never shown again.',
+  },
+  'openai-compatible': {
+    setup:
+      'For llama.cpp’s llama-server, vLLM, SGLang and other servers with /v1/chat/completions. They race text only, with the model the server was started with. Start it listening on the network (--host 0.0.0.0).',
+    keyLabel: 'API key (optional)',
+    keyPlaceholder: 'Only if the server was started with one',
+    keyHint:
+      'The key the server was started with (--api-key), if any. It is stored on this computer only and never shown again.',
+  },
+};
+
+/** Fields that show their own error; the server's errors for any other go above the buttons. */
+const SHOWN_FIELDS = ['name', 'baseUrl', 'apiKey', 'notes'];
 
 interface Props {
   machine: MachineView | null;
@@ -33,7 +76,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
   const id = useId();
   const savedKey = machine?.hasApiKey ? machine.apiKeyMasked : null;
   const [server, setServer] = useState<MachineServer>(machine?.server ?? 'unsloth');
-  const lm = server === 'lmstudio';
+  const help = SERVER_HELP[server];
   const [name, setName] = useState(machine?.name ?? '');
   const [address, setAddress] = useState(machine?.baseUrl ?? '');
   const [apiKey, setApiKey] = useState('');
@@ -47,12 +90,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
-  const preview = address.trim() ? normalizeBaseUrl(address, lm ? LMSTUDIO_PORT : undefined) : null;
+  const preview = address.trim() ? normalizeBaseUrl(address, SERVER_PORT[server]) : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -74,9 +114,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         server,
       });
     } catch (error) {
-      if (error instanceof ApiError && Object.keys(error.fields).length > 0)
-        setErrors(error.fields);
-      else setFormError(error instanceof Error ? error.message : String(error));
+      const { fields, form } = splitFieldErrors(error, SHOWN_FIELDS);
+      setErrors((current) => ({ ...current, ...fields }));
+      setFormError(form);
       setBusy(false);
     }
   };
@@ -85,10 +125,8 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
     <>
       Will connect to <code>{preview.url}</code>
     </>
-  ) : preview ? null : lm ? (
-    'The IP address or name of the machine. Port 1234, LM Studio’s, is added when you leave it out.'
-  ) : (
-    'The IP address or name of the machine. Port 8888 is added when you leave it out.'
+  ) : preview ? null : (
+    `The IP address or name of the machine. Port ${SERVER_PORT[server]}, ${SERVER_LABEL[server]}’s${server === 'openai-compatible' ? ' (llama-server’s; vLLM uses 8000)' : ''}, is added when you leave it out.`
   );
   const addressError = errors.baseUrl ?? (preview && !preview.ok ? preview.error : null);
 
@@ -117,7 +155,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
             </p>
           ) : (
             <div className="toggle-chips" role="radiogroup" aria-labelledby={`${id}-server-label`}>
-              {(['unsloth', 'lmstudio'] as const).map((option) => (
+              {MACHINE_SERVERS.map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -131,12 +169,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
               ))}
             </div>
           )}
-          {lm && !machine ? (
-            <p className="field-hint">
-              LM Studio races text only. In LM Studio, turn on Serve on Local Network (Developer →
-              Server Settings) so this computer can reach it.
-            </p>
-          ) : null}
+          {help.setup && !machine ? <p className="field-hint">{help.setup}</p> : null}
         </div>
 
         <div className="field">
@@ -178,7 +211,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         </div>
 
         <div className="field">
-          <label htmlFor={`${id}-key`}>{lm ? 'API token (optional)' : 'API key'}</label>
+          <label htmlFor={`${id}-key`}>{help.keyLabel}</label>
           <div className="key-input">
             <input
               id={`${id}-key`}
@@ -186,13 +219,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
               disabled={removeKey}
-              placeholder={
-                savedKey
-                  ? `Leave empty to keep ${savedKey}`
-                  : lm
-                    ? 'Only if LM Studio requires one'
-                    : 'sk-unsloth-…'
-              }
+              placeholder={savedKey ? `Leave empty to keep ${savedKey}` : help.keyPlaceholder}
               autoComplete="off"
               spellCheck={false}
               aria-invalid={Boolean(errors.apiKey)}
@@ -208,10 +235,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
             </button>
           </div>
           <p id={`${id}-key-note`} className={errors.apiKey ? 'field-error' : 'field-hint'}>
-            {errors.apiKey ??
-              (lm
-                ? 'Needed only when Require Authentication is on in LM Studio; create one under Developer → Server Settings → Manage Tokens. It is stored on this computer only and never shown again.'
-                : 'Create one in Unsloth on that machine under Settings → API. It is stored on this computer only and never shown again.')}
+            {errors.apiKey ?? help.keyHint}
           </p>
           {savedKey ? (
             <label className="check">

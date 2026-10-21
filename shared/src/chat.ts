@@ -1,4 +1,5 @@
 import type { CloudProvider } from './cloud';
+import type { OllamaStats } from './engines';
 import type { LmStats } from './lmstudio';
 import { z } from 'zod';
 import { PRESET_IDS, withNonce } from './presets';
@@ -358,9 +359,13 @@ export function findMonitorRow(body: unknown, prompt: string, withinSec = 60): M
 export interface ServerMetrics {
   timings: Timings | null;
   monitor: MonitorRow | null;
+  /** Which server reported these, when it is not Unsloth: LM Studio, Ollama, llama.cpp, vLLM… */
+  source?: string;
   /** A cloud provider's own account of the run: its usage, request id and processing time. */
   /** LM Studio's own timings and token counts, from the end of its stream. */
   lmstudio?: LmStats | null;
+  /** Ollama's own timings, from its stream's last object; `timings` holds them as llama.cpp's. */
+  ollama?: OllamaStats | null;
   cloud?: {
     provider: CloudProvider;
     requestId: string | null;
@@ -433,28 +438,33 @@ export const TEXT_MODES = ['latency', 'throughput'] as const;
 export type TextMode = (typeof TEXT_MODES)[number];
 export const MAX_CONCURRENCY = 32;
 
+/** Max tokens of a text run, thinking included. */
+export const maxTokensSchema = z
+  .number()
+  .int('Use a whole number of tokens.')
+  .min(1, 'Allow at least 1 token.')
+  .max(131_072, 'Use at most 131,072 tokens.');
+
+/** Requests in flight at once on each machine, in throughput mode. */
+export const concurrencySchema = z
+  .number()
+  .int('Use a whole number of requests.')
+  .min(1, 'Send at least 1 request.')
+  .max(MAX_CONCURRENCY, `Send at most ${MAX_CONCURRENCY} requests at once.`)
+  .default(4);
+
 export const textConfigSchema = z
   .object({
     preset: z.enum(PRESET_IDS).default('custom'),
     /** The prompt for `custom`; the server fills in the preset's prompt for the others. */
     prompt: z.string().trim().max(200_000, 'That prompt is too long.').default(''),
-    maxTokens: z
-      .number()
-      .int('Use a whole number of tokens.')
-      .min(1, 'Allow at least 1 token.')
-      .max(131_072, 'Use at most 131,072 tokens.'),
+    maxTokens: maxTokensSchema,
     thinking: z.boolean(),
     reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
     prefill: z.enum(PREFILL_MODES).default('cold'),
     sampling: samplingSchema.prefault({}),
     mode: z.enum(TEXT_MODES).default('latency'),
-    /** Requests in flight at once on each machine, in throughput mode. */
-    concurrency: z
-      .number()
-      .int('Use a whole number of requests.')
-      .min(1, 'Send at least 1 request.')
-      .max(MAX_CONCURRENCY, `Send at most ${MAX_CONCURRENCY} requests at once.`)
-      .default(4),
+    concurrency: concurrencySchema,
   })
   .refine((config) => config.preset !== 'custom' || config.prompt.length > 0, {
     message: 'Write a prompt.',

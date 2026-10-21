@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { blindRounds, labelVotes, shuffleSides, sidesOf, tallyVotes } from '../src/blind';
-import { comparisonTable, roundTable, scoreboard, toCsv, toMarkdown } from '../src/report';
+import {
+  comparisonTable,
+  headlineRows,
+  roundTable,
+  scoreboard,
+  toCsv,
+  toMarkdown,
+} from '../src/report';
+import type { StatRow } from '../src/stats';
 import { tokenTimeline, TIMELINE_POINTS, type SessionView } from '../src/session';
 import { makeRun, makeSession, makeStatus } from './make';
 
@@ -137,8 +145,14 @@ describe('exports match the tables on the page', () => {
     expect(markdown).not.toContain('<img');
     expect(markdown).not.toContain('[click](');
     expect(markdown).toContain(
-      '&lt;img src=x onerror=alert(1)&gt; \\[click\\](https://evil.example)',
+      '&lt;img src=x onerror=alert(1)&gt; \\[click\\](https:&#47;&#47;evil.example)',
     );
+    expect(markdown).not.toMatch(/https?:\/\/evil/);
+    session.machines = session.machines.map((m, i) =>
+      i === 0 ? { ...m, name: 'see www.evil.example or me@evil.example' } : m,
+    );
+    const bare = toMarkdown(session);
+    expect(bare).toContain('www&#46;evil.example or me&#64;evil.example');
     // The report's own markup still works.
     expect(markdown).toMatch(/\*\*[^*]+\*\*/);
 
@@ -183,6 +197,16 @@ describe('the scoreboard', () => {
       for (const run of round.runs) if (run.machineId === 'slow') run.server = null;
     }
     expect(scoreboard(session).find((l) => l.text.includes('decodes'))?.key).toBe('decode');
+  });
+
+  it('still uses the servers’ numbers when a machine with none at all failed every round', () => {
+    const summary = (n: number) => ({ n }) as unknown as StatRow['summaries'][number];
+    const row = (key: string, ns: number[]) =>
+      ({ key, summaries: ns.map(summary) }) as unknown as StatRow;
+    const picked = headlineRows([row('decode', [3, 3, 0]), row('decodeServer', [3, 3, 0])]);
+    expect(picked.find((p) => p.headline === 'decode')?.row.key).toBe('decodeServer');
+    const mixed = headlineRows([row('decode', [3, 3, 3]), row('decodeServer', [3, 3, 0])]);
+    expect(mixed.find((p) => p.headline === 'decode')?.row.key).toBe('decode');
   });
 
   it('calls a close race a tie, and has nothing to say about one machine', () => {

@@ -3,12 +3,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, messageOf } from './api';
 import type { LogEntry, NewLogEntry } from './components/LogPanel';
 import type { Page } from './components/TopBar';
-import { MachinesPage } from './pages/MachinesPage';
-import { ModelsPage } from './pages/ModelsPage';
-import { ResultsPage } from './pages/ResultsPage';
-import { TextPage } from './pages/TextPage';
-import { ImagePage } from './pages/ImagePage';
-import { TranscribePage } from './pages/TranscribePage';
+// Each page is fetched the first time its tab is opened.
+import {
+  ImagePage,
+  MachinesPage,
+  ModelsPage,
+  ResultsPage,
+  SuitesPage,
+  TextPage,
+  TranscribePage,
+} from './LazyPages';
 
 let nextLogId = 1;
 
@@ -20,7 +24,11 @@ function pageFromHash(): Page {
     return 'transcribe';
   if (window.location.hash === '#/image' || window.location.hash.startsWith('#/image/'))
     return 'image';
-  if (window.location.hash === '#/results') return 'results';
+  if (window.location.hash === '#/suites' || window.location.hash.startsWith('#/suites/'))
+    return 'suites';
+  // #/results?compare=… and #/results?history=… open a comparison or a history there.
+  if (window.location.hash === '#/results' || window.location.hash.startsWith('#/results?'))
+    return 'results';
   return 'machines';
 }
 
@@ -30,6 +38,7 @@ const TITLES: Record<Page, string> = {
   text: 'Text',
   transcribe: 'Transcribe',
   image: 'Image',
+  suites: 'Suites',
   results: 'Results',
 };
 
@@ -83,14 +92,14 @@ export function App() {
     };
   }, []);
 
-  // Cloud models race only on the Text tab, and LM Studio has text and its own Models pane; the
-  // other tabs need a machine running Unsloth.
+  // Cloud models race only on the Text tab, and the other local servers race text and have their
+  // own Models panes; the other tabs need a machine running Unsloth.
   const unsloth = useMemo(
-    () => machines?.filter((m) => !m.cloud && m.server !== 'lmstudio') ?? null,
+    () => machines?.filter((m) => !m.cloud && m.server === 'unsloth') ?? null,
     [machines],
   );
-  const lmstudio = useMemo(
-    () => machines?.filter((m) => !m.cloud && m.server === 'lmstudio') ?? [],
+  const others = useMemo(
+    () => machines?.filter((m) => !m.cloud && m.server !== 'unsloth') ?? [],
     [machines],
   );
 
@@ -109,12 +118,14 @@ export function App() {
         <TranscribePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
       ) : page === 'image' ? (
         <ImagePage machines={unsloth} loadError={loadError} log={log} addLog={addLog} />
+      ) : page === 'suites' ? (
+        <SuitesPage machines={machines} loadError={loadError} />
       ) : page === 'results' ? (
         <ResultsPage />
       ) : page === 'models' ? (
         <ModelsPage
           machines={unsloth}
-          lmstudio={lmstudio}
+          others={others}
           loadError={loadError}
           log={log}
           addLog={addLog}

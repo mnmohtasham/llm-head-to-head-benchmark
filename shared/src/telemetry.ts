@@ -120,7 +120,11 @@ export interface RunPhases {
 export interface RunEnergy {
   /** Samples inside the run itself, baseline excluded. */
   samples: number;
-  /** Energy from request to end, or null when under half the run had power readings. */
+  /**
+   * Energy from request to end, or null when under half the run had power readings. Gaps in the
+   * readings are filled at the mean power of the covered part, so a missed poll does not make a
+   * run look cheaper than it was.
+   */
   energyJ: number | null;
   /** Energy between the first and the last token. */
   decodeEnergyJ: number | null;
@@ -149,7 +153,7 @@ export function runEnergy(
   const whole = integratePower(power, phases.start, phases.end);
   const duration = phases.end - phases.start;
   const coverage = duration > 0 ? whole.coveredMs / duration : 0;
-  const energyJ = coverage >= MIN_COVERAGE ? whole.joules : null;
+  const energyJ = coverage >= MIN_COVERAGE ? whole.joules / Math.min(1, coverage) : null;
   let decodeEnergyJ: number | null = null;
   let meanDecodePowerW: number | null = null;
   if (
@@ -159,9 +163,10 @@ export function runEnergy(
   ) {
     const decode = integratePower(power, phases.firstToken, phases.lastToken);
     const span = phases.lastToken - phases.firstToken;
-    if (decode.coveredMs / span >= MIN_COVERAGE) {
-      decodeEnergyJ = decode.joules;
+    const covered = decode.coveredMs / span;
+    if (covered >= MIN_COVERAGE) {
       meanDecodePowerW = decode.joules / (decode.coveredMs / 1000);
+      decodeEnergyJ = meanDecodePowerW * (span / 1000);
     }
   }
   const peak = (pick: (s: TelemetrySample) => number | null) => max(inside.map(pick));

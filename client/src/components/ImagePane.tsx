@@ -32,16 +32,14 @@ interface Props {
 }
 
 export function ImagePane({ machine, modelName, sessionId, run, size, telemetry }: Props) {
-  const now = useNow(100);
   const image = run?.image ?? null;
   const running = run !== null && run.finishedAt === null;
   const phase = !run ? 'idle' : run.state;
   const steps = run?.live?.steps ?? null;
-  const elapsed = image
-    ? image.totalMs
-    : running && run.requestedAtMs !== null && run.state === 'streaming'
-      ? now - run.requestedAtMs
-      : null;
+  const since = !image && running && run.state === 'streaming' ? run.requestedAtMs : null;
+  // The clock ticks only while the total counts up; an idle pane does not draw ten times a second.
+  const now = useNow(since === null ? null : 100);
+  const elapsed = image ? image.totalMs : since === null ? null : Math.max(0, now - since);
   const decoding = running && steps !== null && steps.total > 0 && steps.done >= steps.total;
   const src = image?.stored && sessionId && run ? api.sessionImageUrl(sessionId, run.id) : null;
 

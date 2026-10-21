@@ -10,6 +10,15 @@ import {
 } from '@duel/shared';
 import { writeFileAtomic } from './store';
 
+/** Below this size a file is indented for reading; above it, indenting would multiply it. */
+const INDENT_UNDER = 4 * 1024 * 1024;
+
+/** JSON for a file people may open: indented when small, compact when large. */
+export function fileJson(value: unknown): string {
+  const compact = JSON.stringify(value);
+  return `${compact.length < INDENT_UNDER ? JSON.stringify(value, null, 2) : compact}\n`;
+}
+
 /** Adds the checksum over the canonical JSON of everything else. */
 export function signResult(unsigned: UnsignedResult): ResultFile {
   const sha256 = createHash('sha256').update(canonicalJson(unsigned)).digest('hex');
@@ -48,10 +57,7 @@ export class ResultStore {
   async write(session: StoredSession): Promise<ResultFile> {
     const result = this.build(session);
     await mkdir(this.dir(), { recursive: true, mode: 0o700 });
-    await writeFileAtomic(
-      path.join(this.dir(), resultFileName(session)),
-      `${JSON.stringify(result, null, 2)}\n`,
-    );
+    await writeFileAtomic(path.join(this.dir(), resultFileName(session)), fileJson(result));
     return result;
   }
 
@@ -59,12 +65,23 @@ export class ResultStore {
     await rm(path.join(this.dir(), resultFileName(session)), { force: true });
   }
 
-  /** Writes the result of every finished session that has none yet, for races from before. */
-  async backfill(sessions: AsyncIterable<StoredSession>): Promise<number> {
+  /**
+   * Writes the result of every finished session that has none yet, for races from before. Only
+   * those sessions are read, one at a time, and none while a race runs, since reading a large one
+   * would hold up the timing of the race.
+   */
+  async backfill(
+    sessions: ReadonlyArray<{ id: string; createdAt: string; finishedAt: string | null }>,
+    load: (id: string) => Promise<StoredSession | null>,
+    racing: () => boolean = () => false,
+  ): Promise<number> {
     const existing = new Set(await readdir(this.dir()).catch(() => [] as string[]));
     let written = 0;
-    for await (const session of sessions) {
-      if (session.finishedAt === null || existing.has(resultFileName(session))) continue;
+    for (const summary of sessions) {
+      if (summary.finishedAt === null || existing.has(resultFileName(summary))) continue;
+      while (racing()) await new Promise((resolve) => setTimeout(resolve, 1000).unref());
+      const session = await load(summary.id);
+      if (!session || session.finishedAt === null) continue;
       await this.write(session);
       written += 1;
     }

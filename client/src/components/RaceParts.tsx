@@ -1,8 +1,11 @@
 import {
   DEFAULT_PLAN,
   MAX_ROUNDS,
+  REASONING_EFFORTS,
   statisticOf,
+  type CloudModel,
   type MachineView,
+  type ModelStatus,
   type PreflightIssue,
   type RunPlan,
   type RunView,
@@ -11,7 +14,8 @@ import {
   type Statistic,
   type Workload,
 } from '@duel/shared';
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { fieldNumber } from '../fields';
 import { BlindVote } from './BlindVote';
 import { RaceCharts } from './RaceCharts';
 import { RoundTable } from './RoundTable';
@@ -19,8 +23,29 @@ import { ExportLinks, Scoreboard } from './Scoreboard';
 import { SetupTable } from './SetupTable';
 import { StatsTable } from './StatsTable';
 
+/** Effort levels every selected model accepts. */
+export function commonEfforts(statuses: ModelStatus[]): string[] {
+  if (statuses.length === 0) return [];
+  const [first, ...rest] = statuses.map((s) =>
+    s.reasoningEffortLevels.filter((level) =>
+      (REASONING_EFFORTS as readonly string[]).includes(level),
+    ),
+  );
+  return (first ?? []).filter((level) => rest.every((levels) => levels.includes(level)));
+}
+
+/** Effort levels any of these cloud models takes; each gets the nearest level it offers. */
+export function cloudEfforts(models: CloudModel[]): string[] {
+  return REASONING_EFFORTS.filter(
+    (level) => level !== 'none' && models.some((m) => m.efforts.includes(level)),
+  );
+}
+
+// The form's parts are memoized: during a race the page draws again with every update of the
+// panes, and these change only when the user does something.
+
 /** The machines to race, each with a line about what it has loaded. */
-export function MachinePicker({
+export const MachinePicker = memo(function MachinePicker({
   machines,
   selected,
   onToggle,
@@ -55,7 +80,13 @@ export function MachinePicker({
       ))}
     </fieldset>
   );
-}
+});
+
+/** The plan's number fields by their path in a race request, for `formProblem`. */
+export const PLAN_LABELS: Readonly<Record<string, string>> = {
+  'plan.rounds': 'Rounds',
+  'plan.settleMs': 'Pause between rounds',
+};
 
 /** The rounds, warm-up, pause and order fields, kept as text while the user types. */
 export function usePlan() {
@@ -64,32 +95,37 @@ export function usePlan() {
   const [settleSeconds, setSettleSeconds] = useState(String(DEFAULT_PLAN.settleMs / 1000));
   const [sequencing, setSequencing] = useState(DEFAULT_PLAN.sequencing);
   const [statistic, setStatistic] = useState<Statistic>('median');
-  return {
-    rounds,
-    setRounds,
-    warmup,
-    setWarmup,
-    settleSeconds,
-    setSettleSeconds,
-    sequencing,
-    setSequencing,
-    statistic,
-    setStatistic,
-    value: {
-      rounds: Number(rounds),
+  const fill = useCallback((plan: RunPlan) => {
+    setRounds(String(plan.rounds));
+    setWarmup(plan.warmup);
+    setSettleSeconds(String(plan.settleMs / 1000));
+    setSequencing(plan.sequencing);
+    setStatistic(statisticOf(plan));
+  }, []);
+  // The same object until a field changes, so the plan's fields need not draw again.
+  return useMemo(
+    () => ({
+      rounds,
+      setRounds,
       warmup,
-      settleMs: Math.round(Number(settleSeconds) * 1000),
+      setWarmup,
+      settleSeconds,
+      setSettleSeconds,
       sequencing,
+      setSequencing,
       statistic,
-    } satisfies RunPlan,
-    fill: (plan: RunPlan) => {
-      setRounds(String(plan.rounds));
-      setWarmup(plan.warmup);
-      setSettleSeconds(String(plan.settleMs / 1000));
-      setSequencing(plan.sequencing);
-      setStatistic(statisticOf(plan));
-    },
-  };
+      setStatistic,
+      value: {
+        rounds: fieldNumber(rounds),
+        warmup,
+        settleMs: Math.round(fieldNumber(settleSeconds) * 1000),
+        sequencing,
+        statistic,
+      } satisfies RunPlan,
+      fill,
+    }),
+    [rounds, warmup, settleSeconds, sequencing, statistic, fill],
+  );
 }
 
 /** Names of chosen machines that share a computer, which should take turns. */
@@ -141,7 +177,7 @@ function Toggle<T extends string | boolean>({
   );
 }
 
-export function PlanFields({
+export const PlanFields = memo(function PlanFields({
   plan,
   running,
   sharing,
@@ -234,12 +270,12 @@ export function PlanFields({
       ) : null}
     </>
   );
-}
+});
 
 export { Toggle };
 
 /** What pre-flight found, and the Race anyway switch when it only warns. */
-export function PreflightPanel({
+export const PreflightPanel = memo(function PreflightPanel({
   problem,
   checking,
   error,
@@ -251,6 +287,7 @@ export function PreflightPanel({
   details,
   raceAnyway,
   setRaceAnyway,
+  onRecheck,
   running,
 }: {
   /** Why pre-flight cannot run yet: a form error, or no machine picked. */
@@ -268,8 +305,13 @@ export function PreflightPanel({
   details: string;
   raceAnyway: boolean;
   setRaceAnyway: (on: boolean) => void;
+  /** Runs pre-flight again after it could not run. */
+  onRecheck: () => void;
   running: boolean;
 }) {
+  // Two issues can say the same thing, so the text alone is no key.
+  const key = (issue: PreflightIssue, index: number) =>
+    `${index}-${issue.code}-${issue.machineId ?? ''}`;
   return (
     <section className="preflight" aria-labelledby="preflight-title" data-testid="preflight">
       <h3 id="preflight-title" className="hero-label">
@@ -282,7 +324,17 @@ export function PreflightPanel({
           Checking the machines…
         </p>
       ) : error ? (
-        <p className="field-error">Pre-flight could not run: {error}</p>
+        <p className="field-error" data-testid="preflight-status">
+          Pre-flight could not run: {error}{' '}
+          <button
+            type="button"
+            className="btn btn-quiet btn-inline"
+            onClick={onRecheck}
+            disabled={running}
+          >
+            Check again
+          </button>
+        </p>
       ) : (
         <>
           <p className="field-hint" data-testid="preflight-status">
@@ -295,8 +347,8 @@ export function PreflightPanel({
           </p>
           {errors.length > 0 ? (
             <ul className="start-check" data-testid="start-blockers">
-              {errors.map((issue) => (
-                <li key={issue.text} className="field-error">
+              {errors.map((issue, index) => (
+                <li key={key(issue, index)} className="field-error">
                   {issue.text} {action?.(issue)}
                 </li>
               ))}
@@ -304,8 +356,8 @@ export function PreflightPanel({
           ) : null}
           {warnings.length > 0 ? (
             <ul className="start-check" data-testid="race-warnings">
-              {warnings.map((issue) => (
-                <li key={issue.text} className="note-warn">
+              {warnings.map((issue, index) => (
+                <li key={key(issue, index)} className="note-warn">
                   {issue.text}
                 </li>
               ))}
@@ -313,8 +365,8 @@ export function PreflightPanel({
           ) : null}
           {notes.length > 0 ? (
             <ul className="start-check" data-testid="race-notes">
-              {notes.map((issue) => (
-                <li key={issue.text} className="field-hint">
+              {notes.map((issue, index) => (
+                <li key={key(issue, index)} className="field-hint">
                   {issue.text}
                 </li>
               ))}
@@ -335,7 +387,7 @@ export function PreflightPanel({
       )}
     </section>
   );
-}
+});
 
 /** A line about where a running session is. */
 function progressText(workload: Workload, progress: SessionProgress, rounds: number): string {
@@ -375,16 +427,25 @@ export function ProgressLine({
   running,
   roundIndex,
   manyRounds,
+  reconnecting = false,
 }: {
   session: SessionView | null;
   running: boolean;
   roundIndex: number | null;
   manyRounds: boolean;
+  /** The live stream dropped and is being opened again. */
+  reconnecting?: boolean;
 }) {
   if (session && running) {
     return (
       <p className="race-progress" role="status" data-testid="race-progress">
         {progressText(session.workload, session.progress, session.plan.rounds)}
+        {reconnecting ? (
+          <span className="race-reconnecting" data-testid="race-reconnecting">
+            {' '}
+            Connection lost, reconnecting…
+          </span>
+        ) : null}
       </p>
     );
   }
@@ -431,10 +492,16 @@ export function RaceReport({
   const label = roundIndex === -1 ? 'warm-up' : `round ${(roundIndex ?? 0) + 1}`;
   return (
     <>
-      {session.state === 'interrupted' ? (
-        <div className="banner banner-warn" role="status">
-          {session.error}
-        </div>
+      {session.error && session.state !== 'running' ? (
+        session.state === 'failed' ? (
+          <div className="banner banner-error" role="alert" data-testid="race-error">
+            The race failed. {session.error}
+          </div>
+        ) : (
+          <div className="banner banner-warn" role="status" data-testid="race-error">
+            {session.error}
+          </div>
+        )
       ) : null}
       {!running && counted ? <Scoreboard session={session} /> : null}
       {!running && round && counted ? (

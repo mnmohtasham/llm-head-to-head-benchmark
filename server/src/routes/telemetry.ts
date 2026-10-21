@@ -1,6 +1,8 @@
-import type { TelemetryStreamMessage } from '@duel/shared';
+import { textOnlyServer, type TelemetryStreamMessage } from '@duel/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { STREAM_HEADERS } from '../headers';
+import { sseData, type LiveStreams } from '../live';
 import type { MachineStore } from '../store';
 import type { TelemetryHub } from '../telemetry';
 
@@ -9,9 +11,9 @@ const settingsSchema = z.object({ telemetry: z.boolean() });
 
 export function registerTelemetryRoutes(
   app: FastifyInstance,
-  deps: { store: MachineStore; telemetry: TelemetryHub },
+  deps: { store: MachineStore; telemetry: TelemetryHub; streams: LiveStreams },
 ): void {
-  const { store, telemetry } = deps;
+  const { store, telemetry, streams } = deps;
 
   app.get('/api/settings', async () => ({ telemetry: telemetry.enabled }));
 
@@ -37,21 +39,15 @@ export function registerTelemetryRoutes(
       const known = new Set(
         store
           .list()
-          // Cloud models and LM Studio have no hardware routes to read.
-          .filter((m) => !m.cloud && m.server !== 'lmstudio')
+          // Cloud models and every server but Unsloth have no hardware routes to read.
+          .filter((m) => !m.cloud && !textOnlyServer(m.server))
           .map((m) => m.id),
       );
       const wanted = request.query.machines?.split(',').filter((id) => known.has(id)) ?? [...known];
       reply.hijack();
       const raw = reply.raw;
-      raw.writeHead(200, {
-        'content-type': 'text/event-stream; charset=utf-8',
-        'cache-control': 'no-cache, no-transform',
-        connection: 'keep-alive',
-        'x-accel-buffering': 'no',
-      });
-      const send = (message: TelemetryStreamMessage) =>
-        raw.write(`data: ${JSON.stringify(message)}\n\n`);
+      raw.writeHead(200, STREAM_HEADERS);
+      const send = (message: TelemetryStreamMessage) => raw.write(sseData(message));
       const ids = new Set(wanted);
       const leave = telemetry.subscribe((message) => {
         if (message.type === 'sample') {
@@ -63,12 +59,18 @@ export function registerTelemetryRoutes(
       const release = telemetry.acquire(wanted);
       send({ type: 'status', enabled: telemetry.enabled, statuses: telemetry.statuses(wanted) });
       const heartbeat = setInterval(() => raw.write(': ping\n\n'), HEARTBEAT_MS);
-      request.raw.on('close', () => {
+      let open = true;
+      const close = () => {
+        if (!open) return;
+        open = false;
         clearInterval(heartbeat);
         leave();
         release();
+        forget();
         if (!raw.writableEnded) raw.end();
-      });
+      };
+      const forget = streams.add(raw, close);
+      request.raw.on('close', close);
       return reply;
     },
   );

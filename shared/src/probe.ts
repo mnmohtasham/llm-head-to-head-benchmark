@@ -16,6 +16,14 @@ export const PROBE_ROUTES = {
   /** LM Studio: `{"lmstudio": true}` without a token, and its models with one. */
   lmGreeting: '/lmstudio-greeting',
   lmModels: '/api/v1/models',
+  /** Ollama: its version without a key, then what is loaded and downloaded. */
+  ollamaVersion: '/api/version',
+  ollamaPs: '/api/ps',
+  ollamaTags: '/api/tags',
+  /** OpenAI-compatible servers: the model list, llama-server's props and vLLM's version. */
+  compatModels: '/v1/models',
+  compatProps: '/props',
+  compatVersion: '/version',
 } as const;
 export type RouteKey = keyof typeof PROBE_ROUTES;
 
@@ -103,6 +111,8 @@ export interface ProbeReport {
     llamaCpp: string | null;
     torch: string | null;
     cuda: string | null;
+    /** A text-only server's software and version, such as "Ollama 0.12.6" or "llama.cpp b6800". */
+    engine?: string | null;
   };
   platform: {
     os: string | null;
