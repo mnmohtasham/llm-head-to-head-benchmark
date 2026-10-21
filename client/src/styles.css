@@ -2190,3 +2190,326 @@ textarea {
   margin: 0;
   color: var(--muted);
 }
+
+/* Results: ticking runs to compare, the comparison and a machine's history */
+.row-select {
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 0;
+  vertical-align: middle;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.row-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.row-history {
+  min-height: 24px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.results-table tr.row-selected td,
+.results-table tr.row-selected .results-machine {
+  background: #24221d;
+}
+
+.selection-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  background: var(--panel-raised);
+  border: 1px solid var(--accent);
+}
+
+.selection-count {
+  font-weight: 700;
+}
+
+.selection-bar .btn-primary {
+  min-height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.copy-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.copy-link-text {
+  width: min(420px, 100%);
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--inset);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.run-comparison,
+.run-history {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.run-comparison .compare-head h2,
+.run-history .compare-head h2 {
+  margin: 0;
+}
+
+/* The heading takes focus when a panel opens, to bring it into view; that needs no ring. */
+.run-comparison h2:focus,
+.run-history h2:focus {
+  outline: none;
+}
+
+.run-comparison > p,
+.run-history > p {
+  margin: 0;
+}
+
+.run-compare-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+
+.run-compare-table tbody th {
+  min-width: 9em;
+  max-width: 14em;
+  white-space: normal;
+}
+
+.run-compare-table td {
+  min-width: 9em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.run-compare-table thead th.run-compare-head {
+  min-width: 9.5em;
+  border-top: 3px solid var(--machine);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: bottom;
+}
+
+.run-compare-head .compare-machine {
+  display: block;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.run-compare-date {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.run-compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.run-compare-actions .btn-small {
+  min-height: 26px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.run-compare-baseline {
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 24px;
+  text-transform: uppercase;
+}
+
+.run-compare-table .run-compare-group th {
+  padding-top: 14px;
+  background: var(--panel-raised);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.run-compare-table tr.differs th,
+.run-compare-table td.cell-differs {
+  color: var(--warn);
+}
+
+.differs-mark {
+  font-weight: 700;
+}
+
+.run-compare-table td.best {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.history-what {
+  margin: 0;
+  color: var(--muted);
+}
+
+.history-series {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.history-title {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.history-title .better-hint {
+  display: inline;
+  margin-left: 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.history-summary {
+  margin: 0;
+}
+
+.history-chart .u-over {
+  cursor: pointer;
+}
+
+.chart-tip {
+  --tx: -50%;
+  --ty: calc(-100% - 10px);
+  position: absolute;
+  z-index: 10;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(var(--tx), var(--ty));
+}
+
+.chart-tip[data-side='left'] {
+  --tx: 0;
+}
+
+.chart-tip[data-side='right'] {
+  --tx: -100%;
+}
+
+.chart-tip[data-below='true'] {
+  --ty: 12px;
+}
+
+.history-changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-changes > li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.history-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--warn);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-change-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.history-effects {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.history-runs summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.history-scroll {
+  max-height: 50vh;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.history-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.history-table .num {
+  text-align: right;
+}
