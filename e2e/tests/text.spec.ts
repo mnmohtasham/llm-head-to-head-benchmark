@@ -641,4 +641,22 @@ test.describe('one machine', () => {
     );
     await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
+
+  test('a blank number field holds the race back, unless it is not sent', async ({ page }) => {
+    await setUp(page, [LINUX.name]);
+    await page.getByText('Sampling', { exact: true }).click();
+    await page.getByLabel('Temperature').fill('');
+    await expect(page.getByTestId('preflight')).toContainText('Temperature needs a number.');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+    await page.getByLabel('Temperature').fill('0.6');
+    await page.getByLabel('Seed').fill('');
+    await expect(page.getByTestId('preflight')).toContainText('Seed needs a number.');
+    // Warm prefill sends no seed, so its field no longer matters.
+    await page
+      .getByRole('radiogroup', { name: 'Prefill' })
+      .getByRole('radio', { name: 'Warm' })
+      .click();
+    await expect(page.getByTestId('preflight-status')).toContainText('All clear');
+    await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+  });
 });

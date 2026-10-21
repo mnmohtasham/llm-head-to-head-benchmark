@@ -19,6 +19,7 @@ import { ImageMetrics, ImagePane } from '../components/ImagePane';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import {
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   PreflightPanel,
   ProgressLine,
@@ -30,6 +31,7 @@ import {
 import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
+import { fieldNumber, formProblem } from '../fields';
 import { formatMsValue } from '../format';
 import { usePreflight } from '../usePreflight';
 import { useRace } from '../useRace';
@@ -47,6 +49,15 @@ const SIZES: ReadonlyArray<readonly [string, number, number]> = [
   ['1024²', 1024, 1024],
   ['1024×576', 1024, 576],
 ];
+
+/** The number fields by their path in the config. */
+const IMAGE_LABELS: Readonly<Record<string, string>> = {
+  width: 'Width',
+  height: 'Height',
+  steps: 'Steps',
+  guidance: 'Guidance',
+  seed: 'Seed',
+};
 
 const SPEED_LABEL: Record<ImageSpeedMode, string> = {
   off: 'Off',
@@ -206,15 +217,16 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     preset,
     prompt: preset === 'custom' ? prompt : '',
     negativePrompt: negative,
-    width: Number(width),
-    height: Number(height),
-    steps: Number(steps),
-    guidance: Number(guidance),
-    seed: Number(seed),
+    width: fieldNumber(width),
+    height: fieldNumber(height),
+    steps: fieldNumber(steps),
+    guidance: fieldNumber(guidance),
+    seed: fieldNumber(seed),
     memoryMode,
     speedMode,
     restoreText,
   });
+  const problem = draft.success ? null : formProblem(draft.error, IMAGE_LABELS);
   const preflightKey = draft.success
     ? JSON.stringify({ workload: 'image', machineIds: chosenIds, config: draft.data })
     : null;
@@ -233,7 +245,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
     event?.preventDefault();
     race.setFormError(null);
     if (!draft.success) {
-      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(problem);
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
@@ -244,7 +256,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
       plan: plan.value,
     });
     if (!parsed.success) {
-      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(formProblem(parsed.error, PLAN_LABELS));
       return;
     }
     const refused = await race.start(
@@ -564,8 +576,8 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
             <PlanFields plan={plan} running={running} sharing={sharing} />
             <PreflightPanel
               problem={
-                !draft.success
-                  ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
+                problem
+                  ? { text: problem, error: true }
                   : chosen.length === 0
                     ? { text: 'Pick at least one machine.', error: false }
                     : null

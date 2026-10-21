@@ -26,6 +26,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import {
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   PreflightPanel,
   ProgressLine,
@@ -38,6 +39,7 @@ import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
 import { TranscriptMetrics, TranscriptPane } from '../components/TranscriptPane';
+import { fieldNumber, formProblem } from '../fields';
 import { formatMsValue } from '../format';
 import { usePreflight } from '../usePreflight';
 import { useRace } from '../useRace';
@@ -171,7 +173,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
       audioKind === 'clip'
         ? { kind: 'clip' }
         : audioKind === 'long'
-          ? { kind: 'long', minutes: Number(minutes) }
+          ? { kind: 'long', minutes: fieldNumber(minutes) }
           : {
               kind: 'upload',
               audioId: upload?.id ?? '',
@@ -183,6 +185,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
     device,
     language,
   });
+  const problem = draft.success ? null : formProblem(draft.error, { 'audio.minutes': 'Minutes' });
   const preflightKey = draft.success
     ? JSON.stringify({ workload: 'transcribe', machineIds: chosenIds, config: draft.data })
     : null;
@@ -229,7 +232,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
     event?.preventDefault();
     race.setFormError(null);
     if (!draft.success) {
-      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(problem);
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
@@ -240,7 +243,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
       plan: plan.value,
     });
     if (!parsed.success) {
-      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(formProblem(parsed.error, PLAN_LABELS));
       return;
     }
     const refused = await race.start(
@@ -512,8 +515,8 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
               problem={
                 uploading
                   ? { text: 'Waiting for the upload…', error: false }
-                  : !draft.success
-                    ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
+                  : problem
+                    ? { text: problem, error: true }
                     : chosen.length === 0
                       ? { text: 'Pick at least one machine.', error: false }
                       : null

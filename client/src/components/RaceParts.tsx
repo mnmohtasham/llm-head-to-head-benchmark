@@ -15,6 +15,7 @@ import {
   type Workload,
 } from '@duel/shared';
 import { useState, type CSSProperties, type ReactNode } from 'react';
+import { fieldNumber } from '../fields';
 import { BlindVote } from './BlindVote';
 import { RaceCharts } from './RaceCharts';
 import { RoundTable } from './RoundTable';
@@ -78,6 +79,12 @@ export function MachinePicker({
   );
 }
 
+/** The plan's number fields by their path in a race request, for `formProblem`. */
+export const PLAN_LABELS: Readonly<Record<string, string>> = {
+  'plan.rounds': 'Rounds',
+  'plan.settleMs': 'Pause between rounds',
+};
+
 /** The rounds, warm-up, pause and order fields, kept as text while the user types. */
 export function usePlan() {
   const [rounds, setRounds] = useState(String(DEFAULT_PLAN.rounds));
@@ -97,9 +104,9 @@ export function usePlan() {
     statistic,
     setStatistic,
     value: {
-      rounds: Number(rounds),
+      rounds: fieldNumber(rounds),
       warmup,
-      settleMs: Math.round(Number(settleSeconds) * 1000),
+      settleMs: Math.round(fieldNumber(settleSeconds) * 1000),
       sequencing,
       statistic,
     } satisfies RunPlan,

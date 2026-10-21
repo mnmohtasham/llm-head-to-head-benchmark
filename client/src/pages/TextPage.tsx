@@ -26,6 +26,7 @@ import {
   cloudEfforts,
   commonEfforts,
   MachinePicker,
+  PLAN_LABELS,
   PlanFields,
   PreflightPanel,
   ProgressLine,
@@ -40,6 +41,7 @@ import { RunPane } from '../components/RunPane';
 import { SessionList } from '../components/SessionList';
 import { TelemetrySwitch } from '../components/TelemetryChips';
 import { TopBar } from '../components/TopBar';
+import { fieldNumber, formProblem } from '../fields';
 import { formatMsValue, formatRate } from '../format';
 import { usePreflight } from '../usePreflight';
 import { useRace } from '../useRace';
@@ -47,6 +49,18 @@ import { useTelemetry } from '../useTelemetry';
 
 const DEFAULT_PROMPT =
   'Explain in about 150 words why memory bandwidth limits how fast a local language model writes text.';
+
+/** The number fields by their path in the config. */
+const TEXT_LABELS: Readonly<Record<string, string>> = {
+  maxTokens: 'Max tokens',
+  concurrency: 'Requests at once',
+  'sampling.temperature': 'Temperature',
+  'sampling.topP': 'Top-p',
+  'sampling.topK': 'Top-k',
+  'sampling.minP': 'Min-p',
+  'sampling.repetitionPenalty': 'Repetition penalty',
+  'sampling.seed': 'Seed',
+};
 
 interface Props {
   machines: MachineView[] | null;
@@ -186,25 +200,27 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const effortLevels = loaded.length > 0 ? commonEfforts(loaded) : cloudEfforts(cloudModels);
   const effortValue = effort ?? (effortLevels.includes('low') ? 'low' : '');
 
-  // The config the form describes, or the reason it cannot be sent yet.
+  // The config the form describes, or the reason it cannot be sent yet. Only what is sent is
+  // checked: latency mode hides Requests at once, and warm prefill sends no seed.
   const draft = textConfigSchema.safeParse({
     mode,
-    concurrency: Number(concurrency),
+    concurrency: mode === 'throughput' ? fieldNumber(concurrency) : undefined,
     preset,
     prompt: preset === 'custom' ? prompt : '',
-    maxTokens: Number(maxTokens),
+    maxTokens: fieldNumber(maxTokens),
     thinking: alwaysThinks || (canThink && thinking),
     reasoningEffort: effortValue && effortLevels.includes(effortValue) ? effortValue : null,
     prefill,
     sampling: {
-      temperature: Number(sampling.temperature),
-      topP: Number(sampling.topP),
-      topK: Number(sampling.topK),
-      minP: Number(sampling.minP),
-      repetitionPenalty: Number(sampling.repetitionPenalty),
-      seed: Number(sampling.seed),
+      temperature: fieldNumber(sampling.temperature),
+      topP: fieldNumber(sampling.topP),
+      topK: fieldNumber(sampling.topK),
+      minP: fieldNumber(sampling.minP),
+      repetitionPenalty: fieldNumber(sampling.repetitionPenalty),
+      seed: prefill === 'cold' ? fieldNumber(sampling.seed) : undefined,
     },
   });
+  const problem = draft.success ? null : formProblem(draft.error, TEXT_LABELS);
   const chosenIds = chosen.map((m) => m.id);
   const preflightKey = draft.success
     ? JSON.stringify({ workload: 'text', machineIds: chosenIds, config: draft.data })
@@ -271,7 +287,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
     event?.preventDefault();
     race.setFormError(null);
     if (!draft.success) {
-      race.setFormError(draft.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(problem);
       return;
     }
     const parsed = sessionRequestSchema.safeParse({
@@ -282,7 +298,7 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       plan: plan.value,
     });
     if (!parsed.success) {
-      race.setFormError(parsed.error.issues[0]?.message ?? 'Check the settings.');
+      race.setFormError(formProblem(parsed.error, PLAN_LABELS));
       return;
     }
     const refused = await race.start(
@@ -639,8 +655,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
             ) : null}
             <PreflightPanel
               problem={
-                !draft.success
-                  ? { text: draft.error.issues[0]?.message ?? 'Check the settings.', error: true }
+                problem
+                  ? { text: problem, error: true }
                   : chosen.length === 0
                     ? { text: 'Pick at least one machine.', error: false }
                     : null

@@ -14,7 +14,15 @@ import {
   type SpeculativeType,
 } from '@duel/shared';
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { fieldNumber, formProblem } from '../fields';
 import { formatTokens } from '../format';
+
+/** The number fields by their path in the load settings. */
+const LOAD_LABELS: Readonly<Record<string, string>> = {
+  contextLength: 'Context length',
+  reasoningBudget: 'Reasoning budget',
+  parallelSlots: 'Parallel slots',
+};
 
 interface ModelOption {
   modelId: string;
@@ -142,15 +150,15 @@ export function LoadDialog({
     event.preventDefault();
     setError(null);
     const settings = loadSettingsSchema.safeParse({
-      contextLength: Number(context),
+      contextLength: fieldNumber(context),
       speculativeType: speculative,
-      reasoningBudget: Number(budget),
-      parallelSlots: Number(slots),
+      reasoningBudget: fieldNumber(budget),
+      parallelSlots: fieldNumber(slots),
       cacheTypeKv: kvCache === '' ? null : kvCache,
       extraArgs: splitArgs(extraArgs),
     });
     if (!settings.success) {
-      setError(settings.error.issues[0]?.message ?? 'Check the settings.');
+      setError(formProblem(settings.error, LOAD_LABELS));
       return;
     }
     if (!modelId) {
