@@ -272,6 +272,7 @@ export function PreflightPanel({
   details,
   raceAnyway,
   setRaceAnyway,
+  onRecheck,
   running,
 }: {
   /** Why pre-flight cannot run yet: a form error, or no machine picked. */
@@ -289,8 +290,13 @@ export function PreflightPanel({
   details: string;
   raceAnyway: boolean;
   setRaceAnyway: (on: boolean) => void;
+  /** Runs pre-flight again after it could not run. */
+  onRecheck: () => void;
   running: boolean;
 }) {
+  // Two issues can say the same thing, so the text alone is no key.
+  const key = (issue: PreflightIssue, index: number) =>
+    `${index}-${issue.code}-${issue.machineId ?? ''}`;
   return (
     <section className="preflight" aria-labelledby="preflight-title" data-testid="preflight">
       <h3 id="preflight-title" className="hero-label">
@@ -303,7 +309,17 @@ export function PreflightPanel({
           Checking the machines…
         </p>
       ) : error ? (
-        <p className="field-error">Pre-flight could not run: {error}</p>
+        <p className="field-error" data-testid="preflight-status">
+          Pre-flight could not run: {error}{' '}
+          <button
+            type="button"
+            className="btn btn-quiet btn-inline"
+            onClick={onRecheck}
+            disabled={running}
+          >
+            Check again
+          </button>
+        </p>
       ) : (
         <>
           <p className="field-hint" data-testid="preflight-status">
@@ -316,8 +332,8 @@ export function PreflightPanel({
           </p>
           {errors.length > 0 ? (
             <ul className="start-check" data-testid="start-blockers">
-              {errors.map((issue) => (
-                <li key={issue.text} className="field-error">
+              {errors.map((issue, index) => (
+                <li key={key(issue, index)} className="field-error">
                   {issue.text} {action?.(issue)}
                 </li>
               ))}
@@ -325,8 +341,8 @@ export function PreflightPanel({
           ) : null}
           {warnings.length > 0 ? (
             <ul className="start-check" data-testid="race-warnings">
-              {warnings.map((issue) => (
-                <li key={issue.text} className="note-warn">
+              {warnings.map((issue, index) => (
+                <li key={key(issue, index)} className="note-warn">
                   {issue.text}
                 </li>
               ))}
@@ -334,8 +350,8 @@ export function PreflightPanel({
           ) : null}
           {notes.length > 0 ? (
             <ul className="start-check" data-testid="race-notes">
-              {notes.map((issue) => (
-                <li key={issue.text} className="field-hint">
+              {notes.map((issue, index) => (
+                <li key={key(issue, index)} className="field-hint">
                   {issue.text}
                 </li>
               ))}

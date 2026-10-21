@@ -251,7 +251,10 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
       parsed.data,
       chosen.map((m) => m.name),
     );
+    // Pre-flight on the server found something the form had not seen yet.
     if (refused?.issues) preflight.showIssues(refused.issues);
+    // The next race accepts its own warnings, or none.
+    else if (!refused) preflight.setRaceAnyway(false);
   };
 
   const round = race.round;
@@ -571,6 +574,7 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
               details=""
               raceAnyway={preflight.raceAnyway}
               setRaceAnyway={preflight.setRaceAnyway}
+              onRecheck={preflight.recheck}
               running={running}
             />
             {race.formError ? (

@@ -226,6 +226,11 @@ test.describe('racing two machines', () => {
     await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
     await page.getByRole('checkbox', { name: 'Race anyway' }).check();
     await expect(page.getByRole('button', { name: 'Start' })).toBeEnabled();
+    // Another request asks again: the tick was for the warnings of the one before.
+    await page.getByLabel('Max tokens').fill('1024');
+    await expect(page.getByTestId('race-warnings')).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: 'Race anyway' })).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 
   test('opens a past race from the results log, and deletes one', async ({ page }) => {
