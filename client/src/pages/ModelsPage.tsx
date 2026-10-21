@@ -104,7 +104,11 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
   useEffect(() => {
     if (!anyActive) return;
     let stopped = false;
+    // A slow answer is waited for: the next tick does not send another request meanwhile.
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const { jobs: list, serverTime } = await api.listLoads();
         if (stopped) return;
@@ -116,6 +120,8 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
         });
       } catch {
         // Keep following; a missed tick is harmless.
+      } finally {
+        inFlight = false;
       }
     };
     void tick();

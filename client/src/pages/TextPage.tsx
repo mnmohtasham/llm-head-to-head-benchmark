@@ -17,7 +17,14 @@ import {
   type SessionView,
   type TextMode,
 } from '@duel/shared';
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
 import { api, messageOf, type PresetView } from '../api';
 import { BlindVote } from '../components/BlindVote';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -95,6 +102,14 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
   const [concurrency, setConcurrency] = useState('4');
   /** Machines whose model is loading again with more slots, from pre-flight's shortcut. */
   const [reloading, setReloading] = useState<Record<string, string>>({});
+  /** False once the tab is left, which ends a reload's polling. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [sampling, setSampling] = useState(() => ({
     temperature: String(DEFAULT_SAMPLING.temperature),
     topP: String(DEFAULT_SAMPLING.topP),
@@ -238,6 +253,8 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
       const deadline = Date.now() + 15 * 60_000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
+        // The load goes on after leaving the tab; following it stops.
+        if (!mounted.current) return;
         const view = await api.machineStatus(machineId);
         setStatuses((current) => ({ ...current, [machineId]: view }));
         if (view.job && view.job.state !== 'loading' && view.job.state !== 'cancelling') {
