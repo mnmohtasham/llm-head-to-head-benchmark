@@ -8,8 +8,9 @@ import {
   type MachineServer,
   type MachineView,
 } from '@duel/shared';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { ApiError } from '../api';
+import { useId, useRef, useState, type FormEvent } from 'react';
+import { splitFieldErrors } from '../api';
+import { useModal } from '../useModal';
 
 export interface MachineFormValues {
   name: string;
@@ -60,6 +61,9 @@ const SERVER_HELP: Record<
   },
 };
 
+/** Fields that show their own error; the server's errors for any other go above the buttons. */
+const SHOWN_FIELDS = ['name', 'baseUrl', 'apiKey', 'notes'];
+
 interface Props {
   machine: MachineView | null;
   usedColors: readonly string[];
@@ -86,10 +90,7 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+  useModal(ref);
 
   const preview = address.trim() ? normalizeBaseUrl(address, SERVER_PORT[server]) : null;
 
@@ -113,9 +114,9 @@ export function MachineDialog({ machine, usedColors, onSubmit, onClose }: Props)
         server,
       });
     } catch (error) {
-      if (error instanceof ApiError && Object.keys(error.fields).length > 0)
-        setErrors(error.fields);
-      else setFormError(error instanceof Error ? error.message : String(error));
+      const { fields, form } = splitFieldErrors(error, SHOWN_FIELDS);
+      setErrors((current) => ({ ...current, ...fields }));
+      setFormError(form);
       setBusy(false);
     }
   };

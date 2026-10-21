@@ -204,6 +204,7 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
     });
   };
 
+  const listsIn = (machines ?? []).every((m) => models[m.id] !== undefined);
   const busyMachineIds = new Set(
     Object.values(jobs)
       .filter(isActiveJob)
@@ -221,6 +222,9 @@ export function ModelsPage({ machines, others = [], loadError, log, addLog }: Pr
               type="button"
               className="btn btn-primary"
               onClick={() => setDialog({ machineIds: machines.map((m) => m.id), modelId: null })}
+              // The dialog offers the models on the machines, so it waits for every list.
+              disabled={!listsIn}
+              title={listsIn ? undefined : 'Reading the model lists…'}
             >
               Load on all machines
             </button>

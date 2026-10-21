@@ -66,6 +66,11 @@ const SPEED_LABEL: Record<ImageSpeedMode, string> = {
   max: 'Max',
 };
 
+/** The file to race when none is picked: Q4_K_M where there is one. */
+function defaultFile(model: ImageModelView) {
+  return model.files.find((f) => f.quant?.toUpperCase() === 'Q4_K_M') ?? model.files[0];
+}
+
 /** The log line for a finished image. */
 function describeRun(run: RunView): string {
   const image = run.image;
@@ -200,16 +205,24 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
       ),
     );
 
-  // Pick the model and file every machine has, once the lists are in.
+  // Pick the model and file every machine has, once the lists are in. A model or file on none of
+  // the picked machines, after unticking the one that had it, gives way to the first one offered.
+  const listsIn = chosen.every((m) => info[m.id]);
   useEffect(() => {
-    if (model !== null || options.length === 0) return;
     const first = options[0];
     if (!first) return;
-    setModel(first.model.repoId);
-    const common =
-      first.model.files.find((f) => f.quant?.toUpperCase() === 'Q4_K_M') ?? first.model.files[0];
-    setFile(first.model.format === 'gguf' ? (common?.filename ?? null) : null);
-  }, [model, options]);
+    if (model === null || (current === null && listsIn)) {
+      setModel(first.model.repoId);
+      setFile(first.model.format === 'gguf' ? (defaultFile(first.model)?.filename ?? null) : null);
+    } else if (
+      current?.model.format === 'gguf' &&
+      listsIn &&
+      current.model.files.length > 0 &&
+      !current.model.files.some((f) => f.filename === file)
+    ) {
+      setFile(defaultFile(current.model)?.filename ?? null);
+    }
+  }, [model, options, current, listsIn, file]);
 
   const draft = imageConfigSchema.safeParse({
     model: model ?? '',
@@ -381,6 +394,9 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
                   disabled={running || options.length === 0}
                 >
                   {options.length === 0 ? <option value="">No image models found</option> : null}
+                  {options.length > 0 && current === null ? (
+                    <option value="">Reading the model lists…</option>
+                  ) : null}
                   {options.map((o) => (
                     <option key={o.model.repoId} value={o.model.repoId}>
                       {o.model.displayName}

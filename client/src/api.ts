@@ -296,3 +296,23 @@ export const api = {
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * A refusal split for a form: field errors for the fields it shows, and everything else as one
+ * message for the form itself, so no error is lost. Without field errors the message is the form's.
+ */
+export function splitFieldErrors(
+  error: unknown,
+  shown: readonly string[],
+): { fields: Record<string, string>; form: string | null } {
+  if (!(error instanceof ApiError) || Object.keys(error.fields).length === 0) {
+    return { fields: {}, form: messageOf(error) };
+  }
+  const fields: Record<string, string> = {};
+  const rest: string[] = [];
+  for (const [key, message] of Object.entries(error.fields)) {
+    if (shown.includes(key)) fields[key] = message;
+    else rest.push(message);
+  }
+  return { fields, form: rest.length > 0 ? rest.join(' ') : null };
+}
