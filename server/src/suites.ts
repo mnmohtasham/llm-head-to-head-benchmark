@@ -135,7 +135,12 @@ export class SuiteManager {
 
   /** Deletes a suite's record. Its races stay in the results log. */
   async remove(id: string): Promise<'deleted' | 'running' | 'missing'> {
-    if (this.active?.suite.id === id) return 'running';
+    const entry = this.active;
+    if (entry?.suite.id === id) {
+      if (entry.suite.finishedAt === null) return 'running';
+      // Finished but still being saved: wait, or the save would write the file back.
+      await entry.done;
+    }
     return (await this.deps.suites.remove(id)) ? 'deleted' : 'missing';
   }
 
