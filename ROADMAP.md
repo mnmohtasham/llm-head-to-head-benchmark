@@ -5,7 +5,7 @@ When the two disagree, fix PLAN.md first, then this file.
 
 ## How this roadmap works
 
-- Twenty-one phases in six milestones. Each phase ends with a complete app that can be installed, run and
+- Twenty-two phases in six milestones. Each phase ends with a complete app that can be installed, run and
   tested on its own, with nothing half-built on screen.
 - Every phase has the same shape: what you can do at the end, scope, what waits for later, mock additions,
   automated tests, a script for the real machines, and an exit checklist.
@@ -36,7 +36,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 7. **Docs.** The README covers the phase's features and setup. PLAN.md is corrected wherever the phase
    proved it wrong.
 8. **Tagged.** Phase N is tagged `v0.N`. Phase 10 is `v1.0`; phases 11 to 19 are `v1.1` to `v1.9`,
-   phases 20 and 21 are `v2.0` and `v2.1`.
+   phases 20 to 22 are `v2.0` to `v2.2`.
 
 ## Running a phase
 
@@ -70,6 +70,7 @@ A phase is finished only when all of these hold. "Completely testable" means exa
 | 19 | Remove video encodes | The Command tab and its agent are gone, as Mani asked | 12 | S | v1.9 |
 | 20 | Docker | Run Model Duel on Linux, macOS or Windows with one `docker compose` command | 19 | S | v2.0 |
 | 21 | Production and security | An optional password, security headers and limits, no demo or stand-in servers in the app, smoke tests, MIT license | 20 | M | v2.1 |
+| 22 | More servers, suites and history | Race Ollama and OpenAI-compatible servers, run a matrix of races unattended, compare any runs and follow a machine over time | 21 | L | v2.2 |
 
 Sizes are rough and assume one developer working with a coding agent: S is 1 to 2 days, M is 3 to 5 days,
 L is 1 to 2 weeks.
@@ -84,8 +85,9 @@ Milestones:
   cloud models as reference points, one table of every run, long races summed up either way, and
   sending runs to a public results service. Added on 2026-09-25 at Mani's
   request, after phase 12.
-- **M6 Open source** (phases 20 and 21, v2.1): anyone clones the repository and runs it in Docker on
-  any platform, safely, under the MIT license. Added on 2026-09-27 and 2026-09-28 at Mani's request.
+- **M6 Open source** (phases 20 to 22, v2.2): anyone clones the repository and runs it in Docker on
+  any platform, safely, under the MIT license, against the servers people actually run. Added on
+  2026-09-27 and 2026-09-28 at Mani's request; phase 22 on 2026-10-21.
 
 Why this order: measurement is checked on one machine against Unsloth's own numbers (phase 3) before
 concurrency adds noise (phase 4). Statistics, pre-flight, telemetry and the report (phases 5 to 8) are
@@ -831,6 +833,38 @@ Exit checklist
 - [ ] Phase gate passes.
 - [ ] `npm run smoke:docker -- --browser` passes.
 
+## Phase 22: More servers, suites and history
+
+**You can** race machines that run Ollama, or any OpenAI-compatible server such as llama.cpp's
+llama-server, vLLM or SGLang, next to Unsloth Studio and LM Studio; queue a suite of races (prompts ×
+thinking settings × Max tokens) that runs unattended and sums itself up; compare any 2 to 6 runs side
+by side; and follow one machine's numbers over time, with the updates that moved them marked.
+Needs: 21. Size: L.
+
+Scope
+- Ollama and OpenAI-compatible machines (PLAN.md 2.9): probe, status, Models panes (Ollama loads and
+  unloads), races in latency and throughput mode with the servers' own timings where they give them,
+  pre-flight, report, Results, result files and share records.
+- Benchmark suites (PLAN.md 7.4): the Suites tab, one suite at a time through the same race slot as
+  the tabs, skipped and failed races recorded, cancel, interrupted after a restart, CSV.
+- Compare runs and a machine's history in the Results tab (PLAN.md 7.2), with links to both.
+- A review of the whole app (four reviewers: security, measurement, performance, the page) and its
+  fixes: no large copies or writes while tokens arrive, a bounded race size, a shutdown that saves
+  the race with a browser watching, telemetry saved per round, energy filled over missed readings,
+  model changes refused mid-race, revocable sessions, a trusted proxy, an echoed key masked, links
+  out of Markdown exports, compressed answers and cached bundles, and the page's bugs.
+
+Automated tests
+- Stand-in Ollama, llama-server and vLLM servers; unit tests for their parsers and request bodies;
+  integration tests that probe and race them; browser tests that add, load and race them.
+- Suites: expansion, the one-at-a-time rules, skip, fail, cancel, restart; comparison and history
+  logic; shutdown with a stream open; votes at the same moment; revocation; echoed keys; energy over
+  a missed poll.
+
+Exit checklist
+- [ ] Phase gate passes, except the real-machine script, which this phase skipped: its new servers
+      were checked against stand-ins built from their documentation only.
+
 ## Testing across phases
 
 - **Test servers.** The stand-in Unsloth (the "mock" of earlier phases, in `test-servers/` since phase 21)
@@ -864,6 +898,7 @@ Exit checklist
 | 19 | nothing |
 | 20 | Docker on the controller computer |
 | 21 | nothing new; the smoke tests run against any install |
+| 22 | Ollama or an OpenAI-compatible server on a machine, serving on the network |
 
 ## Open questions and when they block
 

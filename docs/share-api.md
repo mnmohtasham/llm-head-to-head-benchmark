@@ -47,7 +47,7 @@ Authorization: Bearer <token>        (from the user's LLM Bench account page)
 | `generator` | `app` (`model-duel`), `version`, `build`. |
 | `displayName` | Always `null`: LLM Bench shows runs without names. The format keeps the field. |
 | `race` | `workload`, `kind` (the metric set), `state` (`done` or `partial`), `rounds`, `roundsDone`, `warmup`, `sequencing`, `statistic` (`median` or `mean`), `machines` (how many raced; they are not named). |
-| `machine` | `kind` (`local` or `cloud`), `provider` (for cloud), `gpus` (name and memory in GB), `gpuMemoryGb`, `platform` (CUDA, ROCm, MLX…), `memoryGb`, `os` (family and version only), `studio`, `llamaCpp`. |
+| `machine` | `kind` (`local` or `cloud`), `provider` (for cloud), `server` (`unsloth`, `lmstudio`, `ollama` or `openai-compatible`; null for cloud), `gpus` (name and memory in GB), `gpuMemoryGb`, `platform` (CUDA, ROCm, MLX…), `memoryGb`, `os` (family and version only), `studio`, `llamaCpp`. |
 | `model` | `id`, `quant`, `engine`, `contextLength`, `kvCache` (type, not size), `gpuLayers` (−1 is automatic), `totalLayers`, `slots`, `speculative`, `gpuMemoryMode`. |
 | `settings` | `prompt` (the standard prompt's id, below), `promptText` (that prompt's text, or `null` where it is too long to carry), `promptTokens`, `prefill`, `thinking` (`off`, `on`, `on, high` with the reasoning effort, or `model default` on LM Studio), `maxTokens`, `concurrency`, `sampling`, and `summary` for transcription and image races. |
 | `metrics` | Per metric: `key`, `label`, `unit`, `better` (`lower`, `higher` or `null`), `n`, `median`, `mean`, `min`, `max`, `stdev`, and `values`, one per counted round (`null` where the round failed). Both the machine's server's numbers and Model Duel's own are sent, each under its own key (below). |
@@ -81,14 +81,14 @@ key next to Model Duel's measurement, which includes the network and Model Duel'
 | Model Duel's measurement | The server's own number | Source |
 | --- | --- | --- |
 | `ttft` | `ttftServer` | Unsloth's monitor, or LM Studio's stats |
-| `decode` | `decodeServer` | llama.cpp's timings via Unsloth, Unsloth's monitor, or LM Studio's stats |
-| (none) | `prompt` | llama.cpp's prompt processing speed via Unsloth |
+| `decode` | `decodeServer` | llama.cpp's timings via Unsloth or llama-server, Ollama's eval timings, Unsloth's monitor, or LM Studio's stats |
+| (none) | `prompt` | llama.cpp's prompt processing speed via Unsloth or llama-server, or Ollama's prompt eval timings |
 | `rtf` | `rtfServer` | the audio's length over Unsloth's processing time, from its monitor |
 | `processing` | `processingServer` | Unsloth's monitor, which has it only for its OpenAI-shaped route, so it is often missing |
 
 Headlines should use the server's number when every run compared has it, and Model Duel's
-measurement for all of them otherwise, never one against the other. Cloud models report no server
-numbers.
+measurement for all of them otherwise, never one against the other. Cloud models, vLLM and SGLang
+report no server numbers.
 
 ## Verifying a record
 
