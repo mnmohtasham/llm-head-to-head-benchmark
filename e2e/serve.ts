@@ -13,11 +13,14 @@ import { fileURLToPath } from 'node:url';
 import { startMockServer } from '@duel/test-servers';
 import { startCloudMock } from '@duel/test-servers/cloud';
 import { startLmStudioMock } from '@duel/test-servers/lmstudio';
+import { startCompatMock, startOllamaMock } from '@duel/test-servers/engines';
 import {
   E2E_APP_PORT,
   E2E_AUTH_APP_PORT,
   E2E_CLOUD_PORTS,
+  E2E_COMPAT_PORT,
   E2E_LMSTUDIO_PORT,
+  E2E_OLLAMA_PORT,
   E2E_MOCK_PORTS,
   E2E_PASSWORD,
 } from './ports';
@@ -57,6 +60,8 @@ const standIns = auth
         }),
       ),
       startLmStudioMock({ port: E2E_LMSTUDIO_PORT, host, token: null }),
+      startOllamaMock({ port: E2E_OLLAMA_PORT, host }),
+      startCompatMock({ port: E2E_COMPAT_PORT, host, flavor: 'llama.cpp' }),
     ]);
 
 let stopping = false;
