@@ -1,7 +1,7 @@
 # Phase 22 record
 
 - Date: 2026-10-21
-- Commit and tag: branch `phase-22`, merged into `main` by pull request, tagged `v2.2`.
+- Commit and tag: branch `phase-22`, merged into `main` by pull request #16, tagged `v2.2`.
 - Asked by Mani: "Review code completely and: 1. implement new ideas and relevant features, 2.
   improve performance and make it a production ready app, 3. check and fix security flaws, 4. do a
   complete bug sweeping." Asked which features, Mani chose all four offered: more engines
@@ -15,7 +15,10 @@
       build (`npm run smoke:docker -- --browser`, without and with a password).
 - [x] No-GPU tests: every feature works against the stand-ins in `test-servers/`, which gained
       Ollama, llama-server and vLLM.
-- [x] Typecheck, lint, unit, integration and end-to-end tests pass: 501 unit and
+- [x] CI on the pull request: checks, Docker and CodeQL. CodeQL's first run found a quant pattern
+      that could backtrack on a made-up model name, and stand-ins echoing a test's input; both
+      fixed.
+- [x] Typecheck, lint, unit, integration and end-to-end tests pass: 502 unit and
       integration tests (410 before the phase), 73 browser tests (58 before).
 - [ ] Real machines: not run, at Mani's choice. The new servers were built from their
       documentation (Ollama's `docs/api.md`, llama.cpp's `tools/server/README.md`, vLLM's docs,
