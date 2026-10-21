@@ -1,6 +1,6 @@
 {
   "name": "model-duel",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Race local AI models head to head on the machines of your network: Unsloth Studio, LM Studio and cloud models, side by side.",
   "license": "MIT",

@@ -58,9 +58,13 @@ test('races four requests at once per machine, after reloading with four slots',
   const blockers = page.getByTestId('start-blockers');
   await expect(blockers).toContainText('serves 1 request at once, so 3 of the 4 would wait');
   await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
-  for (const button of await page.getByRole('button', { name: 'Reload with 4 slots' }).all()) {
-    await button.click();
-  }
+  // Each button turns into a note on its reload as soon as it is pressed.
+  const reload = page.getByRole('button', { name: 'Reload with 4 slots' });
+  await expect(reload).toHaveCount(2);
+  await reload.first().click();
+  await expect(reload).toHaveCount(1);
+  await reload.first().click();
+  await expect(reload).toHaveCount(0);
   await expect(page.getByTestId('preflight-status')).toContainText('All clear', {
     timeout: 20_000,
   });
