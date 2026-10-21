@@ -507,7 +507,11 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
                   disabled={running}
                 />
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
+              <TelemetrySwitch
+                enabled={telemetry.enabled}
+                onChange={telemetry.setEnabled}
+                onError={race.setFormError}
+              />
             </div>
 
             <PlanFields plan={plan} running={running} sharing={sharing} />

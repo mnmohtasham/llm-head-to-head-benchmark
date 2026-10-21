@@ -1,5 +1,5 @@
 import type { TelemetrySample, TelemetryStatus, TelemetryStreamMessage } from '@duel/shared';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
 
 export interface TelemetryView {
@@ -12,9 +12,28 @@ export interface TelemetryView {
 const EMPTY: TelemetryView = { enabled: null, statuses: {}, latest: {} };
 
 /** Live readings for these machines, for as long as the component shows them. */
-export function useTelemetry(machineIds: readonly string[]): TelemetryView {
+export function useTelemetry(machineIds: readonly string[]) {
   const key = [...new Set(machineIds)].sort().join(',');
   const [view, setView] = useState<TelemetryView>(EMPTY);
+
+  // The switch's state, even with no machine to stream: the stream says it only for its machines.
+  useEffect(() => {
+    let cancelled = false;
+    api.settings().then(
+      ({ telemetry }) => {
+        if (!cancelled) {
+          setView((current) =>
+            current.enabled === null ? { ...current, enabled: telemetry } : current,
+          );
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (!key) return;
     const source = new EventSource(api.telemetryStreamUrl(key.split(',')));
@@ -42,5 +61,11 @@ export function useTelemetry(machineIds: readonly string[]): TelemetryView {
     };
     return () => source.close();
   }, [key]);
-  return view;
+
+  /** What the server answered when the switch was turned. */
+  const setEnabled = useCallback(
+    (enabled: boolean) => setView((current) => ({ ...current, enabled })),
+    [],
+  );
+  return { ...view, setEnabled };
 }

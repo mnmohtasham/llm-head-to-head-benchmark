@@ -568,7 +568,11 @@ export function ImagePage({ machines, loadError, log, addLog }: Props) {
                   disabled={running}
                 />
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
+              <TelemetrySwitch
+                enabled={telemetry.enabled}
+                onChange={telemetry.setEnabled}
+                onError={race.setFormError}
+              />
             </div>
             <p className="field-hint">
               Unsloth&apos;s defaults are 9 steps and guidance 0, which suit distilled models such

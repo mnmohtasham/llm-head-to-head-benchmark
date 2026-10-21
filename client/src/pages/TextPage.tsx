@@ -588,7 +588,11 @@ export function TextPage({ machines, loadError, log, addLog }: Props) {
                     : 'The same prompt every round and no seed: rounds after the first may reuse the cache.'}
                 </p>
               </div>
-              <TelemetrySwitch enabled={telemetry.enabled} onError={race.setFormError} />
+              <TelemetrySwitch
+                enabled={telemetry.enabled}
+                onChange={telemetry.setEnabled}
+                onError={race.setFormError}
+              />
             </div>
             <div className="run-options">
               <div className="field">
