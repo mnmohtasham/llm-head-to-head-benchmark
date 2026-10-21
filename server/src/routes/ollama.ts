@@ -21,9 +21,26 @@ const modelSchema = z.object({ model: z.string().min(1).max(300) }).strict();
  */
 export function registerOllamaRoutes(
   app: FastifyInstance,
-  deps: { store: MachineStore; loadTimeoutMs: number },
+  deps: {
+    store: MachineStore;
+    loadTimeoutMs: number;
+    /** Whether a race is running on the machine: its model must not change under it. */
+    isRacing?: (machineId: string) => boolean;
+  },
 ): void {
   const { store } = deps;
+  const isRacing = deps.isRacing ?? (() => false);
+  /** Loads and unloads wait for a race on the machine to end. */
+  const racing = (machine: StoredMachine, reply: FastifyReply): boolean => {
+    if (!isRacing(machine.id)) return false;
+    void fail(
+      reply,
+      409,
+      'racing',
+      `A race is running on ${machine.name}. Cancel it or wait for it to finish, so its runs all use one model.`,
+    );
+    return true;
+  };
   /** Loads in flight, one per machine, so a double click does not load twice. */
   const loading = new Map<string, string>();
 
@@ -57,6 +74,7 @@ export function registerOllamaRoutes(
   app.post<IdParams>('/api/machines/:id/ollama/load', async (request, reply) => {
     const machine = ollamaMachine(request.params.id, reply);
     if (!machine) return reply;
+    if (racing(machine, reply)) return reply;
     const parsed = modelSchema.safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'That is not a model to load.');
     if (loading.has(machine.id)) {
@@ -84,6 +102,7 @@ export function registerOllamaRoutes(
   app.post<IdParams>('/api/machines/:id/ollama/unload', async (request, reply) => {
     const machine = ollamaMachine(request.params.id, reply);
     if (!machine) return reply;
+    if (racing(machine, reply)) return reply;
     const parsed = modelSchema.safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'validation', 'Name the loaded model to unload.');
     const outcome = await ollamaUnload(machine, parsed.data.model);

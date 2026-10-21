@@ -833,6 +833,17 @@ describe('report and votes', () => {
       ).statusCode,
     ).toBe(404);
 
+    // Votes cast at the same moment are all kept: none is written over.
+    const both = await Promise.all([
+      vote({ round: 0, left: macId, right: linuxId, choice: 'tie' }),
+      vote({ round: 1, left: macId, right: linuxId, choice: 'right' }),
+    ]);
+    expect(both.map((r) => r.statusCode)).toEqual([200, 200]);
+    const kept = (
+      await ctx.app.inject({ method: 'GET', url: `/api/sessions/${session.id}` })
+    ).json<SessionView>().votes;
+    expect(kept.map((v) => v.round)).toEqual([0, 1]);
+
     const tally = (await ctx.app.inject({ method: 'GET', url: '/api/votes/tally' })).json<{
       tally: Array<{ a: string; b: string; winsA: number; winsB: number; ties: number }>;
     }>().tally;

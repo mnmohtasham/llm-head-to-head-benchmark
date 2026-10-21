@@ -252,6 +252,23 @@ export interface RawRun {
   headersAtMs: number | null;
   endAtMs: number;
   events: CompactEvent[];
+  /**
+   * Events left out because the race had already kept as many as a race may (RAW_EVENT_BUDGET).
+   * The run's measurements are complete; only its raw record is.
+   */
+  omitted?: number;
+}
+
+/**
+ * Roughly how many characters of raw events one race keeps, about 64 MB on disk. Past it, the
+ * later runs keep their measurements but not their raw events, so no machine can make a race too
+ * large to save, whatever it sends.
+ */
+export const RAW_EVENT_BUDGET = 64 * 1024 * 1024;
+
+/** About what one compact event takes in a session file. */
+export function rawEventSize(event: CompactEvent): number {
+  return event.length === 4 ? 24 + event[3].length : 200;
 }
 
 export type StoredRun = RunView & { raw: RawRun | null };
@@ -397,7 +414,8 @@ export function migrateSession(value: StoredSession): StoredSession {
       warmup: value.warmup ? round(value.warmup) : null,
     };
   }
-  if (value.workload !== 'text') {
+  // A file without a workload is an early text session, migrated below.
+  if (value.workload === 'transcribe' || value.workload === 'image') {
     return {
       ...value,
       schemaVersion: SESSION_SCHEMA_VERSION,

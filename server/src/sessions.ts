@@ -4,6 +4,8 @@ import {
   abbaOrder,
   chatRequestBody,
   compactEvents,
+  RAW_EVENT_BUDGET,
+  rawEventSize,
   computeClientMetrics,
   DEFAULT_SAMPLING,
   describeAddress,
@@ -207,6 +209,10 @@ interface ActiveSession {
   /** Resolves when the rounds are over, before any chat model is loaded again. */
   roundsOver: Promise<void>;
   endRounds: () => void;
+  /** Characters of raw events kept so far, against RAW_EVENT_BUDGET. */
+  rawSize: number;
+  /** Runs whose telemetry is attached with the whole window around them. */
+  telemetryDone: Set<string>;
 }
 
 const EMPTY_LIVE: LiveMetrics = {
@@ -316,7 +322,12 @@ function publicRound(round: StoredRound): RoundView {
  */
 export class SessionManager {
   private readonly active = new Map<string, ActiveSession>();
-  private readonly recent = new Map<string, StoredSession>();
+  /** Races that just finished, as their public views: raw events stay on disk. */
+  private readonly recent = new Map<string, SessionView>();
+  /** Set when the app stops, so nothing slow starts after the races are cancelled. */
+  private closing = false;
+  /** Changes to finished races (votes, the statistic), one at a time per race. */
+  private readonly edits = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly deps: {
@@ -361,8 +372,12 @@ export class SessionManager {
 
   async get(id: string): Promise<SessionView | null> {
     await this.settledIfEnding(id);
-    const live = this.active.get(id)?.session ?? this.recent.get(id);
-    if (live) return publicSession(structuredClone(live));
+    // Raw events are dropped before the copy: copying them stalls the event loop, which would
+    // delay the token timestamps of a race running at the same time.
+    const live = this.active.get(id)?.session;
+    if (live) return structuredClone(publicSession(live));
+    const recent = this.recent.get(id);
+    if (recent) return recent;
     const stored = await this.deps.sessions.load(id);
     return stored ? publicSession(stored) : null;
   }
@@ -376,9 +391,27 @@ export class SessionManager {
     const entry = this.active.get(id);
     if (!entry) return null;
     this.flush(entry);
-    const snapshot = publicSession(structuredClone(entry.session));
+    const snapshot = structuredClone(publicSession(entry.session));
     entry.listeners.add(listener);
     return { snapshot, leave: () => entry.listeners.delete(listener) };
+  }
+
+  /** Whether any race is running now. */
+  racing(): boolean {
+    return [...this.active.values()].some((entry) => entry.session.finishedAt === null);
+  }
+
+  /** Whether a running race uses this machine. */
+  racingOn(machineId: string): boolean {
+    return [...this.active.values()].some(
+      (entry) =>
+        entry.session.finishedAt === null && entry.machines.some((m) => m.id === machineId),
+    );
+  }
+
+  /** Whether a race is running now, so it can be joined. */
+  isRunning(id: string): boolean {
+    return this.active.has(id);
   }
 
   /** Waits for a session to end; for tests and shutdown. */
@@ -435,6 +468,8 @@ export class SessionManager {
       imageLoads: machines.map(() => false),
       roundsOver: Promise.resolve(),
       endRounds: () => undefined,
+      rawSize: 0,
+      telemetryDone: new Set(),
     };
     entry.roundsOver = new Promise((resolve) => {
       entry.endRounds = resolve;
@@ -448,7 +483,7 @@ export class SessionManager {
         `Model Duel stopped the race: ${(error as Error).message}`,
       );
     });
-    return publicSession(structuredClone(session));
+    return structuredClone(publicSession(session));
   }
 
   async cancel(id: string): Promise<SessionView | null> {
@@ -488,7 +523,7 @@ export class SessionManager {
   /** The whole session as stored, raw events included, for the JSON export. */
   async getStored(id: string): Promise<StoredSession | null> {
     await this.settledIfEnding(id);
-    const live = this.active.get(id)?.session ?? this.recent.get(id);
+    const live = this.active.get(id)?.session;
     if (live) return structuredClone(live);
     return this.deps.sessions.load(id);
   }
@@ -498,6 +533,22 @@ export class SessionManager {
    * same round replaces the first.
    */
   async vote(id: string, vote: Vote): Promise<SessionView | string> {
+    return this.edit(id, () => this.applyVote(id, vote));
+  }
+
+  /** Runs one change to a finished race after the ones before it, so none is written over. */
+  private edit<T>(id: string, change: () => Promise<T>): Promise<T> {
+    const before = this.edits.get(id) ?? Promise.resolve();
+    const next = before.then(change, change);
+    const settled = next.catch(() => undefined);
+    this.edits.set(id, settled);
+    void settled.then(() => {
+      if (this.edits.get(id) === settled) this.edits.delete(id);
+    });
+    return next;
+  }
+
+  private async applyVote(id: string, vote: Vote): Promise<SessionView | string> {
     const entry = this.active.get(id);
     if (entry) {
       if (entry.session.finishedAt === null) return 'The race is still running.';
@@ -519,12 +570,16 @@ export class SessionManager {
     await this.deps.sessions.save(stored);
     // Votes are part of the result, so the file follows them.
     await this.writeResult(stored);
-    if (this.recent.has(id)) this.recent.set(id, stored);
+    if (this.recent.has(id)) this.recent.set(id, publicSession(stored));
     return publicSession(stored);
   }
 
   /** Sums a finished race up by its medians or its averages, from now on. */
   async setStatistic(id: string, statistic: Statistic): Promise<SessionView | string> {
+    return this.edit(id, () => this.applyStatistic(id, statistic));
+  }
+
+  private async applyStatistic(id: string, statistic: Statistic): Promise<SessionView | string> {
     const entry = this.active.get(id);
     if (entry) {
       if (entry.session.finishedAt === null) return 'The race is still running.';
@@ -536,7 +591,7 @@ export class SessionManager {
     await this.deps.sessions.save(stored);
     // The verdicts in the result file change with it.
     await this.writeResult(stored);
-    if (this.recent.has(id)) this.recent.set(id, stored);
+    if (this.recent.has(id)) this.recent.set(id, publicSession(stored));
     return publicSession(stored);
   }
 
@@ -566,6 +621,7 @@ export class SessionManager {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     const entries = [...this.active.values()];
     for (const entry of entries) entry.controller.abort();
     await Promise.allSettled(entries.map((entry) => entry.done));
@@ -696,7 +752,7 @@ export class SessionManager {
       type: 'run',
       warmup: round.warmup,
       round: round.view.index,
-      run: publicRun(structuredClone(run.view)),
+      run: structuredClone(publicRun(run.view)),
     });
   }
 
@@ -856,14 +912,22 @@ export class SessionManager {
   }
 
   /** Lines each run up with the samples taken around it, and adds up its energy. */
+  /**
+   * Lines each run up with the samples taken around it. Called after every round, so a long race
+   * keeps its early rounds' readings (the buffer holds three hours) and a crash keeps the rounds
+   * already saved; a run whose window after it has not passed yet is done again later.
+   */
   private attachTelemetry(entry: ActiveSession) {
+    if (!entry.session.telemetry.enabled) return;
     const baseline = this.deps.timings.telemetryBaselineMs;
+    const now = performance.timeOrigin + performance.now();
     const rounds = [
       ...(entry.session.warmup ? [entry.session.warmup] : []),
       ...entry.session.rounds,
     ];
     for (const round of rounds) {
       for (const run of round.runs) {
+        if (entry.telemetryDone.has(run.id)) continue;
         const recorded = entry.phases.get(run.id);
         if (!recorded) continue;
         const { phases, outputTokens } = recorded;
@@ -873,6 +937,7 @@ export class SessionManager {
           phases.end + baseline,
         );
         run.telemetry = { samples, energy: runEnergy(samples, phases, outputTokens) };
+        if (now >= phases.end + baseline) entry.telemetryDone.add(run.id);
       }
     }
   }
@@ -889,6 +954,19 @@ export class SessionManager {
           entry.imageLoads[i] === true && !!t.provenance?.statusBefore?.activeModel,
       );
     if (targets.length === 0) return;
+    // Shutting down: a reload takes minutes, longer than a stop waits, so say it was skipped.
+    if (this.closing) {
+      for (const { provenance } of targets) {
+        provenance.restore = {
+          model: provenance.statusBefore?.activeModel ?? 'the chat model',
+          quant: provenance.statusBefore?.quant ?? null,
+          state: 'skipped',
+          error: 'Model Duel was stopping, so the chat model was not loaded again.',
+          durationMs: null,
+        };
+      }
+      return;
+    }
     this.setProgress(entry, 'restoring', null);
     await Promise.all(
       targets.map(async ({ machine, provenance }) => {
@@ -956,7 +1034,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -1073,8 +1151,9 @@ export class SessionManager {
       entry.stopReason = `Unsloth cut the prompt on ${cutOn} to fit its context, so the race stopped. Pick a shorter prompt, or load the model with a longer context.`;
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1124,7 +1203,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -1151,7 +1230,10 @@ export class SessionManager {
           },
         });
         run.view.live = { ...run.view.live, load: null };
-        if (loaded.error) {
+        if (loaded.error && signal.aborted) {
+          // The race was cancelled during the load: the run was cancelled, not failed.
+          this.finishRun(entry, round, run, 'cancelled', null);
+        } else if (loaded.error) {
           this.finishRun(entry, round, run, 'failed', loaded.error);
           // A model that did not load is not tried again in the next rounds.
           if (!signal.aborted) entry.unready[i] = `The image model did not load: ${loaded.error}`;
@@ -1214,8 +1296,9 @@ export class SessionManager {
       }
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1367,7 +1450,7 @@ export class SessionManager {
     if (warmup) session.warmup = view;
     else session.rounds.push(view);
     entry.current = round;
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
 
     for (const [i, run] of round.runs.entries()) {
       const why = entry.unready[i];
@@ -1383,8 +1466,10 @@ export class SessionManager {
     const loads = new Map<string, number | null>();
     await Promise.all(
       ready.map(async (run) => {
-        const loaded = await ensureSttModel(run.machine, config);
-        if (loaded.error) {
+        const loaded = await ensureSttModel(run.machine, config, signal);
+        if (loaded.cancelled) {
+          this.finishRun(entry, round, run, 'cancelled', null);
+        } else if (loaded.error) {
           this.finishRun(entry, round, run, 'failed', loaded.error);
           // A model that did not load is not tried again in the next rounds.
           const i = entry.machines.indexOf(run.machine);
@@ -1449,8 +1534,9 @@ export class SessionManager {
       view.flags = roundFlags(view.runs, names, view.loopLagMs);
     }
     this.flush(entry);
-    this.broadcast(entry, { type: 'round', warmup, round: publicRound(structuredClone(view)) });
+    this.broadcast(entry, { type: 'round', warmup, round: structuredClone(publicRound(view)) });
     entry.current = null;
+    this.attachTelemetry(entry);
     await this.deps.sessions.save(session);
   }
 
@@ -1769,10 +1855,15 @@ export class SessionManager {
             outputTokens: client.outputTokens,
           },
     );
+    const compact = compactEvents(events, requestAt);
+    const size = compact.reduce((sum, event) => sum + rawEventSize(event), 0);
+    const keep = entry.rawSize + size <= RAW_EVENT_BUDGET;
+    if (keep) entry.rawSize += size;
     run.view.raw = {
       headersAtMs: headersAt === null ? null : round3(headersAt - requestAt),
       endAtMs: round3(endAt - requestAt),
-      events: compactEvents(events, requestAt),
+      events: keep ? compact : [],
+      ...(keep ? {} : { omitted: compact.length }),
     };
     const usage = [...events].reverse().find((e) => e.event.type === 'usage')?.event;
     const timings: Timings | null = usage?.type === 'usage' ? usage.timings : null;
@@ -1846,6 +1937,20 @@ export class SessionManager {
         run,
         'cancelled',
         `Stopped because Unsloth cut the prompt on ${round.truncatedBy}.`,
+      );
+      return;
+    }
+    // Model Duel refuses loads during a race, but a model can be swapped on the machine itself:
+    // such a run measured two models, so it is not counted.
+    const before = run.view.modelBefore;
+    const after = run.view.modelAfter;
+    if (verdict.state === 'done' && before && after && before !== after) {
+      this.finishRun(
+        entry,
+        round,
+        run,
+        'failed',
+        `The loaded model changed during the run, from ${before} to ${after}, so it is not counted.`,
       );
       return;
     }
@@ -1947,14 +2052,15 @@ export class SessionManager {
       session.error ??= `The race could not be saved: ${(failure as Error).message}`;
     }
     await this.writeResult(session);
-    this.recent.set(session.id, session);
+    const finished = publicSession(session);
+    this.recent.set(session.id, finished);
     while (this.recent.size > KEEP_RECENT) {
       const oldest = this.recent.keys().next().value;
       if (oldest === undefined) break;
       this.recent.delete(oldest);
     }
     this.active.delete(session.id);
-    this.broadcast(entry, { type: 'finished', session: publicSession(structuredClone(session)) });
+    this.broadcast(entry, { type: 'finished', session: finished });
     entry.listeners.clear();
     this.deps.log.info({ sessionId: session.id, state }, 'race finished');
   }

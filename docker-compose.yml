@@ -15,11 +15,13 @@ services:
     container_name: llm-h2h
     restart: unless-stopped
     init: true
+    # A stop saves the race in progress first; large races take a few seconds to write.
+    stop_grace_period: 30s
     ports:
       # <address on this computer>:<port on this computer>:<PORT below>
       # 127.0.0.1 in front: only this computer can open the page. To open it from other devices on
-      # your network, use "3000:3000" instead. The app has no login, so do that only on a network
-      # you trust. For another port on this computer, change the middle number.
+      # your network, use "3000:3000" instead, and set DUEL_PASSWORD below first: without it there
+      # is no sign-in. For another port on this computer, change the middle number.
       - '127.0.0.1:3000:3000'
     extra_hosts:
       # Unsloth or LM Studio on this same computer is host.docker.internal inside the container,
@@ -50,6 +52,10 @@ services:
       # separated, for example "my-pc.local,duel.home.arpa". Other names are refused, which
       # protects the app from DNS rebinding.
       DUEL_ALLOW_HOSTS: ''
+      # An HTTPS reverse proxy in front of the app: 1 to believe any proxy's X-Forwarded-For and
+      # X-Forwarded-Proto headers, or its addresses, comma separated. Then sign-in limits count each
+      # client's own address and the session cookie is marked Secure. Leave it empty without one.
+      DUEL_TRUST_PROXY: ''
       # How much the app logs: fatal, error, warn, info, debug or trace.
       LOG_LEVEL: 'warn'
       # How long, in milliseconds, the live hardware panel samples idle machines before and after

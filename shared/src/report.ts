@@ -630,7 +630,11 @@ export function headlineRows(rows: readonly StatRow[]): Array<{ row: StatRow; he
   for (const row of rows) {
     if (!HEADLINES[row.key]) continue;
     const server = SERVER_METRICS[row.key] ? byKey.get(SERVER_METRICS[row.key] ?? '') : undefined;
-    const everyone = server?.summaries.every((summary) => summary.n > 0) ?? false;
+    // Every machine with a measurement has the server's number too; a machine with neither,
+    // such as one that failed every round, is in no comparison either way.
+    const everyone =
+      server?.summaries.every((summary, i) => summary.n > 0 || (row.summaries[i]?.n ?? 0) === 0) ??
+      false;
     out.push({ row: server && everyone ? server : row, headline: row.key });
   }
   return out;
@@ -701,6 +705,10 @@ export function toCsv(tables: readonly TableModel[]): string {
  * Text from machines, models or people made inert in Markdown: no HTML, links, emphasis or code,
  * and nothing that ends a table cell or line.
  */
+/**
+ * Text from machines as plain Markdown: no HTML, no markup, and no links, which GitHub-flavoured
+ * viewers would otherwise make of bare addresses, www. names and e-mail addresses.
+ */
 function mdText(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -708,6 +716,9 @@ function mdText(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/[\\`*_[\]!]/g, '\\$&')
     .replace(/\|/g, '\\|')
+    .replace(/:\/\//g, ':&#47;&#47;')
+    .replace(/\b(www)\./gi, '$1&#46;')
+    .replace(/@/g, '&#64;')
     .replace(/\r\n|\r|\n/g, ' ');
 }
 

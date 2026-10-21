@@ -230,14 +230,15 @@ export function checkShareEndpoint(
   return { ok: true, url: url.href };
 }
 
+/** How the rounds ended. Counted in a Map: a machine may send any text, "constructor" too. */
 function finishCounts(values: string[]): Record<string, number> | null {
   if (values.length === 0) return null;
-  const counts: Record<string, number> = {};
+  const counts = new Map<string, number>();
   for (const value of values) {
     const key = value.slice(0, 40);
-    counts[key] = (counts[key] ?? 0) + 1;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return counts;
+  return Object.fromEntries(counts);
 }
 
 /** Standard text prompts short enough to travel in a record; the long ones go by name alone. */

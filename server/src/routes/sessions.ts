@@ -19,9 +19,11 @@ import { createReadStream } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
+import { STREAM_HEADERS } from '../headers';
 import { listImageModels, readImageStatus } from '../imagegen';
+import { sseData, type LiveStreams } from '../live';
 import type { ImageStore } from '../imagestore';
-import { resultFileName, type ResultStore } from '../results';
+import { fileJson, resultFileName, type ResultStore } from '../results';
 import {
   platformName,
   runImagePreflight,
@@ -68,13 +70,14 @@ export function registerSessionRoutes(
   deps: {
     store: MachineStore;
     sessions: SessionManager;
+    streams: LiveStreams;
     isLoading: (machineId: string) => boolean;
     audio: AudioStore;
     images: ImageStore;
     results: ResultStore;
   },
 ): void {
-  const { store, sessions, isLoading, audio, images, results } = deps;
+  const { store, sessions, streams, isLoading, audio, images, results } = deps;
   const preflight = (machines: StoredMachine[], request: PreflightRequest) =>
     request.workload === 'text'
       ? runPreflight(machines, request.config, isLoading)
@@ -300,7 +303,7 @@ export function registerSessionRoutes(
     return reply
       .header('content-type', 'application/json; charset=utf-8')
       .header('content-disposition', `attachment; filename="${fileName(stored, 'json')}"`)
-      .send(`${JSON.stringify(stored, null, 2)}\n`);
+      .send(fileJson(stored));
   });
 
   /** The public result file: every measurement in a stable, shareable shape, with a checksum. */
@@ -310,7 +313,7 @@ export function registerSessionRoutes(
     return reply
       .header('content-type', 'application/json; charset=utf-8')
       .header('content-disposition', `attachment; filename="${resultFileName(stored)}"`)
-      .send(`${JSON.stringify(results.build(stored), null, 2)}\n`);
+      .send(fileJson(results.build(stored)));
   });
 
   /** The comparison and round tables as the page shows them, one after the other. */
@@ -355,23 +358,21 @@ export function registerSessionRoutes(
   /** Server-sent events: a snapshot first, so a reloaded page picks up a running race. */
   app.get<IdParams>('/api/sessions/:id/stream', async (request, reply) => {
     const { id } = request.params;
-    const known = await sessions.get(id);
-    if (!known) return fail(reply, 404, 'not_found', NO_SESSION);
+    // A finished race is read once for its replay; a running one only through join below.
+    const finished = sessions.isRunning(id) ? null : await sessions.get(id);
+    if (!finished && !sessions.isRunning(id)) return fail(reply, 404, 'not_found', NO_SESSION);
     reply.hijack();
     const raw = reply.raw;
-    raw.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-    const send = (message: SessionStreamMessage) =>
-      raw.write(`data: ${JSON.stringify(message)}\n\n`);
+    raw.writeHead(200, STREAM_HEADERS);
+    // Serialized once per message, however many tabs watch the race.
+    const send = (message: SessionStreamMessage) => raw.write(sseData(message));
     let heartbeat: NodeJS.Timeout | null = null;
     let leave: (() => void) | null = null;
+    let forget: (() => void) | null = null;
     const close = () => {
       if (heartbeat) clearInterval(heartbeat);
       leave?.();
+      forget?.();
       if (!raw.writableEnded) raw.end();
     };
     const joined = sessions.join(id, (message) => {
@@ -380,12 +381,15 @@ export function registerSessionRoutes(
     });
     if (!joined) {
       // A finished race: replay it whole.
-      const view = (await sessions.get(id)) ?? known;
-      send({ type: 'snapshot', session: view });
-      send({ type: 'finished', session: view });
+      const view = finished ?? (await sessions.get(id));
+      if (view) {
+        send({ type: 'snapshot', session: view });
+        send({ type: 'finished', session: view });
+      }
       close();
       return reply;
     }
+    forget = streams.add(raw, close);
     leave = joined.leave;
     send({ type: 'snapshot', session: joined.snapshot });
     heartbeat = setInterval(() => raw.write(': ping\n\n'), HEARTBEAT_MS);

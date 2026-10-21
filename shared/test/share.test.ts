@@ -97,6 +97,17 @@ describe('share records', () => {
     expect(a?.submissionId).not.toBe(other?.submissionId);
   });
 
+  it('count any finish reason a machine sends, "constructor" too', () => {
+    const session = race();
+    for (const round of session.rounds) {
+      const run = round.runs.find((r) => r.machineId === 'rtx');
+      if (run?.client) run.client.finishReason = 'constructor';
+    }
+    const record = buildShareRecord(session, 'rtx', { displayName: '' }, SENDER, digest);
+    expect(record?.finish).toEqual({ constructor: 2 });
+    expect(shareRecordSchema.safeParse(record).success).toBe(true);
+  });
+
   it('mark a machine with failed rounds as partial, with null for those rounds', () => {
     const record = buildShareRecord(race(), 'amd', { displayName: '' }, SENDER, digest);
     expect(record?.race).toMatchObject({ state: 'partial', roundsDone: 1 });
