@@ -56,12 +56,15 @@ export const runPlanSchema = z.object({
 export type RunPlan = z.infer<typeof runPlanSchema>;
 export const DEFAULT_PLAN: RunPlan = runPlanSchema.parse({});
 
+/** The machines of a race, each once. */
+export const machineIdsSchema = z
+  .array(z.string().min(1))
+  .min(1, 'Pick at least one machine.')
+  .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
+  .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.');
+
 const sessionRequestBase = {
-  machineIds: z
-    .array(z.string().min(1))
-    .min(1, 'Pick at least one machine.')
-    .max(MAX_RACE_MACHINES, `Pick at most ${MAX_RACE_MACHINES} machines.`)
-    .refine((ids) => new Set(ids).size === ids.length, 'Pick each machine only once.'),
+  machineIds: machineIdsSchema,
   plan: runPlanSchema.prefault({}),
   /** Start even though pre-flight has warnings; errors can never be overridden. */
   acknowledgeWarnings: z.boolean().default(false),

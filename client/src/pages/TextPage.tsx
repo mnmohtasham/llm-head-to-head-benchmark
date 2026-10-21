@@ -3,7 +3,6 @@ import {
   DEFAULT_SAMPLING,
   MAX_CONCURRENCY,
   PRESETS,
-  REASONING_EFFORTS,
   serverName,
   sessionRequestSchema,
   textConfigSchema,
@@ -24,6 +23,8 @@ import { BlindVote } from '../components/BlindVote';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LogPanel, type LogEntry, type NewLogEntry } from '../components/LogPanel';
 import {
+  cloudEfforts,
+  commonEfforts,
   MachinePicker,
   PlanFields,
   PreflightPanel,
@@ -46,24 +47,6 @@ import { useTelemetry } from '../useTelemetry';
 
 const DEFAULT_PROMPT =
   'Explain in about 150 words why memory bandwidth limits how fast a local language model writes text.';
-
-/** Effort levels every selected model accepts. */
-function commonEfforts(statuses: ModelStatus[]): string[] {
-  if (statuses.length === 0) return [];
-  const [first, ...rest] = statuses.map((s) =>
-    s.reasoningEffortLevels.filter((level) =>
-      (REASONING_EFFORTS as readonly string[]).includes(level),
-    ),
-  );
-  return (first ?? []).filter((level) => rest.every((levels) => levels.includes(level)));
-}
-
-/** Effort levels any of these cloud models takes; each gets the nearest level it offers. */
-function cloudEfforts(models: CloudModel[]): string[] {
-  return REASONING_EFFORTS.filter(
-    (level) => level !== 'none' && models.some((m) => m.efforts.includes(level)),
-  );
-}
 
 interface Props {
   machines: MachineView[] | null;

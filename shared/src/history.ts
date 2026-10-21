@@ -139,6 +139,8 @@ export interface RunHistory {
 const CHANGE_FIELDS = [
   'studio',
   'llamaCpp',
+  // Ollama's, vLLM's or SGLang's version; for Unsloth it repeats the Studio version, left out below.
+  'serverVersion',
   'os',
   'gpu',
   'platform',
@@ -175,6 +177,7 @@ export function runChanges(
     const before = settingOf(column, previous);
     const after = settingOf(column, next);
     if (before === null || after === null || before === after) continue;
+    if (id === 'serverVersion' && next.server === 'unsloth') continue;
     out.push({
       field: id,
       label: column.label,

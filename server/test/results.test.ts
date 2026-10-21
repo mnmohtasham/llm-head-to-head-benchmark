@@ -55,10 +55,13 @@ async function race(): Promise<SessionView> {
 const resultsDir = () => path.join(ctx.dataDir, 'results');
 async function saved(): Promise<ResultFile[]> {
   const files = await readdir(resultsDir()).catch(() => [] as string[]);
+  // A file being written is a temporary file first, and gone a moment later.
   return Promise.all(
-    files.map(
-      async (f) => JSON.parse(await readFile(path.join(resultsDir(), f), 'utf8')) as ResultFile,
-    ),
+    files
+      .filter((f) => f.endsWith('.json'))
+      .map(
+        async (f) => JSON.parse(await readFile(path.join(resultsDir(), f), 'utf8')) as ResultFile,
+      ),
   );
 }
 

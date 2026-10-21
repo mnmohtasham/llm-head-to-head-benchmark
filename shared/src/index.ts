@@ -22,6 +22,7 @@ export * from './share';
 export * from './session';
 export * from './sse';
 export * from './stats';
+export * from './suite';
 export * from './telemetry';
 export * from './throughput';
 export * from './transcribe';

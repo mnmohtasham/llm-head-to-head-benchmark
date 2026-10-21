@@ -166,6 +166,7 @@ export function makeDeviceRun(over: Partial<DeviceRun> = {}): DeviceRun {
     os: 'Linux-6.17.0-41-generic-x86_64',
     studio: '0.1.815-beta',
     llamaCpp: 'b9601',
+    serverVersion: 'Unsloth Studio 0.1.815-beta',
     model: 'unsloth/Qwen3.8-27B-GGUF',
     quant: 'Q4_K_M',
     engine: 'GGUF',

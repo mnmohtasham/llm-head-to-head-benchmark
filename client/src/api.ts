@@ -24,6 +24,9 @@ import type {
   SessionView,
   ShareRecord,
   Statistic,
+  Suite,
+  SuiteRequest,
+  SuiteSummary,
   ImageModelView,
   ImageStatus,
   SttStatus,
@@ -155,6 +158,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 const machineUrl = (id: string) => `/api/machines/${encodeURIComponent(id)}`;
 const sessionUrl = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
+const suiteUrl = (id: string) => `/api/suites/${encodeURIComponent(id)}`;
 
 export const api = {
   listMachines: () => call<MachineView[]>('GET', '/api/machines'),
@@ -282,6 +286,11 @@ export const api = {
   ) => call<SessionView>('POST', `${sessionUrl(id)}/vote`, vote),
   voteTally: () => call<{ tally: PairTally[] }>('GET', '/api/votes/tally'),
   sessionStreamUrl: (id: string) => `${sessionUrl(id)}/stream`,
+  listSuites: () => call<{ suites: SuiteSummary[] }>('GET', '/api/suites'),
+  startSuite: (request: SuiteRequest) => call<Suite>('POST', '/api/suites', request),
+  getSuite: (id: string) => call<Suite>('GET', suiteUrl(id)),
+  cancelSuite: (id: string) => call<Suite>('POST', `${suiteUrl(id)}/cancel`),
+  deleteSuite: (id: string) => call<void>('DELETE', suiteUrl(id)),
 };
 
 export function messageOf(error: unknown): string {

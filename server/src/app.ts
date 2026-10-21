@@ -20,6 +20,7 @@ import { DEFAULT_PROBE_TIMEOUTS, type ProbeTimeouts } from './probe';
 import { registerMachineRoutes } from './routes/machines';
 import { registerModelRoutes } from './routes/models';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerSuiteRoutes } from './routes/suites';
 import { registerRunRoutes } from './routes/runs';
 import { registerLmStudioRoutes } from './routes/lmstudio';
 import { registerOllamaRoutes } from './routes/ollama';
@@ -28,9 +29,12 @@ import { ShareStore } from './share';
 import { DeviceRunIndex } from './runs';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { SessionStore } from './session-store';
+import { RaceStarter } from './races';
 import { DEFAULT_RUN_TIMINGS, SessionManager, type RunTimings } from './sessions';
 import { SettingsStore } from './settings';
 import { MachineStore } from './store';
+import { SuiteStore } from './suite-store';
+import { SuiteManager } from './suites';
 import { DEFAULT_TELEMETRY, TelemetryHub, type TelemetryOptions } from './telemetry';
 
 export interface AppOptions {
@@ -265,15 +269,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   racing = () => sessions.racing();
   racingOn = (id) => sessions.racingOn(id);
-  registerSessionRoutes(app, {
-    store,
+  const races = new RaceStarter({ store, sessions, isLoading: (id) => loads.isActive(id), audio });
+  registerSessionRoutes(app, { store, sessions, races, streams, audio, images, results });
+  const suiteStore = new SuiteStore(options.dataDir, app.log);
+  await suiteStore.init();
+  const suites = new SuiteManager({
+    suites: suiteStore,
+    races,
     sessions,
-    streams,
-    isLoading: (id) => loads.isActive(id),
-    audio,
-    images,
-    results,
+    machines: store,
+    log: app.log,
   });
+  registerSuiteRoutes(app, { suites });
   registerRunRoutes(app, { runs: new DeviceRunIndex(sessionStore, app.log) });
   registerLmStudioRoutes(app, {
     store,
@@ -297,7 +304,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   // Before the server stops taking connections: stop the races and save them, then end the live
   // streams, whose open connections the server would otherwise wait for.
   app.addHook('preClose', async () => {
+    // A running suite starts no more races; it is marked interrupted at the next start.
+    const suiteStopped = suites.close();
     await sessions.close();
+    await suiteStopped;
     streams.endAll();
   });
   app.addHook('onClose', async () => {

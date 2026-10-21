@@ -1,8 +1,5 @@
 import {
   comparisonTable,
-  hasErrors,
-  hasWarnings,
-  imagePrompt,
   roundTable,
   tallyVotes,
   toCsv,
@@ -11,12 +8,11 @@ import {
   sessionRequestSchema,
   STATISTICS,
   type ApiErrorBody,
-  type PreflightRequest,
   type PreflightIssue,
   type SessionStreamMessage,
 } from '@duel/shared';
 import { createReadStream } from 'node:fs';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIO_UPLOAD_LIMIT, type AudioStore, CLIP_PATH } from '../audio';
 import { STREAM_HEADERS } from '../headers';
@@ -24,14 +20,9 @@ import { listImageModels, readImageStatus } from '../imagegen';
 import { sseData, type LiveStreams } from '../live';
 import type { ImageStore } from '../imagestore';
 import { fileJson, resultFileName, type ResultStore } from '../results';
-import {
-  platformName,
-  runImagePreflight,
-  runPreflight,
-  runTranscribePreflight,
-} from '../preflight';
+import type { RaceStarter } from '../races';
 import { readSttStatus } from '../stt';
-import { presetViews, resolvePrompt } from '../presets';
+import { presetViews } from '../presets';
 import type { SessionManager } from '../sessions';
 import type { MachineStore, StoredMachine } from '../store';
 
@@ -70,22 +61,14 @@ export function registerSessionRoutes(
   deps: {
     store: MachineStore;
     sessions: SessionManager;
+    races: RaceStarter;
     streams: LiveStreams;
-    isLoading: (machineId: string) => boolean;
     audio: AudioStore;
     images: ImageStore;
     results: ResultStore;
   },
 ): void {
-  const { store, sessions, streams, isLoading, audio, images, results } = deps;
-  const preflight = (machines: StoredMachine[], request: PreflightRequest) =>
-    request.workload === 'text'
-      ? runPreflight(machines, request.config, isLoading)
-      : request.workload === 'transcribe'
-        ? runTranscribePreflight(machines, request.config, isLoading, audio)
-        : runImagePreflight(machines, request.config, isLoading, (id) =>
-            platformName(store.lastProbe(id)?.report ?? null),
-          );
+  const { store, sessions, races, streams, audio, images, results } = deps;
 
   /** A machine's image model status, and the image models on its disk. */
   app.get<IdParams>('/api/machines/:id/image', async (request, reply) => {
@@ -186,10 +169,10 @@ export function registerSessionRoutes(
     if (machines.some((machine) => !machine)) {
       return fail(reply, 404, 'not_found', 'There is no machine with that id.');
     }
-    return preflight(machines as StoredMachine[], parsed.data);
+    return races.preflight(machines as StoredMachine[], parsed.data);
   });
 
-  let starting = false;
+  /** One race at a time, never while a suite runs; pre-flight first (see RaceStarter). */
   app.post('/api/sessions', async (request, reply) => {
     const parsed = sessionRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -200,66 +183,16 @@ export function registerSessionRoutes(
         parsed.error.issues[0]?.message ?? 'The race request is not valid.',
       );
     }
-    const machines = parsed.data.machineIds.map((id) => store.get(id));
-    if (machines.some((machine) => !machine)) {
-      return fail(reply, 404, 'not_found', 'There is no machine with that id.');
+    const started = await races.start(parsed.data);
+    if (!started.ok) {
+      return fail(reply, started.status, started.error, started.message, started.issues);
     }
-    // Pre-flight waits on the machines, so a second request could slip in before this race is
-    // running; `starting` holds the place until it is.
-    if (sessions.running() || starting) {
-      return fail(
-        reply,
-        409,
-        'busy',
-        'A race is already running. Wait for it to finish or cancel it first.',
-      );
-    }
-    starting = true;
-    try {
-      return await startRace(machines as StoredMachine[], parsed.data, request, reply);
-    } finally {
-      starting = false;
-    }
-  });
-
-  /** Pre-flight, then the race; the caller holds the one race slot while this runs. */
-  async function startRace(
-    machines: StoredMachine[],
-    data: z.infer<typeof sessionRequestSchema>,
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ) {
-    const checked = await preflight(machines, data);
-    if (hasErrors(checked.issues)) {
-      const first = checked.issues.find((issue) => issue.level === 'error');
-      return fail(reply, 400, 'preflight', first?.text ?? 'Pre-flight failed.', checked.issues);
-    }
-    if (hasWarnings(checked.issues) && !data.acknowledgeWarnings) {
-      return fail(
-        reply,
-        409,
-        'preflight_warnings',
-        'Pre-flight found differences between the machines. Race anyway to start.',
-        checked.issues,
-      );
-    }
-    const view = sessions.start(
-      machines,
-      data.workload === 'text'
-        ? {
-            ...data,
-            config: { ...data.config, prompt: resolvePrompt(data.config) },
-          }
-        : data.workload === 'image'
-          ? {
-              ...data,
-              config: { ...data.config, prompt: imagePrompt(data.config) },
-            }
-          : data,
+    request.log.info(
+      { sessionId: started.session.id, machines: parsed.data.machineIds },
+      'race started',
     );
-    request.log.info({ sessionId: view.id, machines: data.machineIds }, 'race started');
-    return reply.code(201).send(view);
-  }
+    return reply.code(201).send(started.session);
+  });
 
   app.get('/api/sessions', async () => ({ sessions: sessions.list() }));
 
