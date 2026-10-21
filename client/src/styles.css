@@ -1549,6 +1549,10 @@ textarea {
   font-size: 13px;
 }
 
+.race-reconnecting {
+  color: var(--warn);
+}
+
 .cell-detail {
   display: block;
   color: var(--faint);

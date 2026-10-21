@@ -292,8 +292,13 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
         current="transcribe"
         actions={
           running ? (
-            <button type="button" className="btn btn-primary" onClick={() => void race.cancel()}>
-              Cancel
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void race.cancel()}
+              disabled={race.cancelling}
+            >
+              {race.cancelling ? 'Cancelling…' : 'Cancel'}
             </button>
           ) : (
             <button
@@ -546,6 +551,7 @@ export function TranscribePage({ machines, loadError, log, addLog }: Props) {
           running={running}
           roundIndex={race.roundIndex}
           manyRounds={race.manyRounds}
+          reconnecting={race.reconnecting}
         />
         {panes.length > 0 ? (
           <div

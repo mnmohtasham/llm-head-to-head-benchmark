@@ -412,16 +412,25 @@ export function ProgressLine({
   running,
   roundIndex,
   manyRounds,
+  reconnecting = false,
 }: {
   session: SessionView | null;
   running: boolean;
   roundIndex: number | null;
   manyRounds: boolean;
+  /** The live stream dropped and is being opened again. */
+  reconnecting?: boolean;
 }) {
   if (session && running) {
     return (
       <p className="race-progress" role="status" data-testid="race-progress">
         {progressText(session.workload, session.progress, session.plan.rounds)}
+        {reconnecting ? (
+          <span className="race-reconnecting" data-testid="race-reconnecting">
+            {' '}
+            Connection lost, reconnecting…
+          </span>
+        ) : null}
       </p>
     );
   }
